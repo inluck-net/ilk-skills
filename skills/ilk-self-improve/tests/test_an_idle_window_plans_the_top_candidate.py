@@ -2023,3 +2023,99 @@ class TestAttemptsAccumulate:
         by_id = {c["id"]: c for c in _load_candidates(backlog_dir)}
         assert by_id["a"]["relations"]["autoplan_attempts"] == 3
         assert by_id["b"]["relations"]["autoplan_attempts"] == 1
+
+
+# ── 2026-10-09 01:06: a stale verdict comes from the final answer only ──────
+
+
+def _ev(**kw) -> str:
+    return json.dumps(kw)
+
+
+_TOOL_ECHO = _ev(type="user", message={"content": [{
+    "type": "tool_result",
+    "content": ("skills/ilk-self-improve/scripts/autoplan.py-1216-"
+                "        f\"write no plan and end with a line "
+                "AUTOPLAN: stale <reason>\"")}]})
+
+
+class TestStaleVerdictIsTheFinalAnswer:
+    """Only the planner's final answer can say stale.
+
+    On 2026-10-09 01:06 a planner grepped autoplan.py; the tool output echoed
+    the prompt template line, the whole-stdout match read it as a verdict, and
+    since v0.9.172 that blocked live row 579b6efa for good.
+    """
+
+    def test_marker_inside_a_tool_result_is_not_a_verdict(self):
+        mod = _load_module()
+        stdout = "\n".join([
+            _ev(type="system", subtype="init", model="m"),
+            _TOOL_ECHO,
+            _ev(type="assistant", message={"content": [
+                {"type": "text", "text": "Ran out of turns before planning."}]}),
+            _ev(type="result", result="Ran out of turns before planning."),
+        ])
+        assert mod.planner_stale_reason(stdout) is None
+
+    def test_final_answer_marker_is_a_clean_verdict(self):
+        mod = _load_module()
+        stdout = "\n".join([
+            _ev(type="system", subtype="init", model="m"),
+            _TOOL_ECHO,
+            _ev(type="result",
+                result="Checked HEAD.\nAUTOPLAN: stale fixed in abc123"),
+        ])
+        assert mod.planner_stale_reason(stdout) == "fixed in abc123"
+
+    def test_template_placeholder_is_not_a_verdict(self):
+        mod = _load_module()
+        stdout = _ev(type="result", result="AUTOPLAN: stale <reason>")
+        assert mod.planner_stale_reason(stdout) is None
+
+    def test_last_assistant_text_counts_without_a_result_event(self):
+        mod = _load_module()
+        stdout = "\n".join([
+            _TOOL_ECHO,
+            _ev(type="assistant", message={"content": [
+                {"type": "text", "text": "AUTOPLAN: stale already shipped"}]}),
+        ])
+        assert mod.planner_stale_reason(stdout) == "already shipped"
+
+    def test_plan_with_only_a_tool_echo_is_no_master_and_not_blocked(self, tmp_path):
+        mod = _load_module()
+        data_root = _build_fake_data_root(tmp_path)
+        toolkit = _build_fake_toolkit(tmp_path, data_root)
+        manager_home = _build_fake_manager_home(tmp_path)
+        launcher = data_root / "projects" / "test-project" / "runtime" / "launcher"
+        launcher.mkdir(parents=True, exist_ok=True)
+        (launcher / "last-launch.json").write_text(
+            json.dumps({"project_path": str(toolkit)}) + "\n", encoding="utf-8")
+        backlog_dir = data_root / "ilk-skills-improvements"
+        backlog_dir.mkdir(parents=True, exist_ok=True)
+        _save_candidates(backlog_dir, [_make_candidate()])
+        plans_dir = data_root / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+
+        stub = tmp_path / "stub-echo.py"
+        stub.write_text(
+            "import json\n"
+            f"print({_ev(type='system', subtype='init', model='claude-opus-test')!r})\n"
+            f"print({_TOOL_ECHO!r})\n"
+            f"print({_ev(type='result', result='Stopped without a plan.')!r})\n")
+        lint, preflight = _make_stub_lint_preflight(tmp_path)
+        result = mod.plan(
+            candidate_id="sig-abc123", project_key="test-project",
+            run_id="run-001", data_root=data_root, toolkit_repo=str(toolkit),
+            manager_home=str(manager_home),
+            claude_cmd=[sys.executable, str(stub)],
+            lint_cmd=[sys.executable, str(lint)],
+            preflight_cmd=[sys.executable, str(preflight)],
+            env_overrides={"ILK_PLANS_DIR": str(plans_dir),
+                           "ILK_REPO_DIR": str(toolkit),
+                           "ILK_MARKER": str(tmp_path / "marker.txt")},
+        )
+        assert result == {"decision": "refused", "reason": "no-master"}, result
+        cand = _load_candidates(backlog_dir)[0]
+        assert not cand["relations"].get("autoplan_blocked")
+        assert cand["relations"]["autoplan_attempts"] == 1

@@ -862,27 +862,17 @@ def plan(
         # Never fall back to pre-existing masters: on 2026-10-07 that fallback
         # forced all 122 existing masters to draft after a stale plan.
 
-        # Also check for AUTOPLAN: stale line
-        has_stale_line = "AUTOPLAN: stale" in stdout
+        # The planner's own verdict, read from its final answer only.
+        stale_reason = planner_stale_reason(stdout)
 
         if not new_masters:
-            if has_stale_line:
-                # Extract reason
-                for line in stdout.splitlines():
-                    if "AUTOPLAN: stale" in line:
-                        reason = line.split("AUTOPLAN: stale", 1)[1].strip()
-                        _write_plan_refused(
-                            data_root, f"stale {reason}", candidate_id
-                        )
-                        _increment_attempts(
-                            data_root, candidate_id,
-                            blocked_reason=f"stale {reason}",
-                        )
-                        result = {
-                            "decision": "refused",
-                            "reason": f"stale {reason}",
-                        }
-                        return result
+            if stale_reason is not None:
+                reason = f"stale {stale_reason}"
+                _write_plan_refused(data_root, reason, candidate_id)
+                _increment_attempts(data_root, candidate_id,
+                                    blocked_reason=reason)
+                result = {"decision": "refused", "reason": reason}
+                return result
             _write_plan_refused(data_root, "no-master", candidate_id)
             _increment_attempts(data_root, candidate_id)
             result = {"decision": "refused", "reason": "no-master"}
@@ -1210,6 +1200,63 @@ def _build_plan_prompt(candidate: dict, toolkit_repo: str,
         f"- If the candidate's evidence no longer reproduces at HEAD, "
         f"write no plan and end with a line AUTOPLAN: stale <reason>"
     )
+
+
+_STALE_MARK = "AUTOPLAN: stale"
+
+
+def planner_final_text(stdout: str) -> str:
+    """The planner's final answer from its ``--output-format stream-json``.
+
+    The ``result`` event's text when there is one, else the text blocks of
+    the last assistant message, else the non-JSON lines (plain-text output,
+    e.g. test stubs).  Tool results are never included: on 2026-10-09 01:06
+    a planner grepped autoplan.py, the tool output echoed this module's
+    prompt template line ``AUTOPLAN: stale <reason>``, and a whole-stdout
+    substring match blocked a live defect row (579b6efa) as stale.
+    """
+    result_text: str | None = None
+    last_assistant: list[str] = []
+    plain: list[str] = []
+    for line in stdout.splitlines():
+        try:
+            ev = json.loads(line)
+        except (ValueError, TypeError):
+            plain.append(line)
+            continue
+        if not isinstance(ev, dict):
+            continue
+        if ev.get("type") == "result" and isinstance(ev.get("result"), str):
+            result_text = ev["result"]
+        elif ev.get("type") == "assistant":
+            content = (ev.get("message") or {}).get("content") or []
+            texts = [b.get("text", "") for b in content
+                     if isinstance(b, dict) and b.get("type") == "text"]
+            if texts:
+                last_assistant = texts
+    if result_text is not None:
+        return result_text
+    if last_assistant:
+        return "\n".join(last_assistant)
+    return "\n".join(plain)
+
+
+def planner_stale_reason(stdout: str) -> str | None:
+    """The reason from a final-answer line ``AUTOPLAN: stale <reason>``.
+
+    Only a line that STARTS with the marker counts, and the template
+    placeholder ``<reason>`` or an empty reason is not a verdict.  Capped at
+    300 characters (402d6231: a reason once carried the raw stream tail).
+    """
+    for line in planner_final_text(stdout).splitlines():
+        text = line.strip().strip("`*").strip()
+        if not text.startswith(_STALE_MARK):
+            continue
+        reason = text[len(_STALE_MARK):].strip(" :—-")
+        if not reason or reason.startswith("<reason>"):
+            continue
+        return reason[:300]
+    return None
 
 
 def _write_plan_refused(data_root: Path, reason: str,
