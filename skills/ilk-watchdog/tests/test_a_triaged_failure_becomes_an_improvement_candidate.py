@@ -412,48 +412,35 @@ def test_ac5_triage_run_creates_candidate(tmp_path, monkeypatch):
     claude_stub.chmod(0o755)
     monkeypatch.setenv("PATH", str(bin_dir), prepend=":")
 
-    # Stub ilk_notify (no-op, must export main)
-    scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
-    notify_stub = scripts_dir / "ilk_notify.py"
-    original_notify = None
-    if notify_stub.exists():
-        original_notify = notify_stub.read_text(encoding="utf-8")
-    notify_stub.write_text(
-        "#!/usr/bin/env python3\n"
-        "def main(*args, **kwargs):\n"
-        "    pass\n",
-        encoding="utf-8",
+    # Silence the notifier in-process.  This used to overwrite the tracked
+    # scripts/ilk_notify.py and restore it in `finally`; two tests doing that
+    # under xdist could read a truncated file as "no original" and unlink it
+    # (it vanished from a worktree on 2026-10-09).
+    import triage_apply
+    monkeypatch.setattr(triage_apply, "ilk_notify", lambda **kw: None)
+
+    # Create a triage home with minimal config
+    triage_home = tmp_path / "claude-triage"
+    triage_home.mkdir()
+    (triage_home / "CLAUDE.md").write_text("# Triage agent\n", encoding="utf-8")
+
+    from ilk_triage import run_triage
+
+    result = run_triage(
+        project_key="test-project",
+        run_id="20261003-125807",
+        home=triage_home,
     )
 
-    try:
-        # Create a triage home with minimal config
-        triage_home = tmp_path / "claude-triage"
-        triage_home.mkdir()
-        (triage_home / "CLAUDE.md").write_text("# Triage agent\n", encoding="utf-8")
+    # The result should be an escalation (stub returns park-and-escalate)
+    assert result["action"] == "park-and-escalate"
 
-        from ilk_triage import run_triage
-
-        result = run_triage(
-            project_key="test-project",
-            run_id="20261003-125807",
-            home=triage_home,
-        )
-
-        # The result should be an escalation (stub returns park-and-escalate)
-        assert result["action"] == "park-and-escalate"
-
-        # Check that a candidate was emitted
-        backlog_dir = data_root / "ilk-skills-improvements"
-        candidates = _load_candidates(backlog_dir)
-        assert len(candidates) == 1
-        assert candidates[0]["source"] == "triage"
-        assert candidates[0]["severity"] == "high"  # escalated
-    finally:
-        # Restore ilk_notify
-        if original_notify:
-            notify_stub.write_text(original_notify, encoding="utf-8")
-        elif notify_stub.exists():
-            notify_stub.unlink()
+    # Check that a candidate was emitted
+    backlog_dir = data_root / "ilk-skills-improvements"
+    candidates = _load_candidates(backlog_dir)
+    assert len(candidates) == 1
+    assert candidates[0]["source"] == "triage"
+    assert candidates[0]["severity"] == "high"  # escalated
 
 
 def test_ac5_kill_switch_prevents_candidate(tmp_path, monkeypatch):
@@ -478,40 +465,28 @@ def test_ac5_kill_switch_prevents_candidate(tmp_path, monkeypatch):
     claude_stub.chmod(0o755)
     monkeypatch.setenv("PATH", str(bin_dir), prepend=":")
 
-    # Stub ilk_notify (must export main)
-    scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
-    notify_stub = scripts_dir / "ilk_notify.py"
-    original_notify = None
-    if notify_stub.exists():
-        original_notify = notify_stub.read_text(encoding="utf-8")
-    notify_stub.write_text(
-        "#!/usr/bin/env python3\n"
-        "def main(*args, **kwargs):\n"
-        "    pass\n",
-        encoding="utf-8",
+    # Silence the notifier in-process.  This used to overwrite the tracked
+    # scripts/ilk_notify.py and restore it in `finally`; two tests doing that
+    # under xdist could read a truncated file as "no original" and unlink it
+    # (it vanished from a worktree on 2026-10-09).
+    import triage_apply
+    monkeypatch.setattr(triage_apply, "ilk_notify", lambda **kw: None)
+
+    from ilk_triage import run_triage
+
+    result = run_triage(
+        project_key="test-project",
+        run_id="20261003-125807",
     )
 
-    try:
-        from ilk_triage import run_triage
+    # Kill switch → refused
+    assert result["action"] == "refused"
+    assert result["reason"] == "kill_switch"
 
-        result = run_triage(
-            project_key="test-project",
-            run_id="20261003-125807",
-        )
-
-        # Kill switch → refused
-        assert result["action"] == "refused"
-        assert result["reason"] == "kill_switch"
-
-        # No candidate should be emitted
-        backlog_dir = data_root / "ilk-skills-improvements"
-        candidates = _load_candidates(backlog_dir)
-        assert len(candidates) == 0
-    finally:
-        if original_notify:
-            notify_stub.write_text(original_notify, encoding="utf-8")
-        elif notify_stub.exists():
-            notify_stub.unlink()
+    # No candidate should be emitted
+    backlog_dir = data_root / "ilk-skills-improvements"
+    candidates = _load_candidates(backlog_dir)
+    assert len(candidates) == 0
 
 
 # ── AC-6: audit kinds accepted ───────────────────────────────────────────────
