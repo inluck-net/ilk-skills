@@ -1,13 +1,13 @@
 """A repeated failure files its own backlog row.
 
-Sub-plan a-repeated-failure-files-its-own-row, step 0 (red-first pins).
+Sub-plan a-repeated-failure-files-its-own-row.
 
 When the same failure ends two consecutive runs of the same slug at the
 same step, the scheduler files ONE evidence-carrying ilk backlog row with
 no agent involved.
 
-AC-1..AC-7 pin the contract before ``repeat_failure.py`` is built.
-Every test is xfail(strict=True) until step 1 removes the markers.
+AC-1..AC-6 test the detector and filer.  AC-7 tests the scheduler hook
+(stays xfail until step 2).
 
 HOME and ILK_DATA_HOME are both pinned to tmp_path (§23 half-pinned trap).
 """
@@ -67,7 +67,6 @@ def _write_log(path: Path, lines: list[str]) -> None:
 # ── AC-1: the real case ─────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="repeat_failure not built")
 def test_ac1_two_consecutive_revert_rows_give_one_repeat(project_dir):
     """Two revert rows from runs 20261009-085114 and 20261009-085627
     (slug postmortem-labels-verify, from_step 2, ship_commit 416a1020,
@@ -122,7 +121,6 @@ def test_ac1_two_consecutive_revert_rows_give_one_repeat(project_dir):
 # ── AC-2: filing ─────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="repeat_failure not built")
 def test_ac2_file_repeats_adds_one_backlog_row(project_dir, backlog_dir):
     """file_repeats on AC-1's fixture plus a launcher log for run
     20261009-085627 containing the integrity violation adds exactly one
@@ -198,7 +196,6 @@ def test_ac2_file_repeats_adds_one_backlog_row(project_dir, backlog_dir):
 # ── AC-3: dedupe ─────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="repeat_failure not built")
 def test_ac3_second_call_adds_no_row_third_bumps_seen_count(
     project_dir, backlog_dir,
 ):
@@ -291,7 +288,6 @@ def test_ac3_second_call_adds_no_row_third_bumps_seen_count(
 # ── AC-4: red gate ──────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="repeat_failure not built")
 def test_ac4_red_gate_repeat(project_dir, backlog_dir):
     """Two runs whose last (slug, step 1) gate row is 'fail' at the same
     head_sha give one red-gate repeat."""
@@ -331,7 +327,6 @@ def test_ac4_red_gate_repeat(project_dir, backlog_dir):
     assert repeats[0].step == 1
 
 
-@pytest.mark.xfail(strict=True, reason="repeat_failure not built")
 def test_ac4_no_red_gate_when_pass_or_different_sha(project_dir):
     """If the second run's last row at that step is 'pass', or head_sha
     differs, there is no red-gate repeat."""
@@ -373,7 +368,6 @@ def test_ac4_no_red_gate_when_pass_or_different_sha(project_dir):
 # ── AC-5: not a repeat ──────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="repeat_failure not built")
 def test_ac5_same_run_two_identical_reverts_not_a_repeat(project_dir):
     """One run with two identical reverts (same run_id) gives no repeat."""
     import repeat_failure
@@ -413,7 +407,6 @@ def test_ac5_same_run_two_identical_reverts_not_a_repeat(project_dir):
 # ── AC-6: fails loud ────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="repeat_failure not built")
 def test_ac6_unreadable_json_line_exits_3(project_dir, backlog_dir):
     """A gate-history line that is not valid JSON makes the CLI exit 3
     with status 'unreadable', and the backlog file is unchanged."""
