@@ -65,7 +65,6 @@ def _cli_accepted_flags() -> set[str]:
 # ── AC-1 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="commands/ilk-file.md not written")
 def test_ac1_command_exists_and_names_the_cli():
     assert _COMMAND.exists(), f"{_COMMAND} missing"
     text = _COMMAND.read_text(encoding="utf-8")
@@ -75,7 +74,6 @@ def test_ac1_command_exists_and_names_the_cli():
 # ── AC-2 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="commands/ilk-file.md not written")
 def test_ac2_all_flags_in_command_are_accepted_by_cli():
     text = _COMMAND.read_text(encoding="utf-8")
     flags_in_doc = set(re.findall(r"(--[a-z][a-z-]+)", text))
@@ -89,7 +87,6 @@ def test_ac2_all_flags_in_command_are_accepted_by_cli():
 # ── AC-3 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="commands/ilk-file.md not written")
 def test_ac3_reason_codes_in_doc_and_source():
     doc_text = _COMMAND.read_text(encoding="utf-8")
     source_text = _SCRIPT.read_text(encoding="utf-8")
@@ -101,7 +98,6 @@ def test_ac3_reason_codes_in_doc_and_source():
 # ── AC-4 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="commands/ilk-file.md not written")
 def test_ac4_rules_and_references_present():
     text = _COMMAND.read_text(encoding="utf-8")
     required = [
