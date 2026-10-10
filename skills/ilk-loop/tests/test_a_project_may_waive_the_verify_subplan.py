@@ -61,8 +61,8 @@ def _make_project(tmp_path: Path, ship: dict | None) -> Path:
     """Minimal project root. *ship* is the ``ship:`` value, or ``None``
     for no ``.ilk-launch.json`` at all."""
     project = tmp_path / "proj"
-    project.mkdir()
-    (project / ".git").mkdir()
+    project.mkdir(parents=True, exist_ok=True)
+    (project / ".git").mkdir(exist_ok=True)
     if ship is not None:
         _write_json(project / ".ilk-launch.json", {"ship": ship})
     return project
