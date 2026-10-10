@@ -5472,6 +5472,41 @@ print(fm.get('status', ''))
   [[ -n "$result" ]] && echo "$result"
 }
 
+# build_worker_gate_notice <gate-cmds> <step>
+# The worker's gate-running notice.  The workflow part (when and how to run
+# the gate) is read from templates/worker-gate-notice.md, which is NOT kernel,
+# so an improvement batch can tune it (backlog 8db6cca8: a worker ran no test
+# until call 131 of 206 in a 90-min red iteration).  The invariants below stay
+# here, in the kernel, and are always appended: a template edit cannot drop
+# them.  A missing or empty template falls back to the built-in workflow text.
+build_worker_gate_notice() {
+  local gate_cmds="$1" step="$2"
+  local tpl="${_SKILL_ROOT}/ilk-loop/templates/worker-gate-notice.md"
+  local indented workflow=""
+  indented=$(printf '%s\n' "$gate_cmds" | sed 's/^/  /')
+  if [[ -s "$tpl" ]]; then
+    workflow=$(python3 -c '
+import sys
+t = open(sys.argv[1], encoding="utf-8").read().rstrip("\n")
+print(t.replace("{gate_cmds}", sys.argv[2]))
+' "$tpl" "$indented" 2>/dev/null) || workflow=""
+  fi
+  if [[ -z "$workflow" ]]; then
+    workflow="AFTER your step commit, run the declared gate and iterate until green:
+${indented}
+
+Rules:
+- Run every command above after your commit.
+- While any is red: fix the code (or fix a test-infra fault), commit with 'test-infra:' in the body if fixing a test, then rerun.
+- End your turn ONLY when all are green.
+- If green is not reachable, end your turn with the failing ids written to the sub-plan's Findings section."
+  fi
+  printf '%s\n%s\n%s\n%s\n' "$workflow" \
+    "- Never weaken or delete an assertion. Never add a deselect or baseline_red entry." \
+    "- When green: bump current_step from ${step} to the next step (exactly +1), commit that bump, and END YOUR TURN." \
+    "- Do not start the next step in this turn. Never write the sub-plan's status: field."
+}
+
 # ----- Main ------------------------------------------------------------------
 
 main() {
@@ -6194,17 +6229,7 @@ ${iter_prompt}"
           _wgn_gate_cmds=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_local_checks.py" \
             --print-step-gate "$_wgn_subplan" "$_wgn_step" 2>/dev/null) || true
           if [[ -n "$_wgn_gate_cmds" ]]; then
-            _worker_gate_notice="AFTER your step commit, run the declared gate and iterate until green:
-$(echo "$_wgn_gate_cmds" | sed 's/^/  /')
-
-Rules:
-- Run every command above after your commit.
-- While any is red: fix the code (or fix a test-infra fault), commit with 'test-infra:' in the body if fixing a test, then rerun.
-- End your turn ONLY when all are green.
-- Never weaken or delete an assertion. Never add a deselect or baseline_red entry.
-- If green is not reachable, end your turn with the failing ids written to the sub-plan's Findings section.
-- When green: bump current_step from ${_wgn_step} to the next step (exactly +1), commit that bump, and END YOUR TURN.
-- Do not start the next step in this turn. Never write the sub-plan's status: field."
+            _worker_gate_notice=$(build_worker_gate_notice "$_wgn_gate_cmds" "$_wgn_step")
           fi
         fi
       fi
