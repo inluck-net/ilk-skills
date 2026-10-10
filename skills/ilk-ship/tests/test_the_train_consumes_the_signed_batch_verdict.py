@@ -180,6 +180,7 @@ def _write_batch_gate_record(
     undeclared: list | None = None,
     excused_count: int | None = None,
     batch: str | None = None,
+    failing_nodes: list[str] | None = None,
 ) -> Path:
     """Write a batch-gate record to disk (per-batch or legacy)."""
     from batch_gate import BatchGateRecord, write_record
@@ -193,11 +194,51 @@ def _write_batch_gate_record(
         writer=writer,
         undeclared=undeclared,
         excused_count=excused_count,
+        failing_nodes=failing_nodes,
     )
     return write_record(record, runtime_dir, batch=batch)
 
 
 # ── AC-1: canonical record selection ────────────────────────────────────────
+
+@pytest.mark.parametrize("batch", [None, "batch-baseline-preservation"])
+def test_proof_preserves_excused_failures_and_suite_total(tmp_path: Path, batch) -> None:
+    project = _make_fake_project(tmp_path)
+    data_dir = _make_data_dir(tmp_path)
+    _write_baseline(data_dir, "v0.0.1", "python3 -m pytest", [])
+    path = _write_batch_gate_record(
+        data_dir / "runtime", "pass", _get_head_sha(project),
+        "python3 -m pytest", tree_sha=_get_tree_sha(project),
+        undeclared=[], excused_count=2, batch=batch,
+    )
+    data = json.loads(path.read_text())
+    data.update(failing_nodes=["test_old.py::test_known", "test_flaky.py::test_race"],
+                counts={"suite_failed": 2},
+                suite_scope={"mode": "full", "passed": 91, "total": 100})
+    path.write_text(json.dumps(data))
+    result = prove(project, data_dir)
+    assert result["proven"], result
+    proof = json.loads(Path(result["proof_file"]).read_text())
+    assert proof["failing_nodes"] == data["failing_nodes"]
+    assert proof["search_space"] == 100
+
+
+@pytest.mark.parametrize("nodes", [None, [], ["test_one"], ["test_one", "test_one"], [1, 2]])
+def test_excused_verdict_without_complete_failure_ids_refuses(tmp_path: Path, nodes) -> None:
+    project = _make_fake_project(tmp_path)
+    data_dir = _make_data_dir(tmp_path)
+    _write_baseline(data_dir, "v0.0.1", "python3 -m pytest", [])
+    path = _write_batch_gate_record(
+        data_dir / "runtime", "pass", _get_head_sha(project), "python3 -m pytest",
+        tree_sha=_get_tree_sha(project), undeclared=[], excused_count=2,
+    )
+    data = json.loads(path.read_text())
+    if nodes is not None:
+        data["failing_nodes"] = nodes
+    path.write_text(json.dumps(data))
+    result = prove(project, data_dir)
+    assert not result["proven"]
+    assert "failing node" in result["reason"]
 
 
 class TestCanonicalRecordSelection:
@@ -899,6 +940,7 @@ class TestBatchVerdictIsSuiteAuthority:
             # 6 suite failures, all excused (0 attributed)
             undeclared=[],
             excused_count=6,
+            failing_nodes=[f"test_known.py::test_case_{i}" for i in range(6)],
         )
 
         result = prove(project, data_dir)

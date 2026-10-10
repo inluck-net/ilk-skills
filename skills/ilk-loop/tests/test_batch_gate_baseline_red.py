@@ -74,6 +74,7 @@ class TestAllFailuresDeclared:
                                     "reason": "inherited", "as_of": "2026-08-26"}], cmd)
         rec = _run(proj, tmp_path / "rt")
         assert rec is not None
+        assert rec.failing_nodes == ["tests/test_known.py::test_a", "tests/test_known.py::test_b"]
         assert rec.verdict == "pass", (
             "every failing node id is declared baseline_red, so the gate must "
             f"not report fail.  Got {rec.verdict!r}"

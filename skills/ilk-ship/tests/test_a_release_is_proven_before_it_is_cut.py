@@ -176,6 +176,8 @@ def _write_batch_gate_record(
         "writer": "batch_gate.py",
         "undeclared": [],
         "excused_count": 0,
+        "failing_nodes": [],
+        "suite_scope": {"mode": "full", "passed": 3, "total": 3},
     }
     (runtime_dir / "batch-gate.json").write_text(
         json.dumps(record, indent=2) + "\n", encoding="utf-8",

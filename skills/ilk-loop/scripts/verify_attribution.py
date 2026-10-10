@@ -1099,6 +1099,7 @@ def write_gate_record(project: Path, excused: int,
                       batch: str | None = None,
                       counts: dict[str, int] | None = None,
                       suite_scope: dict | None = None,
+                      failing_nodes: list[str] | None = None,
                       ) -> tuple[bool, str]:
     """Record the verified verdict where the PROOF CHECK actually reads it.
 
@@ -1170,6 +1171,7 @@ def write_gate_record(project: Path, excused: int,
         suite_source=suite_source,
         counts=dict(counts) if counts else None,
         suite_scope=dict(suite_scope) if suite_scope else None,
+        failing_nodes=list(failing_nodes) if failing_nodes is not None else None,
     )
     try:
         written = batch_gate.write_record(record, runtime_dir, batch=batch)
@@ -1424,6 +1426,7 @@ def main(argv: list[str] | None = None) -> int:
     ok, detail = write_gate_record(project, excused, flaky_owed=flaky_owed,
                                    suite_source=suite_source,
                                    batch=args.batch, counts=counts,
+                                   failing_nodes=[row[0] for row in parse_rows(extract_section(_ss_text))],
                                    suite_scope=read_suite_scope(_ss_text))
     if ok:
         print(f"{message}; batch-gate record written to {detail}")

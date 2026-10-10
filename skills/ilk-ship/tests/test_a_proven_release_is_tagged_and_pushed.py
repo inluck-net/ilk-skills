@@ -158,6 +158,8 @@ def _write_proof(
         "new_failing_ids": [],
         "failing_nodes": failing_nodes or [],
         "baseline_ids": baseline_ids or [],
+        "search_space": 3,
+        "suite_scope": {"mode": "full", "passed": 3 - len(failing_nodes or []), "total": 3},
     }
     p.write_text(json.dumps(payload, indent=2) + "\n")
     return p
@@ -348,6 +350,31 @@ class TestCutPushRejected:
 
 class TestCutStoresBaseline:
     """AC-4: after cut, the v0.0.2 baseline file exists, keyed on proof's invocation."""
+
+    def test_baseline_keeps_failures_and_collected_count(self, tmp_path: Path) -> None:
+        from baseline_diff import load_baseline
+        project, _ = _make_fake_project(tmp_path)
+        data_dir = _make_data_dir(tmp_path)
+        _write_proof(data_dir, _get_head_sha(project), failing_nodes=["test_trivial.py::test_two"])
+        result = _import_cut()(project, data_dir)
+        assert load_baseline(data_dir, result["tag"], "python3 -m pytest") == (
+            frozenset({"test_trivial.py::test_two"}), 3,
+        )
+
+    @pytest.mark.parametrize("count", [None, 0, True, "3"])
+    def test_unmeasured_count_refuses_before_tagging(self, tmp_path: Path, count) -> None:
+        project, bare = _make_fake_project(tmp_path)
+        data_dir = _make_data_dir(tmp_path)
+        head = _get_head_sha(project)
+        path = _write_proof(data_dir, head)
+        proof = json.loads(path.read_text())
+        proof["search_space"] = count
+        path.write_text(json.dumps(proof))
+        with pytest.raises(SystemExit) as exc:
+            _import_cut()(project, data_dir)
+        assert exc.value.code == 4
+        assert _get_head_sha(project) == head
+        assert subprocess.run(["git", "rev-parse", "v0.0.2"], cwd=bare, capture_output=True).returncode != 0
 
     def test_baseline_stored_after_cut(self, tmp_path: Path) -> None:
         """After cut, baseline file exists for v0.0.2 under the proof's invocation."""

@@ -282,6 +282,22 @@ class TestCli:
 # on 2026-09-15 and both still read SHIP PROOF MISSING.
 
 class TestGateRecordBridge:
+    def test_cli_persists_all_failure_ids_for_the_release_baseline(self, tmp_path, monkeypatch):
+        import batch_gate
+        proj = self._project(tmp_path, monkeypatch)
+        tree = batch_gate._git_head_tree(proj)
+        head = batch_gate._git_head_sha(proj)
+        record = _write(tmp_path, f"verified_head: {head}\ntree_sha: {tree}\nsuite_failed: 2\n"
+                        "suite_scope: full\nsuite_total: 100\nsuite_passed: 91\n"
+                        "\n## At-base rerun\n\n" + TABLE_HEAD +
+                        "| test_known.py::test_red | failed | no | no |\n"
+                        "| test_declared.py::test_red | declared-at-base | yes | no |\n")
+        assert va.main([str(record), "--project", str(proj)]) == 0
+        written = batch_gate.read_record(batch_gate.resolve_runtime_dir(proj))
+        assert written.failing_nodes == ["test_known.py::test_red", "test_declared.py::test_red"]
+        assert written.excused_count == 2
+        assert written.suite_scope["total"] == 100
+
     def _project(self, tmp_path: Path, monkeypatch, suite_cmd="echo hi"):
         import json as _json
         import subprocess

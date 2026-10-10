@@ -654,7 +654,30 @@ def prove(project: Path, data_dir: Path) -> dict:
     batch_path = validation["batch_path"]
     provenance = validation["provenance"]
 
-    failing_nodes = []
+    failing_nodes = batch_record.failing_nodes
+    # A legacy all-green verdict can establish an empty set.  A verdict
+    # that excuses failures cannot recover their identities from counts.
+    if failing_nodes is None and batch_record.excused_count == 0 and batch_record.undeclared == []:
+        failing_nodes = []
+    expected_failed = batch_record.excused_count
+    if batch_record.counts is not None:
+        expected_failed = batch_record.counts.get("suite_failed", expected_failed)
+    if (
+        not isinstance(failing_nodes, list)
+        or any(not isinstance(node, str) or not node.strip() for node in failing_nodes)
+        or len(set(failing_nodes)) != len(failing_nodes)
+        or not isinstance(expected_failed, int)
+        or isinstance(expected_failed, bool)
+        or len(failing_nodes) != expected_failed
+        or expected_failed != batch_record.excused_count
+    ):
+        reason = "batch verdict has missing or inconsistent failing node IDs; cannot save a release baseline"
+        proof_path = _write_proof(data_dir, head, {
+            "head": head, "last_tag": last_tag, "invocation": invocation,
+            "verdict": "refused", "reason": reason,
+            "verdict_source": "batch_verdict",
+        })
+        return {"proven": False, "reason": reason, "new_failing_ids": [], "proof_file": proof_path}
     undeclared_failures = []
     if batch_record.undeclared is not None:
         undeclared_failures = list(batch_record.undeclared)
@@ -768,6 +791,7 @@ def prove(project: Path, data_dir: Path) -> dict:
         provenance=provenance,
         verdict_source="batch_verdict",
         suite_scope=suite_scope,
+        search_space=suite_scope.get("total"),
         safety_case={
             "verdict": sc_result.get("verdict"),
             "components": sc_result.get("components"),
@@ -916,6 +940,19 @@ def cut(project: Path, data_dir: Path) -> dict:
         print(f"refused: proof verdict is {proof.get('verdict')!r}, not 'proven'", file=sys.stderr)
         sys.exit(4)
 
+    search_space = proof.get("search_space")
+    failing_nodes = proof.get("failing_nodes")
+    if (
+        not isinstance(search_space, int) or isinstance(search_space, bool)
+        or search_space <= 0
+        or not isinstance(failing_nodes, list)
+        or any(not isinstance(node, str) or not node.strip() for node in failing_nodes)
+        or len(set(failing_nodes)) != len(failing_nodes)
+        or len(failing_nodes) > search_space
+    ):
+        print("refused: proof lacks measured baseline node IDs or collected-test count", file=sys.stderr)
+        sys.exit(4)
+
     # ── check still eligible ─────────────────────────────────────────────
     eligibility = check(project, data_dir)
     if not eligibility["eligible"]:
@@ -952,7 +989,7 @@ def cut(project: Path, data_dir: Path) -> dict:
     phase0_total = phase0_proven  # all proven if we got here
 
     # Phase 1: parse suite output stats
-    phase1_passed = 0
+    phase1_passed = proof.get("suite_scope", {}).get("passed", 0)
     phase1_failed = len(failing_nodes)
     phase1_new = len(new_failing_ids)
     suite_scope = _scope_summary(proof.get("suite_scope"))
@@ -1012,7 +1049,6 @@ def cut(project: Path, data_dir: Path) -> dict:
         sys.path.insert(0, str(_LOOP_SCRIPTS.parent / "ilk-ship" / "scripts"))
     from baseline_diff import store_baseline  # noqa: E402
 
-    search_space = len(failing_nodes) + (len(baseline_ids) - phase1_new) if baseline_ids else 0
     baseline_path = store_baseline(
         project_root=data_dir,
         tag=next_tag,

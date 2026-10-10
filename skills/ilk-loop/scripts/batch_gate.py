@@ -157,6 +157,9 @@ class BatchGateRecord:
     #: a scoped 8-test verify (07h, 2026-10-08) read to the train exactly
     #: like a full-suite pass.
     suite_scope: Optional[dict] = None
+    #: Every failure observed in the suite, including excused failures.  The
+    #: release baseline needs identities, not just attribution bucket counts.
+    failing_nodes: Optional[list[str]] = None
 
     def to_dict(self) -> dict:
         d = {
@@ -182,6 +185,8 @@ class BatchGateRecord:
             d["counts"] = dict(self.counts)
         if self.suite_scope is not None:
             d["suite_scope"] = dict(self.suite_scope)
+        if self.failing_nodes is not None:
+            d["failing_nodes"] = list(self.failing_nodes)
         return d
 
 
@@ -326,6 +331,7 @@ def read_record(
                 flaky_owed=_optional_str_list(data.get("flaky_owed")),
                 counts=data.get("counts") if isinstance(data.get("counts"), dict) else None,
                 suite_scope=_optional_dict(data.get("suite_scope")),
+                failing_nodes=data.get("failing_nodes"),
             )
         # Fall through to legacy path.
     p = record_path(runtime_dir)
@@ -352,6 +358,7 @@ def read_record(
         flaky_owed=_optional_str_list(data.get("flaky_owed")),
         counts=data.get("counts") if isinstance(data.get("counts"), dict) else None,
         suite_scope=_optional_dict(data.get("suite_scope")),
+        failing_nodes=data.get("failing_nodes"),
     )
 
 
@@ -1248,6 +1255,7 @@ def _run_gate_inner(
 
     if exit_code == 0:
         verdict = "pass"
+        failing = []
         excused, undeclared = [], []
     else:
         # A non-zero suite is not automatically a failed batch: `baseline_red`
@@ -1276,6 +1284,7 @@ def _run_gate_inner(
         excused_count=len(excused),
         tree_sha=_git_head_tree(project_path),
         writer=WRITER_ID,
+        failing_nodes=list(failing),
     )
 
 
