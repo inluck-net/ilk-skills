@@ -39,10 +39,11 @@ def test_ilk_command_has_no_multi_step_license() -> None:
 
 
 def _worker_gate_notice_block() -> str:
+    # The invariants live in build_worker_gate_notice (kernel); the workflow
+    # text moved to templates/worker-gate-notice.md (backlog 8db6cca8).
     text = RUNNER.read_text(encoding="utf-8")
-    start = text.index('_worker_gate_notice="AFTER your step commit')
-    end = text.index('Findings section.', start)
-    end = text.index('"', end)
+    start = text.index('build_worker_gate_notice() {')
+    end = text.index('\n}\n', start)
     return text[start:end]
 
 
@@ -50,5 +51,5 @@ def test_worker_gate_notice_ends_the_turn_after_one_step() -> None:
     block = _worker_gate_notice_block()
     assert "END YOUR TURN" in block
     assert "Do not start the next step in this turn" in block
-    assert "${_wgn_step}" in block  # names the step, expanded at prompt time
+    assert "${step}" in block  # names the step, expanded at prompt time
     assert "Never write the sub-plan's status: field" in block
