@@ -41,6 +41,104 @@ DRIVER_LOG_PATTERN = re.compile(
 )
 WORKER_HOME_PATTERN = re.compile(r"\.claude-worker")
 
+# The sub-plan's own ``Part of [MASTER-<stem>-execution-plan.md](...)`` link is
+# the MASTER filename.  Sub-plan ``triage-reads-the-newest-record`` derives the
+# record's ``<batch>`` from that stem minus ``MASTER-`` and ``-execution-plan``.
+_MASTER_REF_RE = re.compile(r"MASTER-([^\]\s]+?)-execution-plan")
+
+
+# ── newest verification record ───────────────────────────────────────────────
+
+
+def _read_verification_record(
+    data_dir: Path, subplan_text: str, missing: list[str]
+) -> dict[str, Any] | None:
+    """The newest verification record for a ``batch_verification: true`` sub-plan.
+
+    The record lives at ``<data_dir>/logs/verification/batch-<batch>-batch.md``
+    with attempt history in ``batch-<batch>-batch.history.jsonl``.  Its
+    ``## At-base rerun`` table is counted the way ``verify_attribution``
+    re-derives the verdict — ``attributed_rows`` reads the final ``attributed``
+    cell, never the whole row (which would also match ``in baseline_red``).
+
+    A work sub-plan returns ``None`` with no missing entry: the record is not
+    its evidence, decoy or not.  A verification sub-plan whose record is
+    absent or uncountable files ``"verification record"`` — a table that
+    cannot be counted is not a table that can be quoted.
+    """
+    if parse_frontmatter(subplan_text).get("batch_verification", "").strip().lower() != "true":
+        return None
+
+    master = _MASTER_REF_RE.search(subplan_text)
+    if not master:
+        missing.append("verification record")
+        return None
+
+    record_path = (
+        data_dir / "logs" / "verification" / f"batch-{master.group(1)}-batch.md"
+    )
+    if not record_path.is_file():
+        missing.append("verification record")
+        return None
+
+    # Lazy import: only a verification sub-plan pays for the parser module.
+    from verify_attribution import (
+        VerificationError,
+        attributed_rows,
+        extract_section,
+        parse_rows,
+    )
+
+    try:
+        text = record_path.read_text(encoding="utf-8")
+        attributed = len(attributed_rows(parse_rows(extract_section(text))))
+    except (VerificationError, OSError):
+        missing.append("verification record")
+        return None
+
+    attempts = 0
+    history_path = record_path.with_suffix(".history.jsonl")
+    if history_path.is_file():
+        for line in history_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            attempts += 1
+
+    return {
+        "path": str(record_path),
+        "mtime": datetime.fromtimestamp(
+            record_path.stat().st_mtime, tz=timezone.utc
+        ).isoformat(),
+        "attempts": attempts,
+        "attributed": attributed,
+    }
+
+
+def _append_record_note(
+    decision: dict[str, Any], evidence: dict[str, Any]
+) -> dict[str, Any]:
+    """Suffix a park-and-escalate decision with the newest record's counts.
+
+    Deterministic post-processing, so the note is present whatever model text
+    came back.  ``reason`` only appears on the early-return escalations;
+    it is suffixed too when present.
+    """
+    rec = evidence.get("verification_record")
+    if not rec:
+        return decision
+    suffix = (
+        f" [newest verification record: attempt {rec['attempts']}, "
+        f"{rec['attributed']} attributed]"
+    )
+    decision["finding"] = f"{decision.get('finding') or ''}{suffix}"
+    if decision.get("reason") is not None:
+        decision["reason"] = f"{decision['reason']}{suffix}"
+    return decision
+
 
 # ── evidence builder ─────────────────────────────────────────────────────────
 
@@ -227,6 +325,11 @@ def build_evidence(data_dir: Path, run_id: str) -> dict[str, Any]:
                 evidence["subplan_frontmatter"] = found_text.split("---", 2)[1] if found_text.startswith("---") else ""
                 findings_match = re.search(r"## Findings\n(.*?)(?=\n## |\Z)", found_text, re.DOTALL)
                 evidence["subplan_findings"] = findings_match.group(1).strip() if findings_match else ""
+                # D. the newest verification record — only a
+                # ``batch_verification: true`` sub-plan's evidence carries one.
+                rec = _read_verification_record(data_dir, found_text, missing)
+                if rec is not None:
+                    evidence["verification_record"] = rec
         else:
             evidence["subplan_frontmatter"] = ""
             evidence["subplan_findings"] = ""
@@ -252,7 +355,27 @@ def decide(
 
     When *skip_audit* is True the ``triage-decided`` audit row is suppressed
     (the caller is responsible for writing the terminal row).
+
+    A ``park-and-escalate`` result carries the newest verification record's
+    counts in its ``finding`` (and ``reason`` when present) — post-processed
+    here so it holds whatever the model wrote.
     """
+    decision = _decide(
+        evidence, home=home, timeout_s=timeout_s, skip_audit=skip_audit
+    )
+    if decision.get("action") == "park-and-escalate":
+        decision = _append_record_note(decision, evidence)
+    return decision
+
+
+def _decide(
+    evidence: dict[str, Any],
+    *,
+    home: Path,
+    timeout_s: int = 600,
+    skip_audit: bool = False,
+) -> dict[str, Any]:
+    """The model call behind :func:`decide`, without the record post-process."""
     # Check for worker home
     if WORKER_HOME_PATTERN.search(str(home)):
         return {
@@ -266,7 +389,18 @@ def decide(
             "reason": "worker_home",
         }
 
-    # Build the prompt
+    # Build the prompt.  When the stopped sub-plan is a verification one, one
+    # line names the newest record so a stale `## Findings` entry cannot read
+    # as the freshest evidence in the pack.
+    rec = evidence.get("verification_record")
+    record_block = ""
+    if rec:
+        record_block = (
+            f"Newest verification record: attempt {rec['attempts']}, "
+            f"{rec['mtime']}, {rec['attributed']} attributed row(s). "
+            f"If it is newer than the Findings, it governs.\n\n"
+        )
+
     prompt = f"""You are a triage agent. Analyze the evidence from a stopped run and decide one action.
 
 Vocabulary (choose exactly one):
@@ -282,7 +416,7 @@ Hard limits:
 - reopen requires slug and step
 - amend requires slug
 
-Evidence:
+{record_block}Evidence:
 {json.dumps(evidence, indent=2)}
 
 Return ONLY a JSON object, nothing else."""

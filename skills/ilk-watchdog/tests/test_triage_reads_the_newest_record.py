@@ -29,23 +29,20 @@ attempt).  ``<batch>`` is the MASTER filename stem minus ``MASTER-`` and
 ``verify_attribution.attributed_rows``, the final ``attributed`` cell — and
 not the signed ``derive_attributed`` re-derivation.
 
-The pins:
+The pins (step 0 red-first; the xfails were removed when step 1 built the
+behaviour):
 
 AC-1 (read)    — Findings say "none fixable in scope" (written earlier) and a
                  newer record has 2 attributed rows at attempt 2:
                  ``verification_record.attributed == 2`` and ``attempts == 2``.
-                 RED AT BASE: the ``verification_record`` key does not exist
-                 (KeyError).
 AC-2 (quote)   — the prompt passed to the stub carries the designed line, i.e.
-                 ``attempt 2`` and ``2 attributed``.  RED AT BASE: the prompt
-                 is the evidence JSON alone (AssertionError).
+                 ``attempt 2`` and ``2 attributed``.
 AC-3 (append)  — a stubbed ``park-and-escalate`` decision's ``finding`` ends
                  with ``[newest verification record: attempt 2, 2 attributed]``.
-                 RED AT BASE: no post-processing (AssertionError).
 AC-4 (scope)   — a non-verification sub-plan has no ``verification_record``
                  key and no new missing-source entry, even with a decoy record
-                 on disk.  PASSES AT BASE (the key does not exist, so its
-                 absence is vacuous) — left unpinned as the design's scoping
+                 on disk.  Never red at base (the key did not exist, so its
+                 absence was vacuous) — unpinned as the design's scoping
                  falsifier, per the a-slow-verify-row-outranks-features
                  convention: say so here rather than claim a red.
 """
@@ -60,13 +57,6 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "ilk-loop" / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-
-# Pin shape is literal per MASTER-2026-10-10c cross-cutting rules.
-RED_FIRST = pytest.mark.xfail(
-    strict=True,
-    raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError),
-    reason="not built yet",
-)
 
 RUN_ID = "R"
 
@@ -299,7 +289,6 @@ def _prompt_from_argv(argv_file: Path) -> str:
 # ── AC-1: build_evidence reads the newest record ─────────────────────────────
 
 
-@RED_FIRST
 def test_ac1_build_evidence_reads_the_newest_record(tmp_path: Path):
     """Findings say "none fixable in scope"; the newer record is attempt 2
     with 2 attributed rows.  build_evidence must report both counts."""
@@ -316,7 +305,6 @@ def test_ac1_build_evidence_reads_the_newest_record(tmp_path: Path):
 # ── AC-2: the prompt quotes the record ───────────────────────────────────────
 
 
-@RED_FIRST
 def test_ac2_prompt_quotes_the_newest_record(tmp_path: Path, monkeypatch):
     """The prompt passed to claude carries the designed line, so the model is
     told which evidence is newest rather than left with the stale Findings."""
@@ -351,7 +339,6 @@ def test_ac2_prompt_quotes_the_newest_record(tmp_path: Path, monkeypatch):
 # ── AC-3: a park-and-escalate finding carries the record ─────────────────────
 
 
-@RED_FIRST
 def test_ac3_park_and_escalate_finding_carries_the_record(tmp_path: Path, monkeypatch):
     """decide appends the record suffix to a park-and-escalate finding
     deterministically, whatever the model wrote."""
