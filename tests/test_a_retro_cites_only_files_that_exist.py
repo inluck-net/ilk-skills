@@ -17,12 +17,13 @@ Scope of the check (binding design):
 * every other such token must be in ``git ls-files``, or be a directory prefix
   of a tracked path.
 
-AC-1 (red control): at base the 10-07 retro names
+AC-1 (red control, step 0): at base the 10-07 retro named
 ``tests/invariants/test_a_batch_runs_one_suite.py``, which is not built.  That
-param is xfail-pinned (strict) so the gate is green while the claim is
-unbacked — and non-vacuous, so the gate goes red the moment that citation
-stops being false.
-AC-2: after step 1 every retro is green, including the 10-10 one.
+param was xfail-pinned (strict) so the gate stayed green while the claim was
+unbacked — and non-vacuous, so the gate would go red the moment that citation
+stopped being false.
+AC-2: after step 1 every retro is green, including the 10-10 one — the 10-07
+citation is now ``planned:`` and the pin is gone.
 AC-3: the checker over a tmp markdown string — an existing path passes, a
 missing path is reported, a ``planned:`` path is skipped.
 """
@@ -36,10 +37,6 @@ import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
 _RETROS_DIR = _REPO / "docs" / "retros"
-
-# The one unbacked citation at base.  Step 1 marks it ``planned:``; until then
-# this param is the red control, pinned below.
-_TEN_OH_SEVEN = "retro-2026-10-07-one-suite-per-batch.md"
 
 _HEADING_RE = re.compile(r"^#{2,3}[ \t]+(.*)$", re.M)
 _HELD_HEADING_RE = re.compile(r"(?i)how it is held|held by")
@@ -120,16 +117,7 @@ def tracked() -> frozenset[str]:
 
 def _retro_params():
     for path in sorted(_RETROS_DIR.glob("*.md")):
-        marks = []
-        if path.name == _TEN_OH_SEVEN:
-            marks.append(
-                pytest.mark.xfail(
-                    strict=True,
-                    raises=AssertionError,
-                    reason="10-07 retro cites a missing invariant",
-                )
-            )
-        yield pytest.param(path.name, id=path.stem, marks=marks)
+        yield pytest.param(path.name, id=path.stem)
 
 
 @pytest.mark.parametrize("retro_name", _retro_params())

@@ -31,8 +31,9 @@ waits for one.**
 
 1. Producers removed (MASTER-2026-10-07k #3): no per-commit background suite;
    the verify never waits on the ledger.
-2. Owner invariant `tests/invariants/test_a_batch_runs_one_suite.py` (safety
-   kernel `rules` tier — no loop build may change it). I8a: only
+2. Owner invariant `planned:tests/invariants/test_a_batch_runs_one_suite.py` (safety
+   kernel `rules` tier — no loop build may change it). Not built as of
+   2026-10-10 (rules tier; owner build). Row 47f8dad8. I8a: only
    `verification_record.py` / `suite_ledger.py` may start a suite. I8b: no
    `wait_for(` in the verify. I8c: an in-process measure is written to the
    ledger. I8d: worker/manager sessions carry the no-full-suite hook. Red
