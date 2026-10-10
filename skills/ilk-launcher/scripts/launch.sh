@@ -769,13 +769,6 @@ start_ilk_window() {
   # Write last-launch.json
   local meta_path
   meta_path=$(get_launch_meta_path "$project_path")
-  # JSON boolean, not a string: the exact FINAL gates decision after
-  # auto-detect — the value that decided the --run-local-checks forward
-  # above.  A watchdog relaunch replays it instead of re-detecting.
-  local run_local_checks_json="false"
-  if [[ "$run_local_checks" == "true" ]]; then
-    run_local_checks_json="true"
-  fi
   python3 -c "
 import json
 d = {
@@ -786,7 +779,7 @@ d = {
     'max_iterations': $max_iterations,
     'iteration_timeout_min': $timeout_min,
     'worker_engine': '$engine',
-    'run_local_checks': $run_local_checks_json,
+    'run_local_checks': '$run_local_checks' == 'true',
     'loop_script': '$loop_script',
     'mcp_config_path': '$mcp_config_path',
     'log_file': '$log_file',
