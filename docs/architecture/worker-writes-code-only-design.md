@@ -1,7 +1,9 @@
 # The worker writes code only: design note
 
-**Status:** proposed 2026-10-10 by the RSI owner session (ilk-skills-6f).
-It needs Chad's decision (section 7). It extends invariant I3 of
+**Status:** accepted 2026-10-10 (Chad): all three decisions in section 7,
+built before the 09-28 transition API. Written by the RSI owner session
+(ilk-skills-6f). The exact freeze scope of section 5 is defined in
+section 5.1. It extends invariant I3 of
 `loop-state-and-ownership-design.md` (accepted 2026-09-28) and does not
 replace that document.
 
@@ -126,6 +128,45 @@ that same path.
 owner releases Chad approves. RSI batches keep the non-kernel tier
 (templates, autoplan sources, tools), which is where the 2026-10-10 track-B
 and worker-gate-notice moves already point.
+
+### 5.1 Definitions: what "kernel" means, and the freeze scope
+
+These terms have one meaning, and it is the one in code:
+`skills/ilk-loop/safety-kernel.json`, read by `safety_kernel.py`.
+`check_range` applies it to a batch's commits when they land. Counts were read
+on 2026-10-10.
+
+| Tier | Contents | Who may change it today |
+|---|---|---|
+| **Rules** (5 paths) | `tests/invariants/` (the suite that judges every improvement build), `safety-kernel.json` itself, its reader `safety_kernel.py`, the mutation harness `teeth.py`, and the release aggregator `safety_case.py` | Owner hand commits only. Any loop-built commit is refused (`rules-edit-by-loop-build`). |
+| **Kernel** (30 paths, plus every `conftest.py`) | **gates:** the runner (sh and ps1), `run_local_checks.py`, `blocking_checks.py`, `verify_step_integrity.py`, `_ilk_marker.sh`<br>**proof:** `ship_audit`, `ship_transition`, `ship_integrity`, `verification_record`, `verify_attribution`, `batch_gate`, `red_owner`, `suite_ledger`<br>**landing:** `selfmod_worktree`, `release_train`, `phase1_verify`, `ilk_release`<br>**qc:** `plan_lint`, `plan_preflight`<br>**audit:** `ilk_audit`<br>**triage:** `triage_apply`<br>**autoplan:** `autoplan`, `autoplan_rails`<br>**hooks:** the 4 worker hooks<br>**test-infra:** `pytest.ini`, `.ilk-launch.json` | An unattended (`auto_planned`) batch is refused (`kernel-edit-by-unattended-build`). A session-planned batch is allowed on the slow path, since MASTER-2026-10-04m (`test_a_session_batch_may_edit_the_kernel.py`). |
+| **Runtime and everything else** (about 170 of 199 non-test code files under `skills/`, `hooks/` and `tools/`) | `scheduler.sh` (2,048 lines), `watchdog.sh`, `launch.sh`, `install.sh`, `bounce_daemons.sh`, `host_deploy_status.py`, `ilk_paths.py`, `loop_status.py`, `plan_status.py`, templates, `tools/` | Any batch |
+
+- **Kernel work** is a change to any rules-tier or kernel-tier path. Section 3
+  is kernel work: it changes the runner, which commits and advances, and the
+  hooks, which enforce the write scope. The prompt, `SKILL.md` and template
+  changes are not.
+- **Owner build** is kernel work done by the RSI owner session as a supervised
+  hand change, released after Chad approves it. It is not a loop batch.
+- **The kernel was drawn for safety, not stability.** Its purpose is that a
+  build cannot weaken what judges it. The freeze in section 5 is about
+  stability, and two gaps separate the two:
+  1. a session-planned batch may still edit the kernel tier;
+  2. most of the deploy path sits outside the kernel: `bounce_daemons.sh`,
+     `install.sh` and `host_deploy_status.py`. Only the release train,
+     phase-1 verify and `ilk_release` are inside.
+
+**Proposed freeze scope.** Proposed 2026-10-10, awaiting Chad:
+- Refuse kernel-tier edits from **every** loop-built commit, not only
+  unattended ones. This reverses the slow path from MASTER-2026-10-04m.
+- Add `bounce_daemons.sh`, `install.sh` and `host_deploy_status.py` to the
+  kernel's `landing` group.
+- Leave `scheduler.sh`, `watchdog.sh` and `launch.sh` in the runtime tier.
+  They are the loop's day-to-day behaviour, where RSI batches do most of
+  their useful work; batch 10b edits `scheduler.sh`.
+- Falsifier: if, after the freeze, runtime-tier changes keep producing
+  self-modification incidents (section 1's third row), runtime belongs in the
+  freeze too.
 
 ## 6. Order
 
