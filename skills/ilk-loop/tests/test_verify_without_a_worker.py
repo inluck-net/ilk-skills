@@ -413,6 +413,94 @@ def test_measured_suite_budget_from_history(tmp_path: Path) -> None:
     assert budget == 3600, f"expected 3600 clamped, got {budget}"
 
 
+def test_a_scoped_run_does_not_budget_the_full_suite(tmp_path: Path) -> None:
+    """A scoped run's duration is not a full-suite duration.
+
+    MEASURED 2026-10-10 on ilk-skills: the five newest history files were
+    scoped owner / release-delta runs at 3-11 s, so the budget clamped to
+    ``_SUITE_BUDGET_MIN`` (600 s) while the full suite took 521-577 s and
+    the step-0 gate died at 601 s with ``suite_failed: unmeasured``.
+
+    Two shapes must both be skipped:
+      * the entry carries ``suite_scope: scoped`` (self-describing), and
+      * the entry carries nothing but its companion record's
+        ``suite_scope:`` line says ``scoped`` (every entry written before
+        the field existed — the shape that actually bit).
+    A bare history with no scope signal anywhere still counts, or a
+    history cannot be measured at all.
+    """
+    from unittest.mock import patch
+
+    from verification_record import compute_suite_budget
+
+    vdir = tmp_path / "logs" / "verification"
+    vdir.mkdir(parents=True)
+
+    # Scoped by its own entry field: 3 s, must be ignored.
+    (vdir / "a-scoped-by-entry-batch.history.jsonl").write_text(
+        '{"attempt": 1, "digest": "a", "failing_nodes": [], '
+        '"suite_duration_sec": 3, "suite_scope": "scoped"}\n',
+        encoding="utf-8",
+    )
+    # Scoped only by its companion record: 5 s, must be ignored.
+    (vdir / "b-scoped-by-record-batch.history.jsonl").write_text(
+        '{"attempt": 1, "digest": "b", "failing_nodes": [], '
+        '"suite_duration_sec": 5}\n',
+        encoding="utf-8",
+    )
+    (vdir / "b-scoped-by-record-batch.md").write_text(
+        "# record\n\nsuite_scope: scoped\n", encoding="utf-8"
+    )
+    # Full by its companion record: 400 s, must count.
+    (vdir / "c-full-batch.history.jsonl").write_text(
+        '{"attempt": 1, "digest": "c", "failing_nodes": [], '
+        '"suite_duration_sec": 400}\n',
+        encoding="utf-8",
+    )
+    (vdir / "c-full-batch.md").write_text(
+        "# record\n\nsuite_scope: full\n", encoding="utf-8"
+    )
+    # No scope signal at all: 300 s, must count (bare-history back-compat).
+    (vdir / "d-bare-batch.history.jsonl").write_text(
+        '{"attempt": 1, "digest": "d", "failing_nodes": [], '
+        '"suite_duration_sec": 300}\n',
+        encoding="utf-8",
+    )
+
+    with patch("verification_record._resolve_project_verification_dir",
+               return_value=vdir):
+        budget, src = compute_suite_budget(tmp_path, None)
+    # 2 * max(400, 300) = 800. The scoped 3 s and 5 s never enter; had they,
+    # max would still be 400 here — so assert the durations themselves too.
+    assert src == "measured", f"expected 'measured', got {src!r}"
+    assert budget == 800, (
+        f"scoped runs must not budget the full suite; expected 800, got {budget}"
+    )
+
+    from verification_record import _read_historical_suite_durations
+
+    with patch("verification_record._resolve_project_verification_dir",
+               return_value=vdir):
+        durs = _read_historical_suite_durations(tmp_path)
+    assert 3 not in durs, f"a scoped-by-entry duration leaked in: {durs}"
+    assert 5 not in durs, f"a scoped-by-record duration leaked in: {durs}"
+    assert sorted(durs) == [300, 400], f"expected [300, 400], got {sorted(durs)}"
+
+    # And the floor is what a scoped-only history must NOT produce: with
+    # nothing but 3 s and 5 s scoped runs there is no full-suite history,
+    # so the default applies rather than a 600 s clamp derived from them.
+    for name in ("c-full-batch", "d-bare-batch"):
+        (vdir / f"{name}.history.jsonl").unlink()
+    (vdir / "c-full-batch.md").unlink()
+    with patch("verification_record._resolve_project_verification_dir",
+               return_value=vdir):
+        budget, src = compute_suite_budget(tmp_path, None)
+    assert src == "default", (
+        f"a scoped-only history is no history; expected 'default', got {src!r}"
+    )
+    assert budget == 1800, f"expected 1800 default, got {budget}"
+
+
 # ── AC-5 (xfail): rerun only undecided rows ────────────────────────────────
 
 def test_rerun_only_undecided_rows(tmp_path: Path) -> None:

@@ -2056,11 +2056,17 @@ def _append_history_entry(record: Path, attempt: int, digest: str,
                           suite_duration_sec: int | None = None,
                           head: str | None = None,
                           tree: str | None = None,
-                          contention: dict[str, dict] | None = None) -> None:
+                          contention: dict[str, dict] | None = None,
+                          suite_scope: str | None = None) -> None:
     """Append one attempt's metadata to the history file (R3).
 
     The history is append-only; each line is a JSON object with the attempt
     number, the record's digest, and the failing node ids.
+
+    ``suite_scope`` is written with the entry so a later
+    ``_read_historical_suite_durations`` can tell a scoped run from a
+    full-suite one without opening the record; it is what keeps a scoped
+    duration out of the full-suite budget.
     """
     import os
     hist = _history_path(record)
@@ -2068,6 +2074,8 @@ def _append_history_entry(record: Path, attempt: int, digest: str,
              "failing_nodes": sorted(failing_nodes)}
     if suite_duration_sec is not None:
         entry["suite_duration_sec"] = suite_duration_sec
+    if suite_scope is not None:
+        entry["suite_scope"] = suite_scope
     # The gate scopes carry-forward to attempts at the same CODE, which it can
     # only decide if each attempt names its commit (the spec's history shape).
     if head:
@@ -2109,11 +2117,47 @@ _SUITE_BUDGET_DEFAULT = 1800
 _SUITE_BUDGET_HISTORY_COUNT = 5
 
 
+def _record_suite_scope(hist_file: Path) -> str | None:
+    """Return the companion record's ``suite_scope`` value, or None.
+
+    ``_history_path`` writes ``foo-batch.md``'s history to
+    ``foo-batch.history.jsonl``; this walks back the same way so entries
+    written before ``suite_scope`` existed in the history line can still
+    be told apart from full-suite runs.
+    """
+    suffix = ".history.jsonl"
+    if not hist_file.name.endswith(suffix):
+        return None
+    record = hist_file.with_name(hist_file.name[: -len(suffix)] + ".md")
+    try:
+        text = record.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    m = re.search(r"^suite_scope:\s*(\S+)", text, re.MULTILINE)
+    return m.group(1) if m else None
+
+
 def _read_historical_suite_durations(project: Path) -> list[int]:
-    """Read suite_duration_sec from the last N history entries across all
-    batches in this project's verification directory.
+    """Read suite_duration_sec from the last N FULL-suite history entries
+    across all batches in this project's verification directory.
 
     Returns a list of durations (may be empty).
+
+    A scoped run's duration is not a full-suite duration.  Counting it
+    drives the budget to ``_SUITE_BUDGET_MIN`` and the real suite cannot
+    fit inside its own phase budget.  MEASURED 2026-10-10 on ilk-skills:
+    the five newest ``*-batch.history.jsonl`` files were scoped owner /
+    release-delta runs at 3-11 s, so ``compute_suite_budget`` clamped to
+    600 s while the full suite took 521-577 s on the preceding batches —
+    and the step-0 gate then died at 601 s with the
+    ``suite_failed: unmeasured`` stub instead of a measured record.
+
+    An entry is scoped when the entry itself says so (``suite_scope``) or,
+    for entries predating that field, when its companion record's
+    ``suite_scope:`` line says ``scoped``.  An entry that says nothing and
+    has no companion record counts as a full run — that is the shape
+    ``test_measured_suite_budget_from_history`` writes, and the only
+    reading under which a bare history is still measurable.
     """
     try:
         vdir = _resolve_project_verification_dir(project)
@@ -2122,6 +2166,7 @@ def _read_historical_suite_durations(project: Path) -> list[int]:
     durations: list[int] = []
     # Scan all batch records' history files, newest first.
     for hist_file in sorted(vdir.glob("*-batch.history.jsonl"), reverse=True):
+        record_scope = _record_suite_scope(hist_file)
         for line in hist_file.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line:
@@ -2129,6 +2174,8 @@ def _read_historical_suite_durations(project: Path) -> list[int]:
             try:
                 entry = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            if entry.get("suite_scope", record_scope) == "scoped":
                 continue
             dur = entry.get("suite_duration_sec")
             if isinstance(dur, int) and dur > 0:
@@ -2725,7 +2772,8 @@ def _write_measured_record(project: Path, record: Path, args,
     digest = _compute_record_digest(record_text)
     _append_history_entry(record, attempt, digest, nodes,
                           suite_duration_sec=results.get("suite_duration_sec"),
-                          head=head, tree=tree, contention=contention)
+                          head=head, tree=tree, contention=contention,
+                          suite_scope=scope.get("mode"))
 
     c = results["counts"]
     print(f"recorded: {c['passed']} passed, {c['failed']} failed, "
@@ -3049,7 +3097,8 @@ def _write_record_from_output(project: Path, record: Path, args,
 
     digest = _compute_record_digest(record_text)
     _append_history_entry(record, attempt, digest, nodes,
-                          head=head, tree=tree)
+                          head=head, tree=tree,
+                          suite_scope=scope.get("mode"))
 
     c = results["counts"]
     print(f"recorded: {c['passed']} passed, {c['failed']} failed, "
