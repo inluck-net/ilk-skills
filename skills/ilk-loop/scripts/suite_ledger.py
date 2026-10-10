@@ -1120,6 +1120,11 @@ def return_reds(project: Path, *, batch: str, plans_dir: Path) -> int:
     - 1: refused (worker session).
     - 3: no owner for some attributed id, or owner sub-plan file missing.
     - 4: id already returned to the same slug.
+    - 5: nothing attributed, so nothing was returned.  Distinct from 0 on
+      purpose: the runner reads 0 as "returned" and skips the verify
+      worker.  A record with only flaky-owed and failed-at-base rows was
+      read that way and redispatched gh-resolve 10a every poll with no
+      worker (runs 20261010-083327, -083830, recorded as timeout).
 
     On exit 0, per owner slug: the sub-plan is reopened to
     ``status: in-progress`` at its last step, a local_checks item is
@@ -1154,8 +1159,9 @@ def return_reds(project: Path, *, batch: str, plans_dir: Path) -> int:
         return 3
 
     if not bad_rows:
-        # Nothing attributed — nothing to return.
-        return 0
+        # Nothing attributed — nothing to return.  Not 0: see exit code 5.
+        print("return-reds: nothing attributed, nothing returned", file=sys.stderr)
+        return 5
 
     # Parse Owners table.
     owners = _parse_owners_table(text)

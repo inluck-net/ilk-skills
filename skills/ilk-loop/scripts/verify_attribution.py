@@ -158,14 +158,15 @@ def _verify_ledger_citations(text: str, project: Path | None = None) -> None:
         # For head_source: the entry's failing_nodes must match the record's
         # at-base row ids.
         if field == "head_source":
-            record_nodes = set()
-            for line in text.split("\n"):
-                if line.startswith("|") and "::" in line:
-                    parts = line.split("|")
-                    if len(parts) >= 2:
-                        nid = parts[1].strip()
-                        if "::" in nid:
-                            record_nodes.add(nid)
+            # Every row of the at-base table, by the ledger's own parser.  A
+            # file-level id (``tests/test_x.py``, no ``::``) is a row too:
+            # keeping only ``::`` ids made gh-resolve's 10a record (23 node
+            # ids + 10 file-level rows) unpassable at step 1, 2026-10-10.
+            from suite_ledger import _parse_at_base_table
+            record_nodes = {
+                row[0] for row in _parse_at_base_table(text)
+                if row and row[0] and row[0] != "—"
+            }
             entry_nodes = set(entry.get("failing_nodes", []))
             if record_nodes and entry_nodes != record_nodes:
                 raise VerificationError(
