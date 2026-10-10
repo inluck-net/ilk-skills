@@ -2507,34 +2507,9 @@ def _write_measured_record(project: Path, record: Path, args,
                 # Continue without adding-commit classification — the record
                 # is still valid with plain absent-at-base verdicts.
 
-    # Owner resolution: for ids whose at-base verdict is passed or
-    # absent-at-base, determine which sub-plan owns the red.  A foreign
-    # owner (not in registry_slugs) gets an owned-by: cell and is excluded
-    # from head reruns.
-    owners: dict[str, dict] = {}
-    owned_by_ids: list[str] = []
-    if registry_slugs:
-        import suite_ledger
-        owner_candidates = [nid for nid, v in at_base.items()
-                            if v in ("passed", "absent-at-base")]
-        for nid in owner_candidates:
-            try:
-                result = suite_ledger.owner_of(
-                    project, nid,
-                    base_sha=args.base_sha, head_sha=head,
-                )
-            except Exception as exc:
-                print(f"WARNING: owner_of failed for {nid}: {exc}",
-                      file=sys.stderr)
-                result = {"slug": None, "sha": None, "how": "unknown"}
-            owners[nid] = result
-            slug = result.get("slug")
-            sha = result.get("sha")
-            how = result.get("how", "unknown")
-            if slug and slug not in registry_slugs and sha:
-                # Foreign owner — mark as owned-by and exclude from reruns.
-                at_base[nid] = f"owned-by:{slug}@{sha[:12]}"
-                owned_by_ids.append(nid)
+    # Owner resolution runs AFTER the head reruns (see below): only an id
+    # that was red on every rerun is worth an owner search, and the search
+    # has its own phase budget.
 
     # Run HEAD reruns for non-declared failing nodes to classify flaky tests.
     # Declared-at-base rows (already in baseline_red) get — in head reruns
@@ -2545,8 +2520,7 @@ def _write_measured_record(project: Path, record: Path, args,
     at_base_elapsed = round(time.monotonic() - at_base_start)
     head_reruns_start = time.monotonic()
     non_declared = [nid for nid, v in at_base.items()
-                    if v not in ("declared-at-base", "failed")
-                    and nid not in owned_by_ids]
+                    if v not in ("declared-at-base", "failed")]
     declared = [nid for nid, v in at_base.items()
                 if v == "declared-at-base"]
     failed_at_base_ids = [nid for nid, v in at_base.items()
@@ -2555,13 +2529,12 @@ def _write_measured_record(project: Path, record: Path, args,
     batch_touched: dict[str, bool] = {}
     flaky_owed: list[str] = []
     head_rerun_bound_hit = False
-    # Mark declared, red-at-base, and owned-by rows with — (no rerun).
+    # Mark declared and red-at-base rows with — (no rerun).  An owned-by row
+    # keeps the rerun counts it actually measured.
     declared_reruns: dict[str, str] = {nid: "—" for nid in declared}
     declared_touched: dict[str, str] = {nid: "—" for nid in declared}
     failed_reruns: dict[str, str] = {nid: "—" for nid in failed_at_base_ids}
     failed_touched: dict[str, str] = {nid: "—" for nid in failed_at_base_ids}
-    owned_reruns: dict[str, str] = {nid: "—" for nid in owned_by_ids}
-    owned_touched: dict[str, str] = {nid: "—" for nid in owned_by_ids}
     if non_declared:
         try:
             # Compute batch_touched BEFORE reruns so touched ids are excluded.
@@ -2590,6 +2563,46 @@ def _write_measured_record(project: Path, record: Path, args,
             print(f"WARNING: HEAD reruns could not run: {exc}", file=sys.stderr)
             # Continue without flaky classification — the record is still valid.
 
+    head_reruns_elapsed = round(time.monotonic() - head_reruns_start)
+
+    # Owner resolution: AFTER the head reruns, and only over reliably-red
+    # ids — at base passed/absent-at-base AND red on every rerun
+    # (red_count == runs == K).  One call to suite_ledger.owners_of, timed as
+    # its own phase, so an owner search that hits its budget cannot make the
+    # at_base phase look slow.  A foreign owner (not in registry_slugs) still
+    # gets an owned-by: cell and is not attributed; its rerun counts stay in
+    # the table.  how: budget / unknown changes nothing — never emit owned-by
+    # without a sha.
+    owners: dict[str, dict] = {}
+    owner_start = time.monotonic()
+    if registry_slugs:
+        import suite_ledger
+        reliably_red = [
+            nid for nid, (red_count, runs) in head_reruns.items()
+            if at_base.get(nid) in ("passed", "absent-at-base")
+            and red_count == runs == FLAKY_RERUN_COUNT
+        ]
+        if reliably_red:
+            resolved: dict[str, dict] = {}
+            try:
+                resolved = suite_ledger.owners_of(
+                    project, reliably_red,
+                    base_sha=args.base_sha, head_sha=head,
+                ) or {}
+            except Exception as exc:
+                print(f"WARNING: owners_of failed for {reliably_red}: {exc}",
+                      file=sys.stderr)
+            for nid in reliably_red:
+                result = resolved.get(nid) or {
+                    "slug": None, "sha": None, "how": "unknown"}
+                owners[nid] = result
+                slug = result.get("slug")
+                sha = result.get("sha")
+                if slug and slug not in registry_slugs and sha:
+                    # Foreign owner — mark as owned-by, not attributed.
+                    at_base[nid] = f"owned-by:{slug}@{sha[:12]}"
+    owner_elapsed = round(time.monotonic() - owner_start)
+
     # R3: determine attempt number and write history.
     history = _read_history(record)
     attempt = len(history) + 1
@@ -2600,10 +2613,8 @@ def _write_measured_record(project: Path, record: Path, args,
 
     # Merge declared-row markers (—) into the reruns/touched dicts so
     # render_record shows — for already-classified rows.
-    all_reruns: dict = {**head_reruns, **declared_reruns, **failed_reruns,
-                        **owned_reruns}
-    all_touched: dict = {**batch_touched, **declared_touched, **failed_touched,
-                         **owned_touched}
+    all_reruns: dict = {**head_reruns, **declared_reruns, **failed_reruns}
+    all_touched: dict = {**batch_touched, **declared_touched, **failed_touched}
 
     # Suggest baseline_red entries for ids that failed at base but are not
     # already in baseline_red.  The script never edits .ilk-launch.json.
@@ -2623,12 +2634,12 @@ def _write_measured_record(project: Path, record: Path, args,
                        f"{base_ledger['digest'][:16]}")
     else:
         base_source = "rerun"
-    head_reruns_elapsed = round(time.monotonic() - head_reruns_start)
     record_elapsed_sec = round(time.monotonic() - record_start)
     phase_seconds = {
         "suite": suite_elapsed,
         "at_base": at_base_elapsed,
         "head_reruns": head_reruns_elapsed,
+        "owner": owner_elapsed,
         "total": record_elapsed_sec,
     }
     contention = {"start": contention_start, "end": contention_end}

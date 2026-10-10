@@ -180,7 +180,6 @@ def _make_runner(order: list[str], red_from):
 # ── AC-1: the bisect names the first red commit, not the last one ────────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac1_bisect_names_commit_11(tmp_path: Path) -> None:
     """19 commits, one point row each, no ledger entries.
 
@@ -213,7 +212,6 @@ def test_ac1_bisect_names_commit_11(tmp_path: Path) -> None:
 # ── AC-2: 21 ids x 19 commits stays inside the budget ────────────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac2_twenty_one_ids_fit_the_call_budget(tmp_path: Path) -> None:
     """21 ids over the same 19 commits: <= 21*5 probes, whole call < 60 s.
 
@@ -251,7 +249,6 @@ def test_ac2_twenty_one_ids_fit_the_call_budget(tmp_path: Path) -> None:
 # ── AC-3: no probe carries the suite's xdist flags ───────────────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac3_no_xdist_reaches_a_probe(tmp_path: Path) -> None:
     """``-n 8 --dist loadfile`` is resolved, then stripped from every probe."""
     import suite_ledger  # noqa: PLC0415
@@ -295,7 +292,6 @@ def test_ac3_no_xdist_reaches_a_probe(tmp_path: Path) -> None:
 # ── AC-4: the budget yields a classified verdict, never a hang ───────────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac4_budget_yields_budget_verdicts(tmp_path: Path) -> None:
     """``budget_s=1`` with a 0.5 s-per-call stub: back in < 5 s, leftovers
     carry ``how: budget`` and no slug/sha."""
@@ -331,7 +327,6 @@ def test_ac4_budget_yields_budget_verdicts(tmp_path: Path) -> None:
 # ── AC-5: one clone for the whole call, not one per id ───────────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac5_clones_once_per_call(tmp_path: Path,
                                   monkeypatch: pytest.MonkeyPatch) -> None:
     """Three ids sharing one range ⇒ exactly one ``git clone``."""
@@ -367,7 +362,6 @@ def test_ac5_clones_once_per_call(tmp_path: Path,
 # ── AC-6: only reliably-red ids get an owner, and the phase is timed ─────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac6_owner_runs_after_reruns_on_reliably_red_only(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Head reruns ``{a: 3/3, b: 1/2, c: 0/1}`` ⇒ ``owners_of([a])`` only,

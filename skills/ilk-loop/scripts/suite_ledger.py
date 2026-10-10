@@ -16,6 +16,7 @@ import hashlib
 import json
 import shutil
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -459,69 +460,111 @@ def _rev_list_count(project: Path, base: str, tip: str) -> int:
         return 0
 
 
-def owner_of(project: Path, node_id: str, *,
-             base_sha: str, head_sha: str) -> dict:
-    """Determine which sub-plan owns a failing *node_id*.
+# ── Owner resolution ─────────────────────────────────────────────────────────
 
-    Returns ``{"slug": str|None, "sha": str|None, "how": "point"|"bisect"|"unknown"}``.
+# Judgment call (MASTER-2026-10-10c, judgment call (a)): owner phase budget
+# 300 s.  Basis: 21 ids x 5 bisect probes x 2-5 s per serial id run =
+# 210-525 s; 300 s plus the suite (465-787 s measured), the head reruns
+# (600 s cap) and at-base stays under the 3660 s step-0 gate cap.  Wrong if
+# gh-resolve's 1860 s cap is the binding one — then lower it here, not the
+# algorithm.
+OWNER_BUDGET_S = 300
 
-    The algorithm:
-    1. Collect ``points.jsonl`` rows whose ``after`` is an ancestor of
-       *head_sha* and not an ancestor of *base_sha*, ordered by ancestry.
-    2. Walk the rows that have a ledger entry; find ``last_green`` (latest
-       whose entry lacks *node_id*) and ``first_red`` (first after it whose
-       entry has it).
-    3. If every commit in the interval lies in one slug's ``before..after``
-       range, the owner is that slug (``how: point``).
-    4. Otherwise bisect the interval's first-parent commits (``how: bisect``).
-    5. A commit in no row's range, or a bisect that cannot run, gives
-       ``slug: None, how: unknown``.
+# One probe runs ONE id, so xdist buys nothing and every worker start-up is
+# paid per probe.  The per-probe ceiling is unchanged from the linear walk.
+_OWNER_PROBE_TIMEOUT_S = 120
+
+# ``-n <x>`` / ``-n<x>`` / ``--dist <x>`` / ``--dist=<x>``.
+_XDIST_RE = re.compile(r"\s-n\s*\S+|\s--dist(?:=|\s+)\S+")
+
+
+def strip_xdist(invocation: str) -> str:
+    """Drop pytest-xdist worker/distribution flags from *invocation*.
+
+    Public: sub-plan ``both-rerun-arms-run-serially`` reuses it so both rerun
+    arms strip the suite's flags the same way.
     """
-    all_points = _read_points(project)
-    invocation = None
-    try:
-        invocation = _resolve_invocation(project)
-    except LedgerNotConfigured:
-        pass
+    return _XDIST_RE.sub("", invocation)
 
-    # Step 1: filter points in the (base_sha, head_sha] range.
+
+class _OwnerBudgetExceeded(Exception):
+    """Internal: the owner phase budget passed while a probe was still owed."""
+
+
+def _owner_points(project: Path, base_sha: str, head_sha: str,
+                  all_points: list[dict] | None = None) -> list[dict]:
+    """Step 1: ``points.jsonl`` rows in ``(base_sha, head_sha]``, by ancestry.
+
+    Id-independent, so one ``owners_of`` call reads the points file once.
+    """
+    if all_points is None:
+        all_points = _read_points(project)
     in_range: list[dict] = []
     for p in all_points:
         after = p.get("after", "")
-        if not after:
-            continue
-        if after == base_sha:
+        if not after or after == base_sha:
             continue
         if not _is_ancestor(project, after, head_sha):
             continue
-        if _is_ancestor(project, base_sha, after) and after != base_sha:
+        if _is_ancestor(project, base_sha, after):
             in_range.append(p)
-
-    # Order by ancestry (number of commits from base).
     in_range.sort(key=lambda p: _rev_list_count(project, base_sha, p["after"]))
+    return in_range
 
+
+def _first_parent_commits(project: Path, start: str, end: str) -> list[str]:
+    """First-parent commits of ``<start>..<end>``, oldest first.
+
+    ``--reverse`` matters: ``git rev-list`` lists newest-first, and the
+    bisect's invariant "base green, head red" needs index 0 to be the commit
+    right after base.
+    """
+    out = _git(project, "rev-list", "--first-parent", "--reverse",
+               f"{start}..{end}")
+    if out is None:
+        return []
+    return [c for c in out.splitlines() if c.strip()]
+
+
+def _owner_point_for(project: Path, in_range: list[dict],
+                     commit: str) -> dict | None:
+    """The point row whose ``before..after`` range contains *commit*."""
+    for p in in_range:
+        before = p.get("before", "")
+        after = p.get("after", "")
+        if not before or not after:
+            continue
+        if (_is_ancestor(project, before, commit) and
+                _is_ancestor(project, commit, after)):
+            return p
+    return None
+
+
+def _owner_from_ledger(project: Path, node_id: str, *, base_sha: str,
+                       head_sha: str, in_range: list[dict],
+                       invocation: str | None) -> tuple[dict | None, list[str]]:
+    """Steps 2-3: name the owner from the ledger, else hand back the probe.
+
+    Returns ``(verdict, commits)``.  A non-``None`` *verdict* is terminal.
+    ``None`` means "the ledger cannot name an owner": the caller must probe
+    the oldest-first first-parent *commits* instead.
+    """
     if not in_range:
-        return {"slug": None, "sha": None, "how": "unknown"}
+        return {"slug": None, "sha": None, "how": "unknown"}, []
 
     # Step 2: determine the starting state (base tree).
     base_tree = _git(project, "rev-parse", f"{base_sha}^{{tree}}")
     base_entry = lookup(project, base_tree, invocation) if base_tree else None
-    if base_entry is None:
-        # No base entry — we don't know if the id was green at the base.
-        # Treat as unknown start; walk from the first point.
-        last_green_idx = -1
-    else:
+    if base_entry is not None:
         # Green at base if the id is NOT in the base's failing set.
-        base_failing = set(base_entry.get("failing_nodes", []))
-        if node_id in base_failing:
+        if node_id in set(base_entry.get("failing_nodes", [])):
             # Already red at base — no owner within the range.
-            return {"slug": None, "sha": None, "how": "unknown"}
-        last_green_idx = -1  # base is green
+            return {"slug": None, "sha": None, "how": "unknown"}, []
 
     # Walk points to find last_green and first_red.
     first_red: dict | None = None
     last_green: dict | None = None
-    for i, p in enumerate(in_range):
+    for p in in_range:
         tree = _git(project, "rev-parse", f"{p['after']}^{{tree}}")
         if not tree:
             continue
@@ -529,66 +572,45 @@ def owner_of(project: Path, node_id: str, *,
         if entry is None:
             # No ledger entry for this point — skip it.
             continue
-        failing = set(entry.get("failing_nodes", []))
-        if node_id in failing:
+        if node_id in set(entry.get("failing_nodes", [])):
             first_red = p
-            first_red_idx = i
             break
-        else:
-            last_green = p
-            last_green_idx = i
+        last_green = p
 
     if first_red is None:
-        # The id is green at every ledgered point — no owner.
-        return {"slug": None, "sha": None, "how": "unknown"}
+        # Points exist but the ledger names no owner: no entry at all, or
+        # green at every ledgered point.  Probe base..head instead.  The
+        # caller only asks for ids it measured green at base, so "base is
+        # green" is measured, not assumed here.
+        return None, _first_parent_commits(project, base_sha, head_sha)
 
     # Step 3: check if every commit in the interval belongs to one slug.
     interval_start = last_green["after"] if last_green else base_sha
     interval_end = first_red["after"]
+    commit_list = _first_parent_commits(project, interval_start, interval_end)
 
-    # Collect all points whose before..after range overlaps the interval.
     covering_slugs: set[str] = set()
-    all_covered = True
-    first_parent_commits = _git(
-        project, "rev-list", "--first-parent",
-        f"{interval_start}..{interval_end}")
-    if first_parent_commits is None:
-        all_covered = False
-        commit_list = []
-    else:
-        commit_list = [
-            c for c in first_parent_commits.splitlines() if c.strip()
-        ]
-
-    if commit_list:
-        for commit in commit_list:
-            # Find a point whose before..after range contains this commit.
-            found = False
-            for p in in_range:
-                before = p.get("before", "")
-                after = p.get("after", "")
-                if not before or not after:
-                    continue
-                # commit is in (before, after] if before is ancestor of commit
-                # and commit is ancestor of after.
-                if (_is_ancestor(project, before, commit) and
-                        _is_ancestor(project, commit, after)):
-                    covering_slugs.add(p.get("slug", ""))
-                    found = True
-                    break
-            if not found:
-                all_covered = False
-                break
+    all_covered = bool(commit_list)
+    for commit in commit_list:
+        p = _owner_point_for(project, in_range, commit)
+        if p is None:
+            all_covered = False
+            break
+        covering_slugs.add(p.get("slug", ""))
 
     if all_covered and len(covering_slugs) == 1:
-        slug = covering_slugs.pop()
-        return {"slug": slug, "sha": first_red["after"], "how": "point"}
+        return ({"slug": covering_slugs.pop(), "sha": first_red["after"],
+                 "how": "point"}, [])
 
-    # Step 4: bisect the interval's first-parent commits.
+    # The interval spans more than one slug — probe it (step 4).
     if not commit_list:
-        return {"slug": None, "sha": None, "how": "unknown"}
+        return {"slug": None, "sha": None, "how": "unknown"}, []
+    return None, commit_list
 
-    # Try to run ids-only tests in a shared-clone snapshot.
+
+def _owner_snapshot(project: Path) -> Path | None:
+    """One ``git clone`` shared by every probe of one ``owners_of`` call."""
+    snap_dir: str | None = None
     try:
         snap_dir = tempfile.mkdtemp(prefix="ilk-owner-bisect-")
         root = ledger_root(project)
@@ -597,50 +619,150 @@ def owner_of(project: Path, node_id: str, *,
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             check=True, timeout=60,
         )
-        snap_path = Path(snap_dir)
-
-        # Resolve invocation for ids-only run.
-        if invocation is None:
-            return {"slug": None, "sha": None, "how": "unknown"}
-
-        # Bisect: find the first commit where the test fails.
-        first_red_commit = None
-        for commit in commit_list:
-            subprocess.run(
-                ["git", "-C", snap_dir, "checkout", "--detach", commit],
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", check=True, timeout=60,
-            )
-            # Run ids-only (just the failing node).
-            ids_invocation = f"{invocation} {node_id}"
-            rc, stdout, stderr, timed_out = _bounded_run(
-                ids_invocation, shell=True, cwd=snap_dir, timeout=120,
-            )
-            if rc != 0 and not timed_out:
-                first_red_commit = commit
-                break
-
-        if first_red_commit is None:
-            return {"slug": None, "sha": None, "how": "unknown"}
-
-        # Find which point's range contains the first red commit.
-        for p in in_range:
-            before = p.get("before", "")
-            after = p.get("after", "")
-            if not before or not after:
-                continue
-            if (_is_ancestor(project, before, first_red_commit) and
-                    _is_ancestor(project, first_red_commit, after)):
-                return {"slug": p.get("slug"), "sha": first_red_commit,
-                        "how": "bisect"}
-
-        return {"slug": None, "sha": first_red_commit, "how": "unknown"}
-
+        return Path(snap_dir)
     except (OSError, subprocess.SubprocessError, TimeoutError):
-        return {"slug": None, "sha": None, "how": "unknown"}
+        if snap_dir:
+            shutil.rmtree(snap_dir, ignore_errors=True)
+        return None
+
+
+def _bisect_first_red(snap: Path, commits: list[str], *,
+                      invocation: str, node_id: str, runner,
+                      deadline: float) -> str | None:
+    """First commit in *commits* (oldest-first) where *node_id* is red.
+
+    The caller measured base green and head red, so the predicate is monotone
+    and a binary search costs ``ceil(log2(len(commits)))`` probes instead of
+    one probe per commit.  Raises ``_OwnerBudgetExceeded`` when *deadline*
+    passes; a probe that times out counts as green, as the linear walk did.
+    """
+    def probe(idx: int) -> bool:
+        """True when the id is red at ``commits[idx]``."""
+        if time.monotonic() >= deadline:
+            raise _OwnerBudgetExceeded(node_id)
+        subprocess.run(
+            ["git", "-C", str(snap), "checkout", "--detach", commits[idx]],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", check=True, timeout=60,
+        )
+        remaining = deadline - time.monotonic()
+        timeout = max(1, min(_OWNER_PROBE_TIMEOUT_S, int(remaining)))
+        rc, _out, _err, timed_out = runner(
+            f"{strip_xdist(invocation)} {node_id}",
+            shell=True, cwd=str(snap), timeout=timeout,
+        )
+        return rc != 0 and not timed_out
+
+    lo, hi = 0, len(commits) - 1
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if probe(mid):
+            hi = mid
+        else:
+            lo = mid + 1
+    # ``lo == hi``.  Index ``len-1`` is never probed inside the loop (``mid``
+    # is always < ``hi``), so confirm the head itself when it is the answer:
+    # a green head means nothing in the range is red.
+    if lo == len(commits) - 1 and not probe(lo):
+        return None
+    return commits[lo]
+
+
+def owners_of(project: Path, node_ids, *,
+              base_sha: str, head_sha: str,
+              budget_s: float = OWNER_BUDGET_S,
+              runner=None) -> dict:
+    """Resolve the owning sub-plan for every id in *node_ids*.
+
+    Steps 1-3 of :func:`owner_of` run unchanged; step 4 is a binary search
+    over the range's first-parent commits under one wall-clock *budget_s*,
+    in ONE shared clone, with xdist stripped from every probe.  A caller
+    passing a single ``node_id`` string gets that id's verdict dict back; a
+    list gets ``{node_id: verdict}`` covering every id it passed.
+
+    Ids the budget does not finish carry ``how: "budget"``; nothing raises
+    past the caller.
+    """
+    single = isinstance(node_ids, str)
+    ids = [node_ids] if single else list(node_ids)
+    run = runner if runner is not None else _bounded_run
+
+    verdicts: dict[str, dict] = {
+        nid: {"slug": None, "sha": None, "how": "unknown"} for nid in ids
+    }
+    if not ids:
+        return verdicts
+
+    try:
+        invocation = _resolve_invocation(project)
+    except LedgerNotConfigured:
+        invocation = None
+
+    # Steps 1-3 share the id-independent work: one points read, one filter.
+    in_range = _owner_points(project, base_sha, head_sha)
+
+    deadline = time.monotonic() + budget_s
+    snap: Path | None = None
+    snap_attempted = False
+    try:
+        for nid in ids:
+            if time.monotonic() >= deadline:
+                verdicts[nid] = {"slug": None, "sha": None, "how": "budget"}
+                continue
+            verdict, commits = _owner_from_ledger(
+                project, nid, base_sha=base_sha, head_sha=head_sha,
+                in_range=in_range, invocation=invocation)
+            if verdict is not None:
+                verdicts[nid] = verdict
+                continue
+            if not commits or invocation is None:
+                verdicts[nid] = {"slug": None, "sha": None, "how": "unknown"}
+                continue
+            if not snap_attempted:
+                snap_attempted = True
+                snap = _owner_snapshot(project)
+            if snap is None:
+                verdicts[nid] = {"slug": None, "sha": None, "how": "unknown"}
+                continue
+            try:
+                first_red = _bisect_first_red(
+                    snap, commits, invocation=invocation, node_id=nid,
+                    runner=run, deadline=deadline)
+            except _OwnerBudgetExceeded:
+                verdicts[nid] = {"slug": None, "sha": None, "how": "budget"}
+                continue
+            except (OSError, subprocess.SubprocessError, TimeoutError):
+                verdicts[nid] = {"slug": None, "sha": None, "how": "unknown"}
+                continue
+            if first_red is None:
+                verdicts[nid] = {"slug": None, "sha": None, "how": "unknown"}
+                continue
+            point = _owner_point_for(project, in_range, first_red)
+            if point is None:
+                verdicts[nid] = {"slug": None, "sha": first_red,
+                                 "how": "unknown"}
+            else:
+                verdicts[nid] = {"slug": point.get("slug"), "sha": first_red,
+                                 "how": "bisect"}
     finally:
-        import shutil
-        shutil.rmtree(snap_dir, ignore_errors=True)
+        if snap is not None:
+            shutil.rmtree(snap, ignore_errors=True)
+
+    if single:
+        return verdicts[ids[0]]
+    return verdicts
+
+
+def owner_of(project: Path, node_id: str, *,
+             base_sha: str, head_sha: str) -> dict:
+    """Determine which sub-plan owns a failing *node_id*.
+
+    Returns ``{"slug": str|None, "sha": str|None, "how": "point"|"bisect"|"unknown"}``.
+
+    Thin wrapper over :func:`owners_of` — one id, the default
+    :data:`OWNER_BUDGET_S` budget.  The algorithm is documented there.
+    """
+    return owners_of(project, node_id, base_sha=base_sha, head_sha=head_sha)
 
 
 # ── Spawn / wait ──────────────────────────────────────────────────────────────
