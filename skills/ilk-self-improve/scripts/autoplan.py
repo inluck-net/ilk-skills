@@ -32,7 +32,7 @@ if str(_WATCHDOG_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_WATCHDOG_SCRIPTS))
 
 from ilk_audit import write_audit, write_event  # noqa: E402
-from ilk_paths import ilk_data_root  # noqa: E402
+from ilk_paths import external_plans_dir, ilk_data_root, project_key  # noqa: E402
 from plan_status import (  # noqa: E402
     extract_subplan_files,
     master_has_runnable,
@@ -280,6 +280,26 @@ def _resolve_claude_cmd() -> list[str]:
     if local_bin.is_file():
         return [str(local_bin)]
     return ["claude"]
+
+
+def _resolve_planner_home() -> str:
+    """The home a ``plan-issue`` planner session runs on.
+
+    The same precedence the tick gets from the scheduler's
+    ``maybe_tick_autoplan`` (``scheduler.sh``): ``$ILK_AUTOPLAN_HOME``, else
+    ``~/.claude-triage`` when that directory exists, else ``$CLAUDE_MANAGER_HOME``,
+    else ``~/.claude-manager``.  The manager home is last because it stays GLM
+    (verification runs there) and ``_plan_session`` refuses a GLM/MiMo init
+    event.
+    """
+    env = os.environ.get("ILK_AUTOPLAN_HOME")
+    if env:
+        return env
+    triage = Path.home() / ".claude-triage"
+    if triage.is_dir():
+        return str(triage)
+    return os.environ.get("CLAUDE_MANAGER_HOME",
+                          str(Path.home() / ".claude-manager"))
 
 
 def _read_init_event(process: subprocess.Popen, timeout: float) -> tuple[dict | str, str]:
@@ -1186,6 +1206,189 @@ def plan(
                 pass
 
 
+# ── plan-issue ─────────────────────────────────────────────────────────────
+
+
+def _bad_input(fields: list[str]) -> list[str]:
+    return [f"bad-input: {f}" for f in fields]
+
+
+def _as_str_list(raw: Any, field: str, problems: list[str]) -> list[str]:
+    """A list-of-strings input field; absent means ``[]`` (the contract default)."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or any(not isinstance(x, str) for x in raw):
+        problems.append(f"bad-input: {field}")
+        return []
+    return list(raw)
+
+
+def plan_issue(
+    *,
+    input_path: Path,
+    outcome_path: Path,
+    data_root: Path,
+    manager_home: str,
+    claude_cmd: list[str] | None = None,
+    lint_cmd: list[str] | None = None,
+    preflight_cmd: list[str] | None = None,
+    env_overrides: dict[str, str] | None = None,
+) -> int:
+    """Turn one admitted GitHub issue into a queued master in ITS worktree.
+
+    The gh-resolve entry point (MASTER's "Contract already sent to gh-resolve").
+    Unlike ``plan()`` this never touches the RSI lane: no ``inflight.json``,
+    no ``state.json``, no ``paused.json``, no backlog mark, no attempts
+    overlay, no audit and no notification (MASTER judgment call d — gh-resolve
+    runs several issues in parallel and owns its own retries).
+
+    Returns 0 for ``queued``, 3 for ``drafted``, 1 for ``failed``.  The
+    outcome file is written atomically on every path, including exceptions.
+    """
+    data_root = Path(data_root)
+    problems: list[str] = []
+    plans_dir: Path | None = None
+    master_path: Path | None = None
+    planner_log: Path | None = None
+
+    def _finish(outcome: str, code: int,
+                final_problems: list[str] | None = None) -> int:
+        payload = {
+            "outcome": outcome,
+            "problems": list(final_problems if final_problems is not None
+                             else problems),
+            "master_path": str(master_path) if master_path else None,
+            "plans_dir": str(plans_dir) if plans_dir else None,
+            "planner_log": str(planner_log) if planner_log else None,
+        }
+        _write_json(Path(outcome_path), payload)
+        return code
+
+    try:
+        raw = _read_json(Path(input_path))
+        if not isinstance(raw, dict):
+            return _finish("failed", 1, ["bad-input: input"])
+
+        # 1. Validate before anything is spawned (AC-4).
+        issue = raw.get("issue")
+        if not isinstance(issue, dict):
+            problems.append("bad-input: issue")
+        else:
+            for field in ("repo", "number", "title", "body"):
+                if field not in issue:
+                    problems.append(f"bad-input: issue.{field}")
+
+        project_root_raw = raw.get("project_root")
+        project_root: Path | None = None
+        if not isinstance(project_root_raw, str) or not project_root_raw.strip():
+            problems.append("bad-input: project_root")
+        else:
+            candidate_root = Path(project_root_raw)
+            if not candidate_root.is_dir() or not (candidate_root / ".git").exists():
+                problems.append("bad-input: project_root")
+            else:
+                project_root = candidate_root
+
+        base_branch = raw.get("base_branch")
+        if not isinstance(base_branch, str) or not base_branch.strip():
+            problems.append("bad-input: base_branch")
+
+        run_id = raw.get("run_id")
+        if not isinstance(run_id, str) or not run_id.strip():
+            problems.append("bad-input: run_id")
+
+        scope_paths = _as_str_list(raw.get("scope_paths"), "scope_paths", problems)
+        write_targets = _as_str_list(raw.get("write_targets"), "write_targets", problems)
+        local_checks = _as_str_list(raw.get("local_checks"), "local_checks", problems)
+
+        if problems or project_root is None:
+            return _finish("failed", 1)
+
+        # 2. The issue's own plans dir — never the toolkit's.
+        plans_dir = external_plans_dir(project_key(project_root))
+        plans_dir.mkdir(parents=True, exist_ok=True)
+
+        # 3. Kernel rail: the project's own autoplan.kernel_file when it
+        #    declares one, else None (MASTER judgment call f).
+        kernel = None
+        launch = _read_json(project_root / ".ilk-launch.json") or {}
+        if isinstance(launch, dict):
+            rel = (launch.get("autoplan") or {}).get("kernel_file")
+            if rel:
+                kernel = _project_kernel({
+                    "toolkit": False,
+                    "key": project_key(project_root),
+                    "repo": str(project_root),
+                })
+
+        prompt = _build_plan_issue_prompt(
+            issue if isinstance(issue, dict) else {},
+            base_branch=base_branch,
+            scope_paths=scope_paths,
+            write_targets=write_targets,
+            local_checks=local_checks,
+            run_id=run_id,
+        )
+
+        session = _plan_session(
+            repo=str(project_root),
+            plans_dir=plans_dir,
+            prompt=prompt,
+            manager_home=manager_home,
+            kernel=kernel,
+            run_id=run_id,
+            data_root=data_root,
+            claude_cmd=claude_cmd,
+            lint_cmd=lint_cmd,
+            preflight_cmd=preflight_cmd,
+            env_overrides=env_overrides,
+        )
+        problems = list(session.get("problems") or [])
+        master_path = session.get("master_path")
+        log_path = session.get("planner_log")
+        if log_path is not None:
+            planner_log = Path(log_path)
+
+        # The planner's own verdict, read from the final answer.  Both markers
+        # are plan-issue verdicts even when a master was produced: the session
+        # would otherwise queue a batch for an issue it just declared unplanned.
+        stdout = ""
+        if planner_log is not None:
+            try:
+                stdout = planner_log.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                pass
+        unplannable = planner_unplannable_reason(stdout)
+        stale = planner_stale_reason(stdout)
+
+        if session["decision"] == "refused":
+            reason = session.get("reason") or "unknown"
+            if unplannable:
+                reason = f"unplannable {unplannable}"
+            elif stale:
+                reason = f"stale {stale}"
+            return _finish("failed", 1, [reason])
+
+        if master_path is None:
+            return _finish("failed", 1,
+                           [session.get("reason") or "no-master"])
+        master_path = Path(master_path)
+
+        if unplannable:
+            return _finish("failed", 1, [f"unplannable {unplannable}"])
+        if stale:
+            return _finish("failed", 1, [f"stale {stale}"])
+
+        if session["decision"] == "queued-ready":
+            write_status(master_path, "queued", allow_from_held=True)
+            return _finish("queued", 0)
+
+        return _finish("drafted", 3, problems)
+
+    except Exception as exc:  # noqa: BLE001 — the outcome file is the verdict
+        return _finish("failed", 1, [f"error: {type(exc).__name__}: {exc}"])
+
+
 # ── probe ──────────────────────────────────────────────────────────────────
 
 
@@ -1250,6 +1453,20 @@ def main() -> int:
     plan_p.add_argument("--project-key", required=True)
     plan_p.add_argument("--run-id", required=True)
 
+    # plan-issue
+    plan_issue_p = sub.add_parser(
+        "plan-issue",
+        help="Plan one admitted GitHub issue into a queued master",
+    )
+    plan_issue_p.add_argument(
+        "--input", dest="input_path", required=True, metavar="PATH",
+        help="issue.json (the gh-resolve request; see SKILL.md)",
+    )
+    plan_issue_p.add_argument(
+        "--outcome", dest="outcome_path", required=True, metavar="PATH",
+        help="outcome.json to write (queued / drafted / failed)",
+    )
+
     # probe
     probe_p = sub.add_parser("probe", help="Test manager home")
     probe_p.add_argument("--json", action="store_true")
@@ -1283,6 +1500,14 @@ def main() -> int:
         )
         print(json.dumps(result))
         return 0
+
+    elif args.command == "plan-issue":
+        return plan_issue(
+            input_path=Path(args.input_path),
+            outcome_path=Path(args.outcome_path),
+            data_root=ilk_data_root(),
+            manager_home=_resolve_planner_home(),
+        )
 
     elif args.command == "probe":
         manager_home = os.environ.get("CLAUDE_MANAGER_HOME",
@@ -1486,6 +1711,59 @@ def _build_plan_prompt(candidate: dict, toolkit_repo: str,
     )
 
 
+def _build_plan_issue_prompt(issue: dict, *, base_branch: str,
+                             scope_paths: list[str],
+                             write_targets: list[str],
+                             local_checks: list[str],
+                             run_id: str) -> str:
+    """The prompt for one admitted GitHub issue (the ``plan-issue`` session).
+
+    The issue body goes in verbatim inside a fenced block; the constraints are
+    listed verbatim so the batch carries them literally.  The Overrides are the
+    ``plan-issue`` half of the contract: never ask a question (an unplannable
+    issue ends with ``AUTOPLAN: unplannable <reason>``), leave the MASTER draft
+    (``plan_issue`` flips it), write only inside the plans dir, never touch the
+    repo, and produce exactly one MASTER.
+    """
+    body = issue.get("body") or ""
+    lines = [
+        "Follow <this release>/commands/ilk-plan.md exactly, as /ilk-plan --yes",
+        "",
+        "# Task: one admitted GitHub issue",
+        "",
+        f"- **Repo**: {issue.get('repo', '')}",
+        f"- **Issue**: #{issue.get('number', '')}",
+        f"- **Title**: {issue.get('title', '')}",
+        f"- **URL**: {issue.get('url', '')}",
+        "",
+        "Issue body (verbatim):",
+        "",
+        "```",
+        body,
+        "```",
+        "",
+        "## Constraints",
+        "",
+        f"- base_branch: {base_branch} (write it as the master's `base_branch:`)",
+        "- scope_paths:",
+        *[f"  - {p}" for p in scope_paths],
+        "- write_targets:",
+        *[f"  - {p}" for p in write_targets],
+        "- local_checks (use these as the work sub-plan gates):",
+        *[f"  - {c}" for c in local_checks],
+        f"- run_id: {run_id}",
+        "",
+        "Overrides:",
+        "- Never ask a question — if the issue cannot be planned end with a line",
+        "  `AUTOPLAN: unplannable <reason>`",
+        "- Leave the MASTER status: draft (the auto-planner decides)",
+        "- Write only inside the plans dir",
+        "- Never edit, commit, branch or stash in the repo",
+        "- Exactly one MASTER",
+    ]
+    return "\n".join(lines)
+
+
 _STALE_MARK = "AUTOPLAN: stale"
 
 
@@ -1537,6 +1815,30 @@ def planner_stale_reason(stdout: str) -> str | None:
         if not text.startswith(_STALE_MARK):
             continue
         reason = text[len(_STALE_MARK):].strip(" :—-")
+        if not reason or reason.startswith("<reason>"):
+            continue
+        return reason[:300]
+    return None
+
+
+_UNPLANNABLE_MARK = "AUTOPLAN: unplannable"
+
+
+def planner_unplannable_reason(stdout: str) -> str | None:
+    """The reason from a final-answer line ``AUTOPLAN: unplannable <reason>``.
+
+    Same reading rules as ``planner_stale_reason``: only a line that STARTS
+    with the marker counts, the template placeholder ``<reason>`` or an empty
+    reason is not a verdict, and the reason is capped at 300 characters.  This
+    is the ``plan-issue`` verdict for an issue the planner cannot turn into a
+    batch at all (the plan's Overrides tell it to end with this line rather
+    than ask a question).
+    """
+    for line in planner_final_text(stdout).splitlines():
+        text = line.strip().strip("`*").strip()
+        if not text.startswith(_UNPLANNABLE_MARK):
+            continue
+        reason = text[len(_UNPLANNABLE_MARK):].strip(" :—-")
         if not reason or reason.startswith("<reason>"):
             continue
         return reason[:300]

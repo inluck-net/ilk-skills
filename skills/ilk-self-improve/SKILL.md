@@ -137,6 +137,27 @@ file is removed.
   after, and any change reads `clone-modified`, a critical escalation.
 - `autoplan.py probe [--json]` — test the manager home (owner session's
   live check after ship).
+- `autoplan.py plan-issue --input <issue.json> --outcome <outcome.json>` —
+  turn **one admitted GitHub issue** into a queued master in that issue's
+  own worktree, unattended.  Invoked directly by gh-resolve; not discovered
+  by `tick`, and it never touches the RSI lane (no `inflight.json`,
+  `state.json`, `paused.json`, backlog mark or attempts counter).
+
+  ```text
+  issue.json  = {"issue": {"repo","number","title","body","url"},
+                 "project_root": "<abs worktree path>", "base_branch": "...",
+                 "scope_paths": [...], "write_targets": [...],
+                 "local_checks": [...], "run_id": "..."}
+  outcome.json = {"outcome": "queued"|"drafted"|"failed", "problems": [...],
+                  "master_path": ..., "plans_dir": ..., "planner_log": ...}
+  exit: 0 queued, 3 drafted, 1 failed (bad input, refused model, no master, asked a question)
+  ```
+
+  The plans dir is the one `ilk_paths.external_plans_dir` resolves from
+  `project_root` — never the toolkit's.  The kernel rail is the project's
+  own `autoplan.kernel_file` when `.ilk-launch.json` declares one.  The
+  planner home resolves `$ILK_AUTOPLAN_HOME`, else `~/.claude-triage` when
+  present, else `CLAUDE_MANAGER_HOME`, else `~/.claude-manager`.
 
 ### Draft-to-queued decision
 

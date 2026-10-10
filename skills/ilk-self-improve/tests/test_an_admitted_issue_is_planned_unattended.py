@@ -1,12 +1,11 @@
-"""Sub-plan ``an-admitted-issue-is-planned-unattended`` — step 0, red-first pins.
+"""Sub-plan ``an-admitted-issue-is-planned-unattended`` — plan-issue.
 
 ``autoplan.py plan-issue`` turns one admitted GitHub issue into a queued
 master inside the issue's own worktree, unattended.  The CLI contract is the
 MASTER's "Contract already sent to gh-resolve" block and is binding.
 
-One test per AC of the sub-plan.  Every test is a red-first pin
-(``xfail(strict=True, raises=...)``) until step 2 builds ``plan_issue`` and
-drops the markers.
+One test per AC of the sub-plan.  The red-first pins from step 0 are gone:
+``plan_issue`` is built (step 2).
 
 AC-1: a stub planner that writes one MASTER + one work sub-plan, with lint and
       preflight stubs exiting 0, ⇒ outcome ``queued``, return 0, MASTER status
@@ -296,7 +295,6 @@ def _run_plan_issue(
 # ── AC-1: a clean run queues the master in the project's own plans dir ───────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac1_clean_run_queues_in_the_project_plans_dir(tmp_path, _hermetic_env):
     data_root = _hermetic_env
     project_root = _make_project_root(tmp_path)
@@ -320,7 +318,6 @@ def test_ac1_clean_run_queues_in_the_project_plans_dir(tmp_path, _hermetic_env):
 # ── AC-2: a red lint drafts and returns 3 ────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac2_red_lint_drafts_and_returns_3(tmp_path, _hermetic_env):
     data_root = _hermetic_env
     project_root = _make_project_root(tmp_path)
@@ -342,7 +339,6 @@ def test_ac2_red_lint_drafts_and_returns_3(tmp_path, _hermetic_env):
 # ── AC-3: an unplannable issue fails with 1 ──────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac3_unplannable_issue_fails_with_1(tmp_path, _hermetic_env):
     data_root = _hermetic_env
     project_root = _make_project_root(tmp_path)
@@ -362,7 +358,6 @@ def test_ac3_unplannable_issue_fails_with_1(tmp_path, _hermetic_env):
 # ── AC-4: bad input fails before any planner is spawned ──────────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac4_missing_project_root_is_bad_input(tmp_path, _hermetic_env):
     data_root = _hermetic_env
     project_root = _make_project_root(tmp_path)
@@ -387,7 +382,6 @@ def test_ac4_missing_project_root_is_bad_input(tmp_path, _hermetic_env):
 # ── AC-5: the prompt carries the issue and its constraints ───────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac5_prompt_carries_the_issue_and_cwd_is_the_worktree(tmp_path, _hermetic_env):
     data_root = _hermetic_env
     project_root = _make_project_root(tmp_path)
@@ -417,7 +411,6 @@ def test_ac5_prompt_carries_the_issue_and_cwd_is_the_worktree(tmp_path, _hermeti
 # ── AC-6: the RSI lane's state is never touched ──────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac6_plan_issue_leaves_lane_state_alone(tmp_path, _hermetic_env):
     data_root = _hermetic_env
     project_root = _make_project_root(tmp_path)
@@ -439,7 +432,6 @@ def test_ac6_plan_issue_leaves_lane_state_alone(tmp_path, _hermetic_env):
 # ── AC-7: the subcommand advertises itself ───────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac7_plan_issue_help_exits_zero(tmp_path, _hermetic_env):
     env = dict(os.environ)
     env["HOME"] = str(tmp_path / "home")
