@@ -546,6 +546,7 @@ get_rapid_terminal_backoff() {
 _RELEASE_TRAIN_SCRIPT="${_ILK_SCRIPT_DIR}/../../ilk-ship/scripts/release_train.py"
 _RELEASE_TRAIN_DISPATCH="${_ILK_SCRIPT_DIR}/release_train_dispatch.py"
 _SPAWN_DETACHED="${_ILK_SCRIPT_DIR}/spawn_detached.py"
+_MEASURE_BASELINE_SCRIPT="${_ILK_SCRIPT_DIR}/../../ilk-ship/scripts/measure_baseline.py"
 
 is_release_lock_held() {
   # Returns 0 (true) if train.lock names a live pid; 1 (false) otherwise.
@@ -611,6 +612,29 @@ print('true' if sentinel_all_shipped(Path('$sentinel_file')) else 'false')
       return 1
     fi
   fi
+
+  # Baseline check: measure the release baseline if missing.
+  local baseline_state
+  baseline_state=$("$PYTHON" "$_MEASURE_BASELINE_SCRIPT" check --project "$repo" --data-dir "$data_dir" 2>/dev/null) || baseline_state="error"
+  case "$baseline_state" in
+    present|no-tag)
+      # Fall through to permit pre-flight.
+      ;;
+    missing)
+      local baseline_log="${marker_dir}/baseline-measure-$(date +%s).log"
+      "$PYTHON" "$_SPAWN_DETACHED" --log "$baseline_log" "$PYTHON" "$_MEASURE_BASELINE_SCRIPT" measure --project "$repo" --data-dir "$data_dir" &
+      write_scheduler_log "baseline-measuring" "$key" "run_id=$run_id"
+      return 1
+      ;;
+    measuring)
+      write_scheduler_log "skip-baseline-measuring" "$key" ""
+      return 1
+      ;;
+    *)
+      write_scheduler_log "skip-baseline-unmeasurable" "$key" "state=$baseline_state"
+      return 1
+      ;;
+  esac
 
   # Pre-flight: check permits before starting the train.
   # The train's run() also checks, but catching a missing permit here

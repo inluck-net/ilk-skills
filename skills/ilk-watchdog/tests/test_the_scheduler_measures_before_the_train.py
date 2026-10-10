@@ -199,11 +199,6 @@ maybe_start_release_train "test-key" "{repo_s}" "{ilkd}" "{repo_s}" "test-run-00
 # ── AC-1: missing → baseline-measuring, measure spawned ─────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=(AssertionError, ImportError, AttributeError, TypeError),
-    reason="not built yet",
-)
 def test_missing_baseline_spawns_measure(tmp_path: Path) -> None:
     """AC-1: ``check`` printing ``missing`` → return 1, ``baseline-measuring``
     logged, measure spawned with correct argv, no permit file."""
@@ -282,11 +277,6 @@ sys.exit(0)
 # ── AC-2: measuring → skip-baseline-measuring ───────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=(AssertionError, ImportError, AttributeError, TypeError),
-    reason="not built yet",
-)
 def test_measuring_state_skips(tmp_path: Path) -> None:
     """AC-2: ``check`` printing ``measuring`` → return 1,
     ``skip-baseline-measuring`` logged, nothing spawned."""
@@ -331,11 +321,6 @@ sys.exit(0)
 # ── AC-3: unmeasurable → skip-baseline-unmeasurable ─────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=(AssertionError, ImportError, AttributeError, TypeError),
-    reason="not built yet",
-)
 def test_unmeasurable_state_skips(tmp_path: Path) -> None:
     """AC-3: ``check`` printing ``unmeasurable`` → return 1,
     ``skip-baseline-unmeasurable`` logged."""
@@ -420,11 +405,6 @@ sys.exit(0)
 # ── AC-5 (structural): check sits between audit and permit pre-flight ───────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=(AssertionError, ImportError, AttributeError, TypeError),
-    reason="not built yet",
-)
 def test_baseline_check_sits_between_audit_and_permit() -> None:
     """AC-5 (structural): the new check block in scheduler.sh sits after the
     line containing ``skip-audit-failed`` and before the line containing

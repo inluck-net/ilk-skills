@@ -3372,3 +3372,61 @@ refusals and signals when the owner should be asked.
 5. **Threshold is 3.** `requested_at` is set exactly when `passes == 3`
    and `requested_at` is null. A 4th call increments `passes` to 4 but
    does not re-set `requested_at`.
+
+---
+
+## Contract 14: Baseline measurement marker (`baseline-measure-*.log`)
+
+### Purpose
+
+When the last release tag has no stored baseline for the train's invocation,
+the scheduler measures it (detached, once per tag) before offering the train.
+This contract defines the marker file and the decision states.
+
+### Marker file
+
+`${marker_dir}/baseline-measure-$(date +%s).log` — inside the project's
+`runtime/release/` directory, beside the train marker. One log per measurement
+attempt.
+
+### Decision states
+
+The `measure_baseline.py check` command returns one of these states:
+
+| State | Meaning | Scheduler action |
+|---|---|---|
+| `present` | Baseline exists for this tag+invocation | Fall through to permit pre-flight |
+| `no-tag` | No release tag exists yet | Fall through to permit pre-flight |
+| `missing` | Baseline absent for this tag+invocation | Spawn `measure` detached, log `baseline-measuring`, return 1 |
+| `measuring` | Another process is already measuring | Log `skip-baseline-measuring`, return 1 |
+| `unmeasurable` | Measurement failed after retries | Log `skip-baseline-unmeasurable`, return 1 |
+| `error` | `check` command itself failed | Log `skip-baseline-unmeasurable`, return 1 |
+
+### Who writes
+
+- **`scheduler.sh` `maybe_start_release_train`** — calls `measure_baseline.py check`
+  between the audit block and the permit pre-flight. On `missing`, spawns
+  `measure_baseline.py measure` detached via `spawn_detached.py`.
+- **`measure_baseline.py`** — writes the marker log during measurement.
+
+### Who reads
+
+- **`scheduler.sh`** — reads the `check` output to decide whether to spawn,
+  skip, or fall through. The `.started` marker is NOT touched, so the train
+  is offered again on the next poll.
+
+### Invariants
+
+1. **No permit consumed while measuring.** The baseline check sits after the
+   audit and before the permit pre-flight. A consumed machine permit would be
+   wasted if measurement fails.
+2. **The marker does not block future polls.** The `.started` marker is not
+   written until the train actually starts. If measurement fails, the next
+   poll will re-check.
+3. **At most one measurement per tag.** `measure_baseline.py` checks for an
+   existing baseline before spawning a new measurement.
+4. **The baseline key matches the train's.** The invocation comes from
+   `release_train._resolve_invocation(project)` and the tag from
+   `release_train._get_latest_tag(project)`. A baseline under a different
+   invocation hash is a different key, and the train would still say
+   `could_not_compare`.
