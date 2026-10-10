@@ -62,6 +62,7 @@ PLAN_TIMEOUT_S = 2700
 INIT_TIMEOUT_S = 120
 RECENT_AUTHORING_MIN = 20  # judgment call: 20 min because drafts are what a session is writing; queued/active are already counted and shipped ones are the runner's own status writes; wrong if a planner start collides with a session writing a plan
 MAX_CONSECUTIVE_DRAFTS = 2
+CHECK_TIMEOUT_S = 300  # lint/preflight budget; tests monkeypatch it (AC-1)
 
 # Refusal reasons that should only write one audit row per consecutive streak.
 _DEDUP_REASONS = {"bad-home"}
@@ -941,11 +942,26 @@ def plan(
         for sf in subplan_files:
             # Positional: plan_lint.py defines no --subplan (argparse exit 2).
             lint_args.append(str(plans_dir / sf))
-        lint_args.extend(["--project-root", toolkit_repo])
+        # --git-cwd: plan_lint otherwise resolves git from Path.cwd(), which is
+        # autoplan's own cwd, not the repo being planned (backlog d8555939).
+        lint_args.extend([
+            "--git-cwd", toolkit_repo,
+            "--project-root", toolkit_repo,
+        ])
 
-        lint_result = _run_cmd(lint_args, timeout=300)
-        if lint_result is not None and lint_result != 0:
-            problems.append(f"lint-exit-{lint_result}")
+        run_logs = data_root / "autoplan" / "runs"
+        lint_kind, lint_rc, lint_tail = _run_check(
+            lint_args,
+            cwd=toolkit_repo,
+            timeout=CHECK_TIMEOUT_S,
+            log_path=run_logs / f"{run_id}.lint.txt",
+        )
+        if lint_kind == "exit":
+            problems.append(f"lint-exit-{lint_rc}")
+        elif lint_kind == "timeout":
+            problems.append("lint-timeout")
+        elif lint_kind == "unrunnable":
+            problems.append("lint-unrunnable")
 
         # Run plan_preflight
         if preflight_cmd is None:
@@ -958,9 +974,18 @@ def plan(
             "--project-root", toolkit_repo,
         ]
 
-        preflight_result = _run_cmd(preflight_args, timeout=300)
-        if preflight_result is not None and preflight_result != 0:
-            problems.append(f"preflight-exit-{preflight_result}")
+        preflight_kind, preflight_rc, preflight_tail = _run_check(
+            preflight_args,
+            cwd=toolkit_repo,
+            timeout=CHECK_TIMEOUT_S,
+            log_path=run_logs / f"{run_id}.preflight.txt",
+        )
+        if preflight_kind == "exit":
+            problems.append(f"preflight-exit-{preflight_rc}")
+        elif preflight_kind == "timeout":
+            problems.append("preflight-timeout")
+        elif preflight_kind == "unrunnable":
+            problems.append("preflight-unrunnable")
 
         # 8. Decide draft or queued
         if not problems:
@@ -1008,9 +1033,17 @@ def plan(
         else:
             # Stay draft
             truncated = [p[:300] for p in problems[:20]]
+            # Keep the check output on the row that says why it drafted.  A
+            # "tail" is only worth having from its end, so clip to the last
+            # 2000 chars (same convention as run_local_checks._tail).
+            check_tails: dict[str, Any] = {}
+            if lint_kind != "ok":
+                check_tails["lint_tail"] = lint_tail[-2000:]
+            if preflight_kind != "ok":
+                check_tails["preflight_tail"] = preflight_tail[-2000:]
             write_audit("autoplan-drafted", "ilk-skills", root=data_root,
                         candidate=candidate_id, master=master_path.name,
-                        run_id=run_id, problems=truncated)
+                        run_id=run_id, problems=truncated, **check_tails)
             _notify(data_root, "blocked",
                     f"autoplan drafted: {master_path.name} "
                     f"({len(problems)} problems)",
@@ -1481,6 +1514,67 @@ def _run_cmd(
         return result.returncode
     except (subprocess.TimeoutExpired, OSError):
         return None
+
+
+def _run_check(
+    cmd: list[str],
+    *,
+    cwd: str | None = None,
+    timeout: int | None = None,
+    log_path: Path | None = None,
+) -> tuple[str, int | None, str]:
+    """Run a lint/preflight check, keep its output, and fail closed.
+
+    Returns ``(kind, returncode, tail)`` where *kind* is ``"ok"``, ``"exit"``,
+    ``"timeout"`` or ``"unrunnable"``, *returncode* is the process exit code
+    (``None`` when it never got one), and *tail* is the last 20 lines of the
+    combined stdout+stderr joined by ``\n``.
+
+    ``_run_cmd`` reads a timeout or an ``OSError`` as ``None``, and ``plan()``
+    only appended a problem when the code was a non-zero int — so a check that
+    never ran looked exactly like a pass (backlog 874b649b).  Here both are
+    results: ``"timeout"`` and ``"unrunnable"`` are kinds the caller turns into
+    problems.  The full output goes to *log_path* so a red check can still be
+    read afterwards (backlog 874b649b).
+    """
+    if timeout is None:
+        timeout = CHECK_TIMEOUT_S
+    out = ""
+    kind = "ok"
+    rc: int | None = None
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError as exc:
+        # Missing binary / not executable / cwd gone: the check never ran.
+        kind = "unrunnable"
+        out = f"{type(exc).__name__}: {exc}"
+    else:
+        try:
+            out, _ = proc.communicate(timeout=timeout)
+            rc = proc.returncode
+            kind = "ok" if rc == 0 else "exit"
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            out, _ = proc.communicate()
+            kind = "timeout"
+        out = out or ""
+
+    if log_path is not None:
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text(out, encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+
+    tail = "\n".join(out.splitlines()[-20:])
+    return kind, rc, tail
 
 
 def _default_notifier(event: str, detail: str) -> None:

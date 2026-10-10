@@ -1,19 +1,18 @@
-"""Sub-plan ``autoplan-judges-the-planned-repo`` step 0 — red-first pins.
+"""Sub-plan ``autoplan-judges-the-planned-repo`` — lint and preflight fail closed.
 
-AC-1..AC-4 are ``xfail(strict=True)`` until step 1 implements the design
-(``_run_check``: fail closed on timeout/unrunnable, keep the output, lint
-the planned repo).  AC-5 (clean lint + preflight still queues) passes at
-base and is unpinned.
+Step 0 pinned these red-first; step 1 built ``_run_check`` (fail closed on
+timeout/unrunnable, keep the output, lint the planned repo) and dropped the
+xfails.
 
 AC-1: a lint_cmd sleeping past ``CHECK_TIMEOUT_S`` ⇒ ``drafted`` with
-      problem ``lint-timeout`` (today: ``queued`` — a timeout is a pass).
+      problem ``lint-timeout`` (was ``queued`` — a timeout was a pass).
 AC-2: a preflight_cmd naming a non-existent executable ⇒ ``drafted`` with
-      ``preflight-unrunnable`` (today: ``queued`` — OSError is a pass).
+      ``preflight-unrunnable`` (was ``queued`` — OSError was a pass).
 AC-3: a lint_cmd printing ``WARN: x`` and exiting 1 ⇒ ``drafted`` with
       ``lint-exit-1``, audit ``lint_tail`` contains ``WARN: x``, and
       ``<data_root>/autoplan/runs/<run_id>.lint.txt`` exists.
 AC-4: lint argv contains ``--git-cwd <repo>`` and the lint subprocess runs
-      with cwd = the planned repo (today: no ``--git-cwd``, cwd inherited).
+      with cwd = the planned repo (was: no ``--git-cwd``, cwd inherited).
 AC-5: clean lint + preflight still queues.
 """
 from __future__ import annotations
@@ -181,11 +180,10 @@ def _read_audit_rows(data_root, kind):
 # ── AC-1: a timed-out lint is a problem ──────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac1_lint_timeout_drafts_with_lint_timeout(tmp_path, monkeypatch):
     """lint_cmd sleeps past CHECK_TIMEOUT_S ⇒ drafted, problem lint-timeout.
 
-    Today the timeout is swallowed by _run_cmd and the master queues.
+    Before step 1 the timeout was swallowed by _run_cmd and the master queued.
     """
     data_root, toolkit, manager_home = _build_world(tmp_path)
 
@@ -208,11 +206,10 @@ def test_ac1_lint_timeout_drafts_with_lint_timeout(tmp_path, monkeypatch):
 # ── AC-2: an unrunnable preflight is a problem ───────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac2_preflight_unrunnable_drafts_with_preflight_unrunnable(tmp_path):
     """preflight_cmd naming a missing executable ⇒ drafted, preflight-unrunnable.
 
-    Today the OSError is swallowed by _run_cmd and the master queues.
+    Before step 1 the OSError was swallowed by _run_cmd and the master queued.
     """
     data_root, toolkit, manager_home = _build_world(tmp_path)
 
@@ -230,7 +227,6 @@ def test_ac2_preflight_unrunnable_drafts_with_preflight_unrunnable(tmp_path):
 # ── AC-3: a red lint keeps its output ────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac3_lint_exit_1_keeps_tail_and_log_file(tmp_path):
     """lint exit 1 with ``WARN: x`` ⇒ drafted / lint-exit-1 / tail / log file."""
     data_root, toolkit, manager_home = _build_world(tmp_path)
@@ -260,7 +256,6 @@ def test_ac3_lint_exit_1_keeps_tail_and_log_file(tmp_path):
 # ── AC-4: lint runs against the planned repo ─────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
 def test_ac4_lint_gets_git_cwd_and_runs_in_the_repo(tmp_path):
     """Lint argv carries ``--git-cwd <repo>`` and the lint cwd is the repo."""
     data_root, toolkit, manager_home = _build_world(tmp_path)
