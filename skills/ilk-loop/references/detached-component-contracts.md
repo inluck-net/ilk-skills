@@ -3430,3 +3430,27 @@ The `measure_baseline.py check` command returns one of these states:
    `release_train._get_latest_tag(project)`. A baseline under a different
    invocation hash is a different key, and the train would still say
    `could_not_compare`.
+
+---
+
+## Contract 18: The launch-metadata gates decision (`last-launch.json`)
+
+`last-launch.json` carries the dispatch parameters of the run that just
+launched. A watchdog relaunch must replay them, never re-derive them: the
+queue that a relaunch observes is not the queue that dispatched the dead run.
+
+| Key | Writer | Reader |
+|---|---|---|
+| `run_local_checks` | `launch.sh` / `start_ilk_window` — JSON boolean, the **final** gates decision after auto-detect (exactly the value that decides forwarding `--run-local-checks` to the runner) | `watchdog.sh` / `_relaunch_with_engine` — passes `--run-local-checks` when `true`, `--no-local-checks` when `false` |
+
+**Invariants.**
+
+1. **The key is a JSON boolean, not a string.** `json.dumps` of a shell-derived
+   `true`/`false` literal, so a reader can branch on `is True` / `is False`.
+2. **Absent means "re-derive", not "gates off".** A launch from an older
+   release wrote no `run_local_checks` key; the relaunch then passes no gates
+   flag at all and `launch.sh`'s auto-detect decides — today's behaviour. Only
+   an explicit `false` replays gates OFF.
+3. **The reader tolerates the string form.** `"true"` / `"false"` / `"1"` /
+   `"0"` are accepted alongside the boolean, so a hand-edited record does not
+   silently become "absent".

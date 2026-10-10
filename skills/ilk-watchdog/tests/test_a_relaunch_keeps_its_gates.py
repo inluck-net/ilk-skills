@@ -37,8 +37,8 @@ neither flag.
 AC-3: ``launch.sh`` writes the key — ``true`` when a queued sub-plan declares
 ``local_checks`` (the auto-detect default), ``false`` with ``--no-local-checks``.
 
-**This file is deliberately RED at step 0.**  It goes green at step 1, when
-the decision is persisted and replayed.
+Was RED at step 0 (xfail-pinned); the xfail pins are removed now that step 1
+persists and replays the decision.
 """
 
 from __future__ import annotations
@@ -282,7 +282,6 @@ class TestRelaunchReplaysGatesOn:
     """AC-1: ``run_local_checks: true`` in last-launch.json -> the relaunch
     passes ``--run-local-checks``, even though auto-detect would say OFF."""
 
-    @pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
     def test_relaunch_passes_run_local_checks_when_recorded_true(
         self, tmp_path: Path
     ) -> None:
@@ -313,7 +312,6 @@ class TestRelaunchReplaysGatesOff:
     """AC-2: ``run_local_checks: false`` -> ``--no-local-checks``; the key
     absent (a launch from an older release) -> neither flag."""
 
-    @pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
     def test_relaunch_replays_a_gates_off_decision(self, tmp_path: Path) -> None:
         # (b) key absent -> neither flag: today's auto-detect fallback.
         launcher_dir = tmp_path / "absent" / "runtime" / "launcher"
@@ -364,7 +362,6 @@ class TestLaunchPersistsItsGatesDecision:
     """AC-3: launch.sh writes ``run_local_checks`` to last-launch.json — true
     when a queued sub-plan declares local_checks, false with --no-local-checks."""
 
-    @pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
     def test_launch_writes_run_local_checks(self, tmp_path: Path) -> None:
         project = _make_git_project(tmp_path)
         data_home = tmp_path / ".ilk-data"

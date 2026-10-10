@@ -628,10 +628,13 @@ for line in open('$rp_py', encoding='utf-8'):
 }
 
 # ----- Relaunch with engine --------------------------------------------------
-# Reads worker_engine from the dead run's last-launch.json and passes --engine
-# to the launch script so the respawn uses the same engine.  Without this,
+# Reads worker_engine AND run_local_checks from the dead run's last-launch.json
+# and passes --engine + the gates flag to the launch script so the respawn uses
+# the same engine and the same gates decision.  Without the engine half,
 # resolve_engine falls through to DEFAULT_ENGINE and lands on the primary
-# account (the 2026-09-20 burn documented in retro-2026-09-21).
+# account (the 2026-09-20 burn documented in retro-2026-09-21).  Without the
+# gates half, the relaunch re-derives run_local_checks from the live queue and
+# can come out gates OFF for the very batch that was dispatched gates ON.
 _relaunch_with_engine() {
   local project="$1"
   local launch_script="$2"
@@ -639,10 +642,15 @@ _relaunch_with_engine() {
   local extra_args=("$@")
 
   local engine=""
+  local gates=""
   local launcher_dir
   launcher_dir=$(get_ilk_launcher_dir "$project")
   if [[ -n "$launcher_dir" && -f "${launcher_dir}/last-launch.json" ]]; then
     engine=$($PYTHON -c "import json,sys; print(json.load(sys.stdin).get('worker_engine',''))" \
+      < "${launcher_dir}/last-launch.json" 2>/dev/null) || true
+    # '' (absent/unknown) -> pass no gates flag: launch.sh auto-detects, which
+    # is the behaviour of a launch from an older release that wrote no key.
+    gates=$($PYTHON -c "import json,sys; v=json.load(sys.stdin).get('run_local_checks'); print('' if v is None else ('true' if str(v).strip().lower() in ('true','1','yes') else ('false' if str(v).strip().lower() in ('false','0','no') else '')))" \
       < "${launcher_dir}/last-launch.json" 2>/dev/null) || true
   fi
 
@@ -654,8 +662,23 @@ _relaunch_with_engine() {
     write_log "relaunch engine: (none recorded; launch.sh will resolve)"
   fi
 
+  local gates_flag=""
+  case "$gates" in
+    true)
+      gates_flag="--run-local-checks"
+      write_log "relaunch gates: ON (from last-launch.json)"
+      ;;
+    false)
+      gates_flag="--no-local-checks"
+      write_log "relaunch gates: OFF (from last-launch.json)"
+      ;;
+    *)
+      write_log "relaunch gates: (not recorded; launch.sh will auto-detect)"
+      ;;
+  esac
+
   # shellcheck disable=SC2086
-  bash "$launch_script" --project-path "$project" $engine_flag "${extra_args[@]}"
+  bash "$launch_script" --project-path "$project" $engine_flag $gates_flag "${extra_args[@]}"
 }
 
 # ----- Relaunch guard (design §7 D4) -----------------------------------------
