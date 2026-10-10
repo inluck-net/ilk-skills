@@ -212,6 +212,7 @@ def test_ac1_bisect_names_commit_11(tmp_path: Path) -> None:
 # ── AC-2: 21 ids x 19 commits stays inside the budget ────────────────────────
 
 
+@pytest.mark.timeout(90)  # measured 12.18 s isolated / 17.16 s kill under full-suite -n auto (2026-10-10)
 def test_ac2_twenty_one_ids_fit_the_call_budget(tmp_path: Path) -> None:
     """21 ids over the same 19 commits: <= 21*5 probes, whole call < 60 s.
 

@@ -362,6 +362,7 @@ class TestLaunchPersistsItsGatesDecision:
     """AC-3: launch.sh writes ``run_local_checks`` to last-launch.json — true
     when a queued sub-plan declares local_checks, false with --no-local-checks."""
 
+    @pytest.mark.timeout(90)  # measured 21.44 s isolated / 17.12 s kill under full-suite -n auto (2026-10-10)
     def test_launch_writes_run_local_checks(self, tmp_path: Path) -> None:
         project = _make_git_project(tmp_path)
         data_home = tmp_path / ".ilk-data"
