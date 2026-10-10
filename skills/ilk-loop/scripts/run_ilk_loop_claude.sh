@@ -2693,7 +2693,18 @@ raise SystemExit(4 if step_gate_fence(body, n).declares_local_checks else 3)
 ' "$(dirname "$LOCAL_CHECKS_SCRIPT")" "$sub_file" "$last_step" 2>/dev/null || decl_rc=$?
 
   if [[ "$decl_rc" -eq 3 ]]; then
-    # No checks declared → ship as today (same as a run with gates off).
+    # The LAST step declares no checks.  Design (binding) 2 of
+    # an-ungated-step-is-not-proven still applies to the sub-plan as a whole:
+    # under gates off, a sub-plan that declares ANY local_checks has nothing
+    # proven, so driver_ship_if_complete is not called here either.  The
+    # post-iteration seam owns the Findings line and the `gates-off` exit
+    # state; this declines the ship and lets the run reach it.  A sub-plan
+    # that declares no local_checks anywhere keeps today's ship.
+    if [[ "$RUN_LOCAL_CHECKS" != true ]] && _subplan_declares_local_checks "$sub_file"; then
+      echo "[driver-ship] $slug: refused, gates off (sub-plan declares local_checks)" >&2
+      return 2
+    fi
+    # No checks declared anywhere → ship as today (same as a run with gates off).
     driver_ship_if_complete "$slug" "pre-dispatch all-steps-discharged (no gate)"
     _subplan_is_shipped "$slug" && return 0
     return 2
