@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import os
+import site
 import subprocess
 import sys
 import textwrap
@@ -48,6 +49,13 @@ import verify_attribution as va  # noqa: E402
 
 # ── module-level fixture: pin HOME + ILK_DATA_HOME, clear worker session ──
 
+# pytest is often a ``--user`` install (it is wherever ``python3`` is the
+# system interpreter).  Pinning HOME moves user-site resolution, so any
+# subprocess that runs ``python3 -m pytest …`` — the owner probe here, the
+# suite run in the sibling file — raises ``ModuleNotFoundError`` and every
+# commit measures red.  Captured at import, while HOME is still the real one.
+_USER_SITE = site.getusersitepackages()
+
 
 @pytest.fixture(autouse=True)
 def _pin_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -56,6 +64,12 @@ def _pin_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = tmp_path / "home"
     original_home = os.environ.get("HOME", "")
     monkeypatch.setenv("ILK_DATA_HOME", str(data_home))
+    if _USER_SITE and os.path.isdir(_USER_SITE):
+        prior = os.environ.get("PYTHONPATH") or ""
+        monkeypatch.setenv(
+            "PYTHONPATH",
+            os.pathsep.join([p for p in (_USER_SITE, prior) if p]),
+        )
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
     try:

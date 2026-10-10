@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import site
 import subprocess
 import sys
 import textwrap
@@ -22,11 +23,23 @@ SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+# pytest is often a ``--user`` install (it is wherever ``python3`` is the
+# system interpreter).  Pinning HOME moves user-site resolution, so the suite
+# subprocess this file drives raises ``ModuleNotFoundError`` and produces no
+# pytest summary line.  Captured at import, while HOME is still the real one.
+_USER_SITE = site.getusersitepackages()
+
 
 @pytest.fixture(autouse=True)
 def _pin_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     original_home = os.environ.get("HOME", "")
     monkeypatch.setenv("ILK_DATA_HOME", str(tmp_path / "data"))
+    if _USER_SITE and os.path.isdir(_USER_SITE):
+        prior = os.environ.get("PYTHONPATH") or ""
+        monkeypatch.setenv(
+            "PYTHONPATH",
+            os.pathsep.join([p for p in (_USER_SITE, prior) if p]),
+        )
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.delenv("ILK_WORKER_SESSION", raising=False)
     import suite_ledger
