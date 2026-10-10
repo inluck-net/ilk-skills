@@ -420,9 +420,19 @@ classify_action() {
     all-shipped|already-shipped|shipped)
       echo "promote"
       ;;
-    blocked-no-runnable)
+    blocked-no-runnable|gates-off)
       # Outstanding sub-plans exist but none are runnable (all blocked/skipped).
       # No relaunch (needs human), no promote (nothing to promote).
+      #
+      # `gates-off` is a raw sentinel state, not a collect.py label: the run
+      # ended because its sub-plan declared local_checks while the run started
+      # with gates off, and an ungated step is not proven.  collect.py maps it
+      # to `blocked-no-runnable` (same action, no new label each watchdog
+      # would need an arm for); the raw word reaches this arm via the
+      # fallback path when no postmortem produced a classification.  A
+      # relaunch without --run-local-checks would repeat the same refusal,
+      # so the action is stop-clean — the scheduler's next dispatch carries
+      # the gates.
       echo "stop-clean"
       ;;
     clean-success)
@@ -685,8 +695,8 @@ _relaunch_with_engine() {
 # Asked immediately before EVERY relaunch, after any backoff sleep: the
 # classification above it can be a postmortem's, and on 2026-09-28 that
 # relaunched two operator stops of a parked project with --force.
-# Sets RELAUNCH_GUARD_RC (0 ok, 10 alive, 11 operator stop, 12 held, other =
-# could not tell) and RELAUNCH_GUARD_OUT (the guard's JSON).
+# Sets RELAUNCH_GUARD_RC (0 ok, 10 alive, 11 operator stop, 12 held, 13
+# gates-off, other = could not tell) and RELAUNCH_GUARD_OUT (the guard's JSON).
 relaunch_guard() {
   local project="$1" launcher_dir="${2:-}"
   RELAUNCH_GUARD_RC=0
@@ -709,6 +719,7 @@ refused_relaunch_banner() {
   case "$RELAUNCH_GUARD_RC" in
     11) title="STOPPED BY OPERATOR — NOT RELAUNCHING" ;;
     12) title="HELD — NOT RELAUNCHING" ;;
+    13) title="GATES OFF — NOT RELAUNCHING" ;;
     *)  title="RELAUNCH GUARD UNREADABLE — NOT RELAUNCHING" ;;
   esac
   write_log "relaunch refused (guard rc=$RELAUNCH_GUARD_RC): $RELAUNCH_GUARD_OUT"
@@ -717,8 +728,8 @@ refused_relaunch_banner() {
 "Project: $proj_name
 Guard: $RELAUNCH_GUARD_OUT
 
-The watchdog does not relaunch an operator stop, a held project, or a
-project whose state it cannot read. Watchdog exiting." 33
+The watchdog does not relaunch an operator stop, a held project, a
+gates-off run, or a project whose state it cannot read. Watchdog exiting." 33
 }
 
 # ----- Promotion helper ------------------------------------------------------

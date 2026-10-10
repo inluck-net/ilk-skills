@@ -66,12 +66,6 @@ import ilk_paths  # noqa: E402
 #: AC-1's negatives assert.
 SEAM_FUNC = "post_iteration_ship"
 
-_XFAIL = pytest.mark.xfail(
-    strict=True,
-    raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError),
-    reason="not built yet",
-)
-
 _NEEDS_GTIMEOUT = pytest.mark.skipif(
     shutil.which("gtimeout") is None,
     reason="the bash runner refuses to start without gtimeout",
@@ -427,7 +421,6 @@ def _assert_seam_ran(proc: subprocess.CompletedProcess) -> None:
 # ── AC-1: a gated sub-plan is refused under gates off ────────────────────────
 
 
-@_XFAIL
 def test_refuses_the_ship_when_gates_are_off(tmp_path: Path) -> None:
     """AC-1 — per-step ``local_checks:`` fences, frontmatter ``local_checks: []``.
 
@@ -477,7 +470,6 @@ def test_refuses_the_ship_when_gates_are_off(tmp_path: Path) -> None:
     )
 
 
-@_XFAIL
 def test_refuses_the_ship_when_the_frontmatter_declares_gates_too(tmp_path: Path) -> None:
     """AC-1 — the detector sees a non-empty frontmatter ``local_checks`` as well.
 
@@ -509,7 +501,6 @@ def test_refuses_the_ship_when_the_frontmatter_declares_gates_too(tmp_path: Path
     assert _read_ledger(repo, env) == []
 
 
-@_XFAIL
 def test_the_live_ship_path_is_the_tested_function() -> None:
     """The main loop's post-iteration ship block IS the tested seam.
 
@@ -541,7 +532,6 @@ def test_the_live_ship_path_is_the_tested_function() -> None:
 # ── AC-2: an ungated sub-plan still ships (the denominator) ──────────────────
 
 
-@_XFAIL
 def test_an_ungated_subplan_still_ships(tmp_path: Path) -> None:
     """AC-2 — nothing to prove, so today's gates-off ship stands.
 
@@ -585,7 +575,6 @@ def test_an_ungated_subplan_still_ships(tmp_path: Path) -> None:
 # ── AC-3: exit state gates-off, and the watchdog never relaunches it ─────────
 
 
-@_XFAIL
 def test_the_run_ends_with_exit_state_gates_off(tmp_path: Path) -> None:
     """AC-3 — the refusal ends the run with ``gates-off``, not a park.
 
@@ -699,7 +688,6 @@ def _guard(w: dict) -> tuple[int, dict]:
     return r.returncode, out
 
 
-@_XFAIL
 def test_the_guard_refuses_to_relaunch_a_gates_off_run(tmp_path: Path) -> None:
     """AC-3 — relaunch_guard refuses a ``gates-off`` sentinel.
 
@@ -776,7 +764,6 @@ def _activity(w: dict) -> str:
     return "\n".join(p.read_text(errors="replace") for p in logs)
 
 
-@_XFAIL
 @_NEEDS_GTIMEOUT
 def test_the_watchdog_never_relaunches_a_gates_off_run(
     tmp_path: Path, skill_copy: Path
@@ -813,7 +800,6 @@ def _vocab_module():
     return mod
 
 
-@_XFAIL
 def test_gates_off_is_in_the_declared_exit_state_vocabulary() -> None:
     """AC-4 — the v0.9.121 doc guard derives the vocabulary from source, so
     ``gates-off`` must be written by a runner AND declared in the contract's

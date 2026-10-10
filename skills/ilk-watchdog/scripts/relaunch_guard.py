@@ -17,14 +17,19 @@ Checks, in order:
                  lands about 14 s after dispatch).  Keep watching.
   operator-stop  the sentinel says ``interrupted`` with ``stopped_by:
                  signal:*``: the runner was stopped by stop.sh or a human.
+  gates-off      the sentinel says ``gates-off``: the run ended because its
+                 sub-plan declared local_checks and the run started with
+                 gates off.  A relaunch without --run-local-checks repeats
+                 the same ungated run, so refuse and let the scheduler's
+                 next dispatch carry the gates.
   held           a human park holds the project (``project_held_by``).
 
 Usage:
   relaunch_guard.py --project <repo> --launcher-dir <runtime/launcher>
 
 Prints one JSON object.  Exit 0 = relaunch allowed; 10 = alive; 11 =
-operator stop; 12 = held; 2 = the question could not be answered, which the
-watchdog treats as "do not relaunch".
+operator stop; 12 = held; 13 = gates-off; 2 = the question could not be
+answered, which the watchdog treats as "do not relaunch".
 """
 from __future__ import annotations
 
@@ -130,6 +135,16 @@ def decide(project: Path, launcher_dir: Path, now: float | None = None) -> tuple
         return 11, {"verdict": "operator-stop",
                     "reason": (f"run {sentinel.get('run_id', '?')} was stopped by "
                                f"{stopped_by} ({sentinel.get('stopped_reason', '')})")}
+
+    # A gates-off stop is the same class as a stop/hold for relaunch purposes:
+    # relaunching it without --run-local-checks repeats the exact run that
+    # just refused to ship (an-ungated-step-is-not-proven, MASTER judgment
+    # call (d) — the scheduler's next dispatch carries the gates).
+    if sentinel.get("state") == "gates-off":
+        return 13, {"verdict": "gates-off",
+                    "reason": (f"run {sentinel.get('run_id', '?')} ended gates-off: "
+                               "its sub-plan declares local_checks and the run "
+                               "started with gates off; a relaunch would repeat it")}
 
     plans_dir, _src = find_plans_dir(project)
     if not plans_dir:

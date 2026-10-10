@@ -128,9 +128,10 @@ submenu line.
 | `"lock_held"` | Another runner holds this project's run lock; the unattended result file (if `ILK_MASTER` set) records `exit_state: lock_held` | Terminal |
 | `"profile_unsupported"` | Windows runner: the master carries `ilk_profile: unattended` which the PS1 runner does not implement; result file written, no other action | Terminal |
 | `"plan-amended"` | The targeted sub-plan or MASTER was edited above `## Findings` during the iteration (planner amendment). The watcher killed the agent, WIP-preserved the dirty tree, and the loop continues to the next iteration. The post-iteration gate is skipped (`_should_gate_iteration` returns 1 for interrupted iterations with 0 commits). The no-progress streak (3) bounds an amendment loop — if every iteration is amended with 0 new commits, the run stops with `no-progress`. JSONL record carries `plan_amended: true`. The fingerprint (computed by `plan_fingerprint.py`) excludes the frontmatter keys `current_step`, `status`, `last_updated`; for MASTER files it also excludes the registry Status column and the `## Progress log` section. | No — iteration-internal; loop continues |
+| `"gates-off"` | The run's gates were off (`RUN_LOCAL_CHECKS != true`) while the active sub-plan declared `local_checks` (a non-empty frontmatter list **or** any per-step `local_checks:` block). An ungated step is not proven, so the driver refused the ship: no ship-proof row, no ledger point row, and the run ends here rather than burning further iterations — the scheduler's next dispatch carries the gates. The refusal appends one `## Findings` line (`- [<date>] ungated: run <run_id> had gates off; ship refused.`). A sub-plan that declares **no** `local_checks` still ships under gates off (nothing to prove). The watchdog's `relaunch_guard.py` refuses a `gates-off` sentinel (rc 13), same as a stop/hold. | Terminal |
 
 **Naming conventions are intentional.** The hyphenated states (`no-progress`,
-`all-shipped`, `timeout`, `budget-exhausted`, `quota-exhausted`,
+`all-shipped`, `timeout`, `budget-exhausted`, `quota-exhausted`, `gates-off`,
 `blocked-no-runnable`, `already-shipped`) and the underscored states
 (`local_checks_failed`, `ship_integrity_violation`) come from two writers in
 two languages (bash and
@@ -156,6 +157,7 @@ is how a failed run gets classified `clean-success`.
 |---|---|---|
 | `"budget_exhausted"` | `budget-exhausted` | `block` |
 | `"quota-exhausted"` | `quota-exhausted` | `block` |
+| `"gates-off"` | `blocked-no-runnable` | `stop-clean` |
 | `"max-iterations"` | `max-iter-bound` | `relaunch` |
 | `"interrupted"` | `interrupted` | `relaunch` |
 | `"local_checks_failed"` | `local-checks-broken` (broken-gate result in checks) / `local-checks-stuck` | `block` |

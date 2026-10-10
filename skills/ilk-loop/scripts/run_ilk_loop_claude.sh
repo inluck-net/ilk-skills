@@ -2965,6 +2965,112 @@ attempt_gate_first_fast_path() {
   return 0
 }
 
+# _subplan_declares_local_checks <file>
+# Does this sub-plan declare any gate at all?  A non-empty frontmatter
+# `local_checks` OR any per-step `local_checks:` block.  The per-step form is
+# the trap a frontmatter-only check misses: the canonical template carries
+# frontmatter `local_checks: []` and puts each step's gate in a fenced yaml
+# block, so a frontmatter-only detector reports gates OFF for exactly the
+# plans that have them (retro 2026-10-10 root cause 4, rows a96455e3).
+# Reuses launch.sh's detector (_detect_local_checks._has_local_checks) so the
+# two cannot disagree about what "declares" means.
+# Fail-closed: a missing file or a detector error reads as "declares" — an
+# unreadable plan is not a plan that declares nothing.
+_subplan_declares_local_checks() {
+  local file="$1"
+  [[ -n "$file" && -f "$file" ]] || return 0
+  local rc=0
+  python3 -c '
+import sys
+sys.path.insert(0, sys.argv[2])
+from _detect_local_checks import _has_local_checks
+text = open(sys.argv[1], encoding="utf-8-sig").read()
+raise SystemExit(0 if _has_local_checks(text) else 1)
+' "$file" "${_SKILL_ROOT}/ilk-launcher/scripts" 2>/dev/null || rc=$?
+  # 1 = detector ran and saw no checks.  Anything else (0 = declares, or a
+  # detector/import failure) is a refusal.
+  [[ $rc -eq 1 ]] && return 1
+  return 0
+}
+
+# _append_ungated_refusal_findings <file> <run_id>
+# Append the one Findings line the gates-off refusal owes the plan file.
+# Lands inside `## Findings` when that section exists; idempotent.
+_append_ungated_refusal_findings() {
+  local file="$1" run_id="${2:-}"
+  [[ -n "$file" && -f "$file" ]] || return 0
+  local _today _line
+  _today=$(date +%Y-%m-%d)
+  _line="- [${_today}] ungated: run ${run_id:-unknown} had gates off; ship refused."
+  python3 -c '
+import re, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+line = sys.argv[2]
+body = p.read_text(encoding="utf-8")
+if line in body:
+    raise SystemExit(0)
+m = re.search(r"^##\s+Findings\s*$", body, re.MULTILINE)
+if m:
+    rest = body[m.end():]
+    nxt = re.search(r"^##\s+", rest, re.MULTILINE)
+    if nxt:
+        prefix, suffix = body[: m.end() + nxt.start()], body[m.end() + nxt.start():]
+        if prefix and not prefix.endswith("\n"):
+            prefix += "\n"
+        p.write_text(prefix + line + "\n" + suffix, encoding="utf-8")
+        raise SystemExit(0)
+if body and not body.endswith("\n"):
+    body += "\n"
+p.write_text(body + line + "\n", encoding="utf-8")
+' "$file" "$_line" 2>/dev/null || true
+}
+
+# post_iteration_ship <slug> <gate_outcome> <total_new> [iteration]
+# The post-iteration ship path, extracted from the main loop so the refusal
+# has one tested home.  Reads heads_before_file / heads_after_file from the
+# caller's scope the way the inline block did.
+#
+# When RUN_LOCAL_CHECKS != true and the sub-plan declares local_checks,
+# nothing this iteration was proven: refuse the ship, write no ship-proof
+# row (and so no ledger point row), append one Findings line, and end the
+# run with `gates-off` — MASTER judgment call (d), a gates-off run cannot
+# ship anything gated so further iterations only burn time.  A sub-plan that
+# declares NO local_checks keeps today's gates-off ship (nothing to prove).
+post_iteration_ship() {
+  local slug="$1" gate_outcome="${2:-}" total_new="${3:-0}" iteration="${4:-0}"
+
+  if [[ "$RUN_LOCAL_CHECKS" != true && -n "$slug" ]]; then
+    local _pi_plans="" _pi_file=""
+    _pi_plans=$(_gate_first_plans_dir) || _pi_plans=""
+    if [[ -n "$_pi_plans" ]]; then
+      _pi_file=$(find_subplan_file_by_slug "$_pi_plans" "$slug") || _pi_file=""
+    fi
+    if [[ -z "$_pi_file" ]] || _subplan_declares_local_checks "$_pi_file"; then
+      echo "[driver-ship] $slug: refused, gates off (sub-plan declares local_checks)"
+      _append_ungated_refusal_findings "$_pi_file" "${RUN_ID:-}"
+      iter_stop_reason="gates-off"
+      return 0
+    fi
+  fi
+
+  # Write the ledger rows now that the gate has run, so a green gate can be
+  # proven even at zero commits.
+  if [[ "$total_new" -gt 0 || "$gate_outcome" == "pass" ]]; then
+    write_ship_proof_records "$heads_before_file" "$heads_after_file" "$iteration" "$gate_outcome"
+  fi
+
+  # Driver-side ship after a green gate (or a run with gates off).  The
+  # worker's ship is refused, so the driver must do it.
+  if [[ -n "$slug" ]]; then
+    if [[ "$gate_outcome" == "pass" ]]; then
+      driver_ship_if_complete "$slug" "a green gate"
+    elif [[ "$gate_outcome" == "" ]]; then
+      driver_ship_if_complete "$slug" "a run with gates off"
+    fi
+  fi
+}
+
 # driver_ship_if_complete <slug> <reason>
 # After a green post-iteration gate (or a run with gates off), ship a
 # sub-plan whose last step is done.  Extracted from the gate-first block
@@ -7182,21 +7288,7 @@ for line in sys.stdin:
     fi
     # Ship-proof ledger: write rows after the gate has run so
     # gate_pass_at_head can fire for zero-commit green gates.
-    if [[ "$total_new" -gt 0 || "$_gate_outcome" == "pass" ]]; then
-      write_ship_proof_records "$heads_before_file" "$heads_after_file" "$i" "$_gate_outcome"
-    fi
-
-    # Driver-side ship: after a green gate (or a run with gates off), ship
-    # the dispatched sub-plan if its last step is done.  This is the missing
-    # half of 07l #0 — the worker's ship is refused, so the driver must do it.
-    if [[ -n "${_iter_slug:-}" ]]; then
-      if [[ "$_gate_outcome" == "pass" ]]; then
-        driver_ship_if_complete "$_iter_slug" "a green gate"
-      elif [[ "$_gate_outcome" == "" ]]; then
-        # No gate ran (local checks OFF) — still ship if the step is done.
-        driver_ship_if_complete "$_iter_slug" "a run with gates off"
-      fi
-    fi
+    post_iteration_ship "${_iter_slug:-}" "$_gate_outcome" "$total_new" "$i"
 
     # Build new_commits JSON
     local new_commits_json="{}"

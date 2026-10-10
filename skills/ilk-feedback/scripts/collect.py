@@ -1304,6 +1304,15 @@ def _classify_core(
         return "quota-exhausted", {
             "iter_at_stop": last.get("iteration"),
         }
+    # A gated sub-plan's ship was refused because the run started with gates
+    # off: nothing was proven, so nothing ships and the run ends rather than
+    # burning further iterations (sub-plan an-ungated-step-is-not-proven).
+    # Same label as the sentinel map — blocked-no-runnable.
+    if last_stop == "gates-off":
+        return "blocked-no-runnable", {
+            "iter_at_stop": last.get("iteration"),
+            "stop_reason": last_stop,
+        }
     # Selfmod structural failures: committed work is parked in a worktree
     # and cannot be recovered by relaunching.  These stop_reasons appear in
     # the run_exit record (not the per-iteration record).  Same label as
@@ -1693,6 +1702,15 @@ def classify(
         # scheduler retries on the next cycle.  Label: "interrupted" →
         # watchdog relaunches (same as a manual interrupt).
         "lock_held": "interrupted",
+        # The run ended because its sub-plan declared local_checks while the
+        # run started with gates off: an ungated step is not proven, so the
+        # driver refused the ship and wrote no ship-proof row (sub-plan
+        # an-ungated-step-is-not-proven).  No new label: `blocked-no-runnable`
+        # is already in CLASSIFICATION_LABELS and watchdog.sh routes it to
+        # stop-clean, never to relaunch — a relaunch without
+        # --run-local-checks would repeat the same refusal.  The scheduler's
+        # next dispatch carries the gates.
+        "gates-off": "blocked-no-runnable",
         # A B2-confirmed red gate with 0 new commits (heads-before ==
         # heads-after) means the red is on code this iteration didn't
         # touch — a red base or an environment.  Distinct from
