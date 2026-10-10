@@ -690,6 +690,249 @@ def tick(
     return _result("started", candidate=selected["id"], run_id=run_id)
 
 
+# ── plan session ───────────────────────────────────────────────────────────
+
+
+def _plan_session(
+    *,
+    repo: str,
+    plans_dir: Path,
+    prompt: str,
+    manager_home: str,
+    kernel: dict | None,
+    run_id: str,
+    data_root: Path,
+    claude_cmd: list[str] | None = None,
+    lint_cmd: list[str] | None = None,
+    preflight_cmd: list[str] | None = None,
+    env_overrides: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """The planning session: spawn the planner, then judge its batch.
+
+    Holds the session part of ``plan()`` — snapshot, spawn with ``cwd=repo``,
+    init-event model refusal, stream with timeout, clone check against
+    *repo*, new-master detection, force draft, ``check_master`` and the
+    lint/preflight pair (``_run_check`` with ``--git-cwd repo`` and
+    ``--project-root repo``).  It does NOT flip the master to queued, write
+    audit, notify, or touch lane state (inflight.json, state.json,
+    paused.json, the backlog, the attempts overlay) — the caller owns those.
+
+    Returns the contract keys ``decision`` (``"queued-ready"``,
+    ``"drafted"`` or ``"refused"``), ``problems``, ``master_path``,
+    ``reason`` and ``planner_log`` (the path the planner's stdout was
+    written to, ``<data_root>/autoplan/runs/<run_id>.planner.jsonl``), plus
+    the hand-off the caller needs to own lane state and audit:
+    ``increment_attempts``, ``blocked_reason``, ``lint_kind``, ``lint_tail``,
+    ``preflight_kind``, ``preflight_tail``.
+    """
+    run_logs = data_root / "autoplan" / "runs"
+    planner_log = run_logs / f"{run_id}.planner.jsonl"
+    stdout = ""
+    problems: list[str] = []
+    lint_kind, lint_tail = "ok", ""
+    preflight_kind, preflight_tail = "ok", ""
+
+    def _out(decision: str, *, reason: str | None = None,
+             master_path: Path | None = None,
+             increment_attempts: bool = False,
+             blocked_reason: str | None = None) -> dict[str, Any]:
+        return {
+            "decision": decision,
+            "problems": list(problems),
+            "master_path": master_path,
+            "reason": reason,
+            "planner_log": planner_log,
+            "increment_attempts": increment_attempts,
+            "blocked_reason": blocked_reason,
+            "lint_kind": lint_kind,
+            "lint_tail": lint_tail,
+            "preflight_kind": preflight_kind,
+            "preflight_tail": preflight_tail,
+        }
+
+    try:
+        # 1. Snapshot plans dir and repo state
+        before_names = {p.name for p in plans_dir.glob("*.md")}
+        before_mtimes = {p.name: p.stat().st_mtime for p in plans_dir.glob("*.md")}
+
+        git_status_before = _run_cmd(
+            ["git", "status", "--porcelain"], cwd=repo, capture_stdout=True
+        )
+        git_head_before = _run_cmd(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_stdout=True
+        )
+
+        # 2. Run claude
+        if claude_cmd is None:
+            claude_cmd = _resolve_claude_cmd()
+
+        env = {**os.environ}
+        if env_overrides:
+            env.update(env_overrides)
+        if manager_home:
+            env["CLAUDE_CONFIG_DIR"] = manager_home
+
+        full_cmd = claude_cmd + [
+            "-p", prompt,
+            "--output-format", "stream-json",
+            "--verbose",
+            "--allowedTools",
+            "Read Grep Glob Write Edit",
+            "Bash(python3:*)", "Bash(git log:*)", "Bash(git show:*)",
+            "Bash(git rev-parse:*)", "Bash(git status:*)",
+            "Bash(date:*)", "Bash(ls:*)",
+        ]
+
+        proc = subprocess.Popen(
+            full_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            cwd=repo,
+            start_new_session=True,
+        )
+
+        # Read init event
+        init, leftover = _read_init_event(proc, INIT_TIMEOUT_S)
+        if isinstance(init, str):
+            # Failed to get init event
+            _kill_group(proc)
+            return _out("refused", reason=init)
+
+        model = init.get("model", "")
+        if re.search(r"mimo|glm", model, re.IGNORECASE):
+            _kill_group(proc)
+            return _out("refused", reason=f"model {model}")
+
+        # Stream remaining output with timeout
+        stdout, stderr = _stream_output(proc, PLAN_TIMEOUT_S - INIT_TIMEOUT_S, leftover=leftover)
+
+        # Check if process is still running (timed out)
+        if proc.poll() is None:
+            _kill_group(proc)
+            problems.append("timed-out")
+
+        # 3. Clone check
+        git_status_after = _run_cmd(
+            ["git", "status", "--porcelain"], cwd=repo, capture_stdout=True
+        )
+        git_head_after = _run_cmd(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_stdout=True
+        )
+
+        if git_status_after != git_status_before:
+            # The caller turns this into the critical escalation; it owns audit.
+            problems.append("clone-modified")
+        elif git_head_after != git_head_before:
+            problems.append("head-moved")
+
+        # 4. New MASTER files (or any masters the stub may have written)
+        after_names = {p.name for p in plans_dir.glob("*.md")}
+        new_names = after_names - before_names
+        new_masters = [n for n in new_names if n.startswith("MASTER-")]
+        # Never fall back to pre-existing masters: on 2026-10-07 that fallback
+        # forced all 122 existing masters to draft after a stale plan.
+
+        # The planner's own verdict, read from its final answer only.
+        stale_reason = planner_stale_reason(stdout)
+
+        if not new_masters:
+            if stale_reason is not None:
+                reason = f"stale {stale_reason}"
+                return _out("refused", reason=reason, increment_attempts=True,
+                            blocked_reason=reason)
+            return _out("refused", reason="no-master", increment_attempts=True)
+
+        # 5. Force all new masters to draft
+        for master_name in new_masters:
+            write_status(plans_dir / master_name, "draft", allow_from_held=True)
+
+        # If multiple masters, note the problem
+        if len(new_masters) > 1:
+            problems.append("multiple-masters")
+
+        # Use the first master for checks
+        master_path = plans_dir / new_masters[0]
+
+        # Run check_master
+        master_problems = check_master(
+            master_path, plans_dir, kernel=kernel, repo=Path(repo),
+        )
+        problems.extend(master_problems)
+
+        # Run plan_lint
+        if lint_cmd is None:
+            lint_script = _REPO / "skills" / "ilk-loop" / "scripts" / "plan_lint.py"
+            lint_cmd = [sys.executable, str(lint_script)]
+
+        subplan_files = extract_subplan_files(
+            master_path.read_text(encoding="utf-8-sig")
+        )
+        lint_args = lint_cmd + [
+            "--master", str(master_path),
+        ]
+        for sf in subplan_files:
+            # Positional: plan_lint.py defines no --subplan (argparse exit 2).
+            lint_args.append(str(plans_dir / sf))
+        # --git-cwd: plan_lint otherwise resolves git from Path.cwd(), which is
+        # autoplan's own cwd, not the repo being planned (backlog d8555939).
+        lint_args.extend([
+            "--git-cwd", repo,
+            "--project-root", repo,
+        ])
+
+        lint_kind, lint_rc, lint_tail = _run_check(
+            lint_args,
+            cwd=repo,
+            timeout=CHECK_TIMEOUT_S,
+            log_path=run_logs / f"{run_id}.lint.txt",
+        )
+        if lint_kind == "exit":
+            problems.append(f"lint-exit-{lint_rc}")
+        elif lint_kind == "timeout":
+            problems.append("lint-timeout")
+        elif lint_kind == "unrunnable":
+            problems.append("lint-unrunnable")
+
+        # Run plan_preflight
+        if preflight_cmd is None:
+            preflight_script = _REPO / "skills" / "ilk-loop" / "scripts" / "plan_preflight.py"
+            preflight_cmd = [sys.executable, str(preflight_script)]
+
+        preflight_args = preflight_cmd + [
+            str(master_path),
+            "--plans-dir", str(plans_dir),
+            "--project-root", repo,
+        ]
+
+        preflight_kind, preflight_rc, preflight_tail = _run_check(
+            preflight_args,
+            cwd=repo,
+            timeout=CHECK_TIMEOUT_S,
+            log_path=run_logs / f"{run_id}.preflight.txt",
+        )
+        if preflight_kind == "exit":
+            problems.append(f"preflight-exit-{preflight_rc}")
+        elif preflight_kind == "timeout":
+            problems.append("preflight-timeout")
+        elif preflight_kind == "unrunnable":
+            problems.append("preflight-unrunnable")
+
+        if problems:
+            return _out("drafted", master_path=master_path,
+                        increment_attempts=True)
+        return _out("queued-ready", master_path=master_path)
+
+    finally:
+        # The planner's stdout is evidence for a red gate; keep it even when
+        # the session refuses before streaming (the file is then empty).
+        try:
+            planner_log.parent.mkdir(parents=True, exist_ok=True)
+            planner_log.write_text(stdout, encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+
+
 # ── plan ───────────────────────────────────────────────────────────────────
 
 
@@ -763,24 +1006,13 @@ def plan(
             result = {"decision": "refused", "reason": "disabled"}
             return result
 
-        # 2. Snapshot plans dir and repo state
+        # 2. Resolve the plans dir the session will write into
         plans_dir = _find_plans_dir_for_project(
             data_root / "projects" / project_key, toolkit_repo
         )
         if plans_dir is None:
             plans_dir = data_root / "plans"
             plans_dir.mkdir(parents=True, exist_ok=True)
-
-        before_names = {p.name for p in plans_dir.glob("*.md")}
-        before_mtimes = {p.name: p.stat().st_mtime for p in plans_dir.glob("*.md")}
-
-        # Snapshot git state
-        git_status_before = _run_cmd(
-            ["git", "status", "--porcelain"], cwd=toolkit_repo, capture_stdout=True
-        )
-        git_head_before = _run_cmd(
-            ["git", "rev-parse", "HEAD"], cwd=toolkit_repo, capture_stdout=True
-        )
 
         # 3. Build prompt
         # An extra project must be discovered (its kernel comes from its own
@@ -810,71 +1042,25 @@ def plan(
 
         prompt = _build_plan_prompt(candidate, toolkit_repo, project_key)
 
-        # 4. Run claude
-        if claude_cmd is None:
-            claude_cmd = _resolve_claude_cmd()
-
-        env = {**os.environ}
-        if env_overrides:
-            env.update(env_overrides)
-        if manager_home:
-            env["CLAUDE_CONFIG_DIR"] = manager_home
-
-        full_cmd = claude_cmd + [
-            "-p", prompt,
-            "--output-format", "stream-json",
-            "--verbose",
-            "--allowedTools",
-            "Read Grep Glob Write Edit",
-            "Bash(python3:*)", "Bash(git log:*)", "Bash(git show:*)",
-            "Bash(git rev-parse:*)", "Bash(git status:*)",
-            "Bash(date:*)", "Bash(ls:*)",
-        ]
-
-        proc = subprocess.Popen(
-            full_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
-            cwd=toolkit_repo,
-            start_new_session=True,
+        # 4. The planning session: spawn, judge, lint and preflight.
+        session = _plan_session(
+            repo=toolkit_repo,
+            plans_dir=plans_dir,
+            prompt=prompt,
+            manager_home=manager_home,
+            kernel=project_kernel,
+            run_id=run_id,
+            data_root=data_root,
+            claude_cmd=claude_cmd,
+            lint_cmd=lint_cmd,
+            preflight_cmd=preflight_cmd,
+            env_overrides=env_overrides,
         )
+        problems = list(session.get("problems") or [])
 
-        # Read init event
-        init, leftover = _read_init_event(proc, INIT_TIMEOUT_S)
-        if isinstance(init, str):
-            # Failed to get init event
-            _kill_group(proc)
-            _write_plan_refused(data_root, init, candidate_id)
-            result = {"decision": "refused", "reason": init}
-            return result
-
-        model = init.get("model", "")
-        if re.search(r"mimo|glm", model, re.IGNORECASE):
-            _kill_group(proc)
-            _write_plan_refused(data_root, f"model {model}", candidate_id)
-            result = {"decision": "refused", "reason": f"model {model}"}
-            return result
-
-        # Stream remaining output with timeout
-        stdout, stderr = _stream_output(proc, PLAN_TIMEOUT_S - INIT_TIMEOUT_S, leftover=leftover)
-
-        # Check if process is still running (timed out)
-        if proc.poll() is None:
-            _kill_group(proc)
-            problems.append("timed-out")
-
-        # 5. Clone check
-        git_status_after = _run_cmd(
-            ["git", "status", "--porcelain"], cwd=toolkit_repo, capture_stdout=True
-        )
-        git_head_after = _run_cmd(
-            ["git", "rev-parse", "HEAD"], cwd=toolkit_repo, capture_stdout=True
-        )
-
-        if git_status_after != git_status_before:
-            problems.append("clone-modified")
-            # Critical escalation
+        # 5. A clone the planner touched is a critical escalation.
+        #    The session only records it; audit and notify stay here.
+        if "clone-modified" in problems:
             write_audit(
                 "escalated", "ilk-skills", root=data_root,
                 source="autoplan", reason="clone-modified",
@@ -883,113 +1069,23 @@ def plan(
             _notify(data_root, "blocked",
                     f"autoplan: clone modified during plan ({candidate_id})",
                     notifier_fn=notifier_fn)
-        elif git_head_after != git_head_before:
-            problems.append("head-moved")
 
-        # 6. New MASTER files (or any masters the stub may have written)
-        after_names = {p.name for p in plans_dir.glob("*.md")}
-        new_names = after_names - before_names
-        new_masters = [n for n in new_names if n.startswith("MASTER-")]
-        # Never fall back to pre-existing masters: on 2026-10-07 that fallback
-        # forced all 122 existing masters to draft after a stale plan.
-
-        # The planner's own verdict, read from its final answer only.
-        stale_reason = planner_stale_reason(stdout)
-
-        if not new_masters:
-            if stale_reason is not None:
-                reason = f"stale {stale_reason}"
-                _write_plan_refused(data_root, reason, candidate_id)
+        # 6. Refusals: the audit row and any attempts bump stay here.
+        if session["decision"] == "refused":
+            reason = session.get("reason") or "unknown"
+            _write_plan_refused(data_root, reason, candidate_id)
+            if session.get("increment_attempts"):
                 _increment_attempts(data_root, candidate_id, project_key=project_key,
-                                    blocked_reason=reason)
-                result = {"decision": "refused", "reason": reason}
-                return result
-            _write_plan_refused(data_root, "no-master", candidate_id)
-            _increment_attempts(data_root, candidate_id, project_key=project_key)
-            result = {"decision": "refused", "reason": "no-master"}
+                                    blocked_reason=session.get("blocked_reason"))
+            result = {"decision": "refused", "reason": reason}
             return result
 
-        # 7. Force all new masters to draft
-        for master_name in new_masters:
-            master_path = plans_dir / master_name
-            write_status(master_path, "draft", allow_from_held=True)
+        master_path = session["master_path"]
 
-        # If multiple masters, note the problem
-        if len(new_masters) > 1:
-            problems.append("multiple-masters")
-
-        # Use the first master for checks
-        master_path = plans_dir / new_masters[0]
-
-        # Mark the master
+        # Lane bookkeeping: link the master to this candidate and run.
         mark_master(master_path, candidate_id=candidate_id, run_id=run_id)
 
-        # Run check_master
-        master_problems = check_master(
-            master_path, plans_dir, kernel=project_kernel, repo=Path(toolkit_repo),
-        )
-        problems.extend(master_problems)
-
-        # Run plan_lint
-        if lint_cmd is None:
-            lint_script = _REPO / "skills" / "ilk-loop" / "scripts" / "plan_lint.py"
-            lint_cmd = [sys.executable, str(lint_script)]
-
-        subplan_files = extract_subplan_files(
-            master_path.read_text(encoding="utf-8-sig")
-        )
-        lint_args = lint_cmd + [
-            "--master", str(master_path),
-        ]
-        for sf in subplan_files:
-            # Positional: plan_lint.py defines no --subplan (argparse exit 2).
-            lint_args.append(str(plans_dir / sf))
-        # --git-cwd: plan_lint otherwise resolves git from Path.cwd(), which is
-        # autoplan's own cwd, not the repo being planned (backlog d8555939).
-        lint_args.extend([
-            "--git-cwd", toolkit_repo,
-            "--project-root", toolkit_repo,
-        ])
-
-        run_logs = data_root / "autoplan" / "runs"
-        lint_kind, lint_rc, lint_tail = _run_check(
-            lint_args,
-            cwd=toolkit_repo,
-            timeout=CHECK_TIMEOUT_S,
-            log_path=run_logs / f"{run_id}.lint.txt",
-        )
-        if lint_kind == "exit":
-            problems.append(f"lint-exit-{lint_rc}")
-        elif lint_kind == "timeout":
-            problems.append("lint-timeout")
-        elif lint_kind == "unrunnable":
-            problems.append("lint-unrunnable")
-
-        # Run plan_preflight
-        if preflight_cmd is None:
-            preflight_script = _REPO / "skills" / "ilk-loop" / "scripts" / "plan_preflight.py"
-            preflight_cmd = [sys.executable, str(preflight_script)]
-
-        preflight_args = preflight_cmd + [
-            str(master_path),
-            "--plans-dir", str(plans_dir),
-            "--project-root", toolkit_repo,
-        ]
-
-        preflight_kind, preflight_rc, preflight_tail = _run_check(
-            preflight_args,
-            cwd=toolkit_repo,
-            timeout=CHECK_TIMEOUT_S,
-            log_path=run_logs / f"{run_id}.preflight.txt",
-        )
-        if preflight_kind == "exit":
-            problems.append(f"preflight-exit-{preflight_rc}")
-        elif preflight_kind == "timeout":
-            problems.append("preflight-timeout")
-        elif preflight_kind == "unrunnable":
-            problems.append("preflight-unrunnable")
-
-        # 8. Decide draft or queued
+        # 7. Decide draft or queued
         if not problems:
             if draft_only is True:
                 # Draft-only dry period: full pipeline ran clean but
@@ -1039,10 +1135,10 @@ def plan(
             # "tail" is only worth having from its end, so clip to the last
             # 2000 chars (same convention as run_local_checks._tail).
             check_tails: dict[str, Any] = {}
-            if lint_kind != "ok":
-                check_tails["lint_tail"] = lint_tail[-2000:]
-            if preflight_kind != "ok":
-                check_tails["preflight_tail"] = preflight_tail[-2000:]
+            if session.get("lint_kind") != "ok":
+                check_tails["lint_tail"] = (session.get("lint_tail") or "")[-2000:]
+            if session.get("preflight_kind") != "ok":
+                check_tails["preflight_tail"] = (session.get("preflight_tail") or "")[-2000:]
             write_audit("autoplan-drafted", "ilk-skills", root=data_root,
                         candidate=candidate_id, master=master_path.name,
                         run_id=run_id, problems=truncated, **check_tails)
