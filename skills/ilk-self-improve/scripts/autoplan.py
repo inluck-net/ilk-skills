@@ -44,11 +44,13 @@ from triage_backlog import read_backlog_strict  # noqa: E402
 
 from autoplan_rails import (  # noqa: E402
     check_master,
+    load_project_kernel,
     mark_candidate,
     mark_master,
     rank,
     screen_candidate,
 )
+import autoplan_projects  # noqa: E402  (NOT kernel: extra projects + their rows)
 from scheduler_scan import resolve_repo_path  # noqa: E402
 
 # ── constants (judgment calls — see MASTER) ────────────────────────────────
@@ -475,8 +477,10 @@ def tick(
         else:
             return _result("paused")
 
-    # 3. Toolkit project
-    project_key, err = _find_toolkit_project(data_root)
+    # 3. Projects: the toolkit (kernel-found) first, then any extra project
+    # autoplan_projects declares (track B).  An ambiguous toolkit stops
+    # everything; "not-enabled" stops only when there is no extra project.
+    projects, err = _planning_projects(data_root)
     if err:
         _write_refusal(err)
         return _result(err)
@@ -494,7 +498,8 @@ def tick(
             # Increment autoplan_attempts on the candidate
             cand_id = inflight.get("candidate")
             if cand_id:
-                _increment_attempts(data_root, cand_id)
+                _increment_attempts(data_root, cand_id,
+                                    project_key=inflight.get("project_key"))
         return _result("autoplan-refused")
 
     # 5. Busy
@@ -549,38 +554,55 @@ def tick(
             _write_refusal("bad-home")
             return _result("bad-home")
 
-    # Backlog readable
-    try:
-        backlog_dir = _backlog_dir(data_root)
-        candidates = read_backlog_strict(backlog_dir)
-    except Exception:
-        _write_refusal("backlog-unreadable")
-        return _result("backlog-unreadable")
-
-    # 8. Select candidate
-    ranked = rank(candidates)
+    # Backlog readable, then select: the first project with an eligible,
+    # kernel-clean candidate wins.  The toolkit keeps today's semantics (an
+    # unreadable backlog refuses the tick); an extra project that cannot be
+    # read, or has no readable kernel of its own, is skipped and audited.
     selected = None
-    for cand in ranked:
-        hit = screen_candidate(cand)
-        if hit is not None:
-            # Escalate kernel-touching candidate
-            if not dry_run:
-                mark_candidate(
-                    cand["id"],
-                    relations={"autoplan_blocked": True},
-                    backlog_dir=backlog_dir,
-                )
-                write_audit(
-                    "escalated", "ilk-skills", root=data_root,
-                    source="autoplan", reason="protected-kernel",
-                    candidate=cand["id"],
-                )
-                _notify(data_root, "blocked",
-                        f"autoplan: {cand['id']} touches kernel ({hit})",
-                        notifier_fn=notifier_fn)
+    selected_project = None
+    for project in projects:
+        try:
+            candidates = _load_project_entries(data_root, project)
+        except Exception:
+            if project.get("toolkit"):
+                _write_refusal("backlog-unreadable")
+                return _result("backlog-unreadable")
+            write_audit("autoplan-refused", "ilk-skills", root=data_root,
+                        target=project.get("key"), reason="backlog-unreadable")
             continue
-        selected = cand
-        break
+        try:
+            kernel = _project_kernel(project)
+        except ValueError as exc:
+            write_audit("autoplan-refused", "ilk-skills", root=data_root,
+                        target=project.get("key"), reason="no-project-kernel",
+                        detail=str(exc)[:200])
+            continue
+
+        # 8. Select candidate
+        ranked = rank(candidates, sources=project.get("sources"))
+        for cand in ranked:
+            hit = screen_candidate(cand, kernel)
+            if hit is not None:
+                # Escalate kernel-touching candidate
+                if not dry_run:
+                    _mark_project_candidate(
+                        data_root, project, cand["id"],
+                        relations={"autoplan_blocked": True},
+                    )
+                    write_audit(
+                        "escalated", "ilk-skills", root=data_root,
+                        source="autoplan", reason="protected-kernel",
+                        candidate=cand["id"], target=project.get("key"),
+                    )
+                    _notify(data_root, "blocked",
+                            f"autoplan: {cand['id']} touches kernel ({hit})",
+                            notifier_fn=notifier_fn)
+                continue
+            selected = cand
+            selected_project = project
+            break
+        if selected is not None:
+            break
 
     if selected is None:
         return _result("no-candidate")
@@ -591,7 +613,8 @@ def tick(
 
     run_id = f"autoplan-{int(_now())}"
 
-    # Resolve the toolkit repo
+    # Resolve the selected project's repo
+    project_key = selected_project["key"]
     toolkit_repo = _resolve_toolkit_repo(data_root, project_key)
     if toolkit_repo is None:
         _write_refusal("no-toolkit-repo")
@@ -639,6 +662,7 @@ def tick(
     _write_json(inflight_file, {
         "pid": proc.pid,
         "candidate": selected["id"],
+        "project_key": project_key,
         "run_id": run_id,
         "started": _now(),
     })
@@ -758,9 +782,15 @@ def plan(
         )
 
         # 3. Build prompt
-        backlog_dir = _backlog_dir(data_root)
+        # An extra project must be discovered (its kernel comes from its own
+        # repo).  Any other key keeps the pre-track-B behaviour exactly: the
+        # toolkit backlog and the toolkit kernel.
+        project = _project_by_key(data_root, project_key) or {
+            "key": project_key, "toolkit": True,
+        }
         try:
-            candidates = read_backlog_strict(backlog_dir)
+            candidates = _load_project_entries(data_root, project)
+            project_kernel = _project_kernel(project)
         except Exception:
             _write_plan_refused(data_root, "backlog-unreadable", candidate_id)
             result = {"decision": "refused", "reason": "backlog-unreadable"}
@@ -869,12 +899,12 @@ def plan(
             if stale_reason is not None:
                 reason = f"stale {stale_reason}"
                 _write_plan_refused(data_root, reason, candidate_id)
-                _increment_attempts(data_root, candidate_id,
+                _increment_attempts(data_root, candidate_id, project_key=project_key,
                                     blocked_reason=reason)
                 result = {"decision": "refused", "reason": reason}
                 return result
             _write_plan_refused(data_root, "no-master", candidate_id)
-            _increment_attempts(data_root, candidate_id)
+            _increment_attempts(data_root, candidate_id, project_key=project_key)
             result = {"decision": "refused", "reason": "no-master"}
             return result
 
@@ -894,7 +924,7 @@ def plan(
         mark_master(master_path, candidate_id=candidate_id, run_id=run_id)
 
         # Run check_master
-        master_problems = check_master(master_path, plans_dir)
+        master_problems = check_master(master_path, plans_dir, kernel=project_kernel)
         problems.extend(master_problems)
 
         # Run plan_lint
@@ -940,11 +970,10 @@ def plan(
                 # consecutive-drafts counter does NOT increment and
                 # paused.json is never written for an intentional
                 # draft-only outcome.
-                mark_candidate(
-                    candidate_id,
+                _mark_project_candidate(
+                    data_root, project, candidate_id,
                     status="planned",
                     relations={"autoplan_master": master_path.name},
-                    backlog_dir=backlog_dir,
                 )
                 write_audit("dry-period-drafted", "ilk-skills", root=data_root,
                             candidate=candidate_id, master=master_path.name,
@@ -961,11 +990,10 @@ def plan(
                           "draft_only": True}
             else:
                 write_status(master_path, "queued", allow_from_held=True)
-                mark_candidate(
-                    candidate_id,
+                _mark_project_candidate(
+                    data_root, project, candidate_id,
                     status="planned",
                     relations={"autoplan_master": master_path.name},
-                    backlog_dir=backlog_dir,
                 )
                 write_audit("autoplan-queued", "ilk-skills", root=data_root,
                             candidate=candidate_id, master=master_path.name,
@@ -987,7 +1015,7 @@ def plan(
                     f"autoplan drafted: {master_path.name} "
                     f"({len(problems)} problems)",
                     notifier_fn=notifier_fn)
-            _increment_attempts(data_root, candidate_id)
+            _increment_attempts(data_root, candidate_id, project_key=project_key)
 
             # Track consecutive drafts
             state = _read_json(autoplan_dir / "state.json") or {}
@@ -1144,6 +1172,131 @@ def main() -> int:
 # ── internal helpers ───────────────────────────────────────────────────────
 
 
+def _planning_projects(data_root: Path) -> tuple[list[dict], str | None]:
+    """The toolkit (found here, in the kernel) first, then extra projects.
+
+    Returns (projects, error).  ``ambiguous-toolkit`` is always an error;
+    ``not-enabled`` is one only when there is no extra project either.
+    """
+    projects: list[dict] = []
+    toolkit_key, err = _find_toolkit_project(data_root)
+    if err == "ambiguous-toolkit":
+        return [], err
+    if toolkit_key is not None:
+        projects.append({
+            "key": toolkit_key,
+            "repo": _resolve_toolkit_repo(data_root, toolkit_key),
+            "toolkit": True,
+            "backlog_mode": "toolkit",
+            "sources": None,
+        })
+    try:
+        extra = autoplan_projects.discover_extra(data_root) or []
+    except Exception:
+        extra = []
+    for p in extra:
+        if not isinstance(p, dict) or not p.get("key") or p.get("key") == toolkit_key:
+            continue
+        # The repo is resolved HERE from the project's own data dir, never
+        # taken from autoplan_projects: it decides where the planner runs and
+        # which .ilk-launch.json names the kernel screened against.
+        repo = _resolve_toolkit_repo(data_root, p["key"])
+        if repo is None:
+            continue
+        projects.append({**p, "repo": repo, "toolkit": False})
+    if not projects:
+        return [], err or "not-enabled"
+    return projects, None
+
+
+def _project_by_key(data_root: Path, key: str) -> dict | None:
+    projects, _err = _planning_projects(data_root)
+    for p in projects:
+        if p["key"] == key:
+            return p
+    return None
+
+
+def _project_kernel(project: dict) -> dict | None:
+    """The kernel to screen *project*'s candidates and masters against.
+
+    None = the toolkit's own kernel (unchanged).  A non-toolkit project's
+    kernel file is read from that project's OWN .ilk-launch.json
+    (``autoplan.kernel_file``, relative to its repo), never from
+    autoplan_projects, and is loaded FAIL CLOSED: raises ValueError when
+    absent or unreadable, and the caller skips the project.
+    """
+    if project.get("toolkit"):
+        return None
+    repo = project.get("repo")
+    if not repo:
+        raise ValueError(f"project {project.get('key')}: no repo")
+    launch = _read_json(Path(repo) / ".ilk-launch.json") or {}
+    rel = (launch.get("autoplan") or {}).get("kernel_file") if isinstance(launch, dict) else None
+    if not rel or not isinstance(rel, str):
+        raise ValueError(f"project {project.get('key')}: no autoplan.kernel_file")
+    kfile = (Path(repo) / rel).resolve()
+    if Path(repo).resolve() not in kfile.parents:
+        raise ValueError(f"project {project.get('key')}: kernel_file outside the repo")
+    return load_project_kernel(kfile)
+
+
+def _overlay_path(data_root: Path, key: str) -> Path:
+    return data_root / "autoplan" / "projects" / key / "overlay.json"
+
+
+def _load_project_entries(data_root: Path, project: dict) -> list[dict]:
+    """Candidate rows for *project*.  The toolkit reads its backlog dir as
+    before; any other project reads through autoplan_projects, with autoplan's
+    own overlay (attempts, blocked, planned) merged on top, because its
+    backlog is the project's to write, not ours."""
+    if project.get("toolkit"):
+        return read_backlog_strict(_backlog_dir(data_root))
+    rows = autoplan_projects.load_entries(project)
+    overlay = _read_json(_overlay_path(data_root, project["key"])) or {}
+    out = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        o = overlay.get(str(r.get("id"))) if isinstance(overlay, dict) else None
+        if isinstance(o, dict):
+            r = dict(r)
+            if o.get("status"):
+                r["status"] = o["status"]
+            rel = dict(r.get("relations") or {})
+            rel.update(o.get("relations") or {})
+            r["relations"] = rel
+        out.append(r)
+    return out
+
+
+def _mark_project_candidate(data_root: Path, project: dict | None, candidate_id: str, *,
+                            status: str | None = None,
+                            relations: dict | None = None,
+                            increment: dict | None = None) -> None:
+    """mark_candidate for the toolkit; the overlay for any other project."""
+    if project is None or project.get("toolkit"):
+        mark_candidate(candidate_id, status=status, relations=relations,
+                       increment=increment, backlog_dir=_backlog_dir(data_root))
+        return
+    path = _overlay_path(data_root, project["key"])
+    overlay = _read_json(path) or {}
+    if not isinstance(overlay, dict):
+        overlay = {}
+    o = overlay.setdefault(str(candidate_id), {})
+    if status:
+        o["status"] = status
+    rel = o.setdefault("relations", {})
+    rel.update(relations or {})
+    for k, n in (increment or {}).items():
+        try:
+            rel[k] = int(rel.get(k, 0)) + int(n)
+        except (TypeError, ValueError):
+            rel[k] = int(n)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(path, overlay)
+
+
 def _backlog_dir(data_root: Path) -> Path:
     """Resolve the backlog directory."""
     return data_root / "ilk-skills-improvements"
@@ -1267,23 +1420,24 @@ def _write_plan_refused(data_root: Path, reason: str,
 
 
 def _increment_attempts(data_root: Path, candidate_id: str,
-                        blocked_reason: str | None = None) -> None:
-    """Add 1 to autoplan_attempts on a candidate, under the backlog lock.
+                        blocked_reason: str | None = None,
+                        project_key: str | None = None) -> None:
+    """Add 1 to autoplan_attempts on a candidate.
 
     A *blocked_reason* (a planner "stale" refusal) also sets
     ``autoplan_blocked``: the evidence no longer reproduces, so the row must
-    not be re-planned on the next start.
+    not be re-planned on the next start.  The toolkit's rows are marked under
+    the backlog lock as before; another project's go to autoplan's overlay.
     """
+    project = _project_by_key(data_root, project_key) if project_key else None
     try:
-        backlog_dir = _backlog_dir(data_root)
-        mark_candidate(
-            candidate_id,
+        _mark_project_candidate(
+            data_root, project, candidate_id,
             relations=(
                 {"autoplan_blocked": blocked_reason}
                 if blocked_reason else None
             ),
             increment={"autoplan_attempts": 1},
-            backlog_dir=backlog_dir,
         )
     except (KeyError, ValueError):
         pass

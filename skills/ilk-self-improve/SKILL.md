@@ -58,10 +58,32 @@ ilk-skills queue has had no runnable master for N consecutive scheduler
 cycles, it starts one detached `claude -p` session on the planner home
 (below) for the top-ranked candidate.
 
-Only `open` candidates with `source: triage` are eligible, and any
-candidate whose text names a kernel path is escalated, never planned
-(`autoplan_rails.py` `rank` / `screen_candidate`).  Rows filed by hand
-(`source: supervisor`) are a record for the owner, not RSI input.
+Only `open` candidates from an admitted source are eligible
+(`autoplan_rails.ELIGIBLE_SOURCES` for the toolkit). Any candidate whose
+text names a kernel path is escalated, never planned (`autoplan_rails.py`
+`rank` / `screen_candidate`).
+
+### Other projects (track B)
+
+`scripts/autoplan_projects.py` is **not kernel**. It declares which projects
+besides the toolkit autoplan may plan for (`discover_extra`), and how their
+rows load (`load_entries`). An improvement batch may extend it; gh-resolve's
+export (`autoplan.backlog` in its `.ilk-launch.json`) is the first intended
+user. Today it returns no projects.
+
+The rails stay in the kernel (`autoplan.py`, `autoplan_rails.py`):
+
+- The toolkit is always found first, by the kernel.
+- An extra project's repo is resolved from its own data dir. Its safety
+  kernel is the `autoplan.kernel_file` named in its own `.ilk-launch.json`,
+  inside its repo, and loads fail closed: no readable kernel means the
+  project is skipped and audited. Candidates and masters are screened
+  against that kernel.
+- Attempts, blocks and `planned` marks for an extra project go to autoplan's
+  overlay (`<data root>/autoplan/projects/<key>/overlay.json`), never into
+  the project's own backlog.
+- Auto-planned masters get `priority: -1` (`AUTO_PLANNED_PRIORITY`), below
+  every consumer master, including those with a null priority.
 
 ### Planner home
 
