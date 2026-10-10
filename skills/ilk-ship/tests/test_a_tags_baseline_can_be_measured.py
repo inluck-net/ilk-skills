@@ -86,7 +86,6 @@ def _count_worktrees(project: Path) -> int:
 
 # ── AC-1: check is missing before; measure stores; load returns ids ────────
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError), reason="not built yet")
 def test_ac1_check_missing_then_measure_stores(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -122,7 +121,6 @@ def test_ac1_check_missing_then_measure_stores(tmp_path: Path) -> None:
 
 # ── AC-2: measurement runs at the tag, not HEAD ────────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError), reason="not built yet")
 def test_ac2_measurement_runs_at_tag_not_head(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -148,7 +146,6 @@ def test_ac2_measurement_runs_at_tag_not_head(tmp_path: Path) -> None:
 
 # ── AC-3: no-summary run stores nothing; unmeasurable after 2 attempts ─────
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError), reason="not built yet")
 def test_ac3_no_summary_stores_nothing_unmeasurable_after_two(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -186,7 +183,6 @@ def test_ac3_no_summary_stores_nothing_unmeasurable_after_two(tmp_path: Path) ->
 
 # ── AC-4: worktree is gone after measure ───────────────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError), reason="not built yet")
 def test_ac4_worktree_cleaned_up_on_success(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -204,7 +200,6 @@ def test_ac4_worktree_cleaned_up_on_success(tmp_path: Path) -> None:
     assert after == before, f"worktree leaked: {after} vs {before} before"
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError), reason="not built yet")
 def test_ac4_worktree_cleaned_up_on_failure(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -224,7 +219,6 @@ def test_ac4_worktree_cleaned_up_on_failure(tmp_path: Path) -> None:
 
 # ── AC-5: check with live pid marker is measuring ──────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError), reason="not built yet")
 def test_ac5_check_with_live_pid_is_measuring(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -252,7 +246,6 @@ def test_ac5_check_with_live_pid_is_measuring(tmp_path: Path) -> None:
 
 # ── AC-6: CLI prints state word and result JSON ────────────────────────────
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError), reason="not built yet")
 def test_ac6_cli_check_prints_state(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
@@ -287,7 +280,6 @@ def test_ac6_cli_check_prints_state(tmp_path: Path) -> None:
     assert r.stdout.strip() == "present"
 
 
-@pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError), reason="not built yet")
 def test_ac6_cli_measure_prints_json(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
