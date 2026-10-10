@@ -67,13 +67,6 @@ import autoplan_rails  # noqa: E402
 import improvement_backlog  # noqa: E402
 import verification_record as vr  # noqa: E402
 
-
-NOT_BUILT = pytest.mark.xfail(
-    strict=True,
-    raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError),
-    reason="not built yet",
-)
-
 NOW = datetime(2026, 10, 8, 12, 0, 0, tzinfo=timezone.utc)
 
 
@@ -188,7 +181,6 @@ def _legacy_slow_verify_row() -> dict:
 # ── AC-1: same largest phase dedupes to one row ─────────────────────────────
 
 
-@NOT_BUILT
 def test_ac1_same_phase_breaches_leave_one_row() -> None:
     """Two breaches, largest phase ``at_base``, different seconds -> 1 row."""
     _file_breach(_phase_breach("at_base", 900))
@@ -208,7 +200,6 @@ def test_ac1_same_phase_breaches_leave_one_row() -> None:
 # ── AC-2: a different largest phase is a second row ─────────────────────────
 
 
-@NOT_BUILT
 def test_ac2_a_different_largest_phase_makes_a_second_row() -> None:
     """After the two same-phase breaches, ``suite`` is a distinct key."""
     _file_breach(_phase_breach("at_base", 900))
@@ -226,7 +217,6 @@ def test_ac2_a_different_largest_phase_makes_a_second_row() -> None:
 # ── AC-3: a slow-verify row outranks a feature row ──────────────────────────
 
 
-@NOT_BUILT
 def test_ac3_a_slow_verify_row_outranks_features() -> None:
     """``rank()`` puts the smoothness row (and the legacy row) first."""
     ranked = autoplan_rails.rank([_feature_row(), _slow_verify_row()], now=NOW)

@@ -226,6 +226,20 @@ def _as_int(value: Any) -> int:
         return 0
 
 
+def _is_smoothness(entry: dict) -> bool:
+    """A smoothness regression outranks feature work.
+
+    True when ``relations.smoothness`` is truthy (the filer sets it) OR the
+    title starts with ``"batch verify exceeded"`` — the latter so the legacy
+    slow-verify rows, which carry no relations, rank first without a data
+    migration.  Eligibility is untouched; this is a sort key only.
+    """
+    if _relations(entry).get("smoothness"):
+        return True
+    title = entry.get("title")
+    return isinstance(title, str) and title.startswith("batch verify exceeded")
+
+
 def rank(entries: list[dict], *, now: datetime | None = None,
          sources: tuple[str, ...] | list[str] | None = None) -> list[dict]:
     """Filter and rank eligible autoplan candidates.
@@ -236,9 +250,11 @@ def rank(entries: list[dict], *, now: datetime | None = None,
     must parse and be within ``FRESH_DAYS`` of *now*.  An unparseable date
     on a non-triage row makes it ineligible (fail closed).
 
-    Sort: source tier first (triage 0, supervisor/owner-session 1,
-    feedback/session 2), then has escalations > 0 desc, urgent desc,
-    seen_count desc, first_seen asc, id asc.
+    Sort: smoothness first (a smooth->not-smooth regression outranks
+    feature work; see ``_is_smoothness``), then source tier (triage 0,
+    supervisor/owner-session 1, feedback/session 2), then has
+    escalations > 0 desc, urgent desc, seen_count desc, first_seen asc,
+    id asc.
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -271,6 +287,7 @@ def rank(entries: list[dict], *, now: datetime | None = None,
         eligible.append(e)
 
     eligible.sort(key=lambda e: (
+        -int(_is_smoothness(e)),
         _SOURCE_TIER.get(e.get("source", ""), 99),
         -(_as_int(_relations(e).get("escalations", 0)) > 0),
         -bool(_relations(e).get("urgent", False)),

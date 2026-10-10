@@ -960,13 +960,18 @@ def _check_slo_breach(batch: str, head: str, record: Path,
             kind="toolkit",
             source="supervisor",
             title="batch verify exceeded 15 min",
-            gap=f"{largest_phase}={phase_seconds[largest_phase]} s",
+            # Key on the phase, not the seconds: the gap feeds
+            # stable_key(kind, title, gap), so seconds in the gap make every
+            # breach a fresh row and seen_count never accumulates.  The
+            # seconds stay in evidence["phase_seconds"].
+            gap=f"largest phase: {largest_phase}",
             evidence={
                 "batch": batch,
                 "head": head,
                 "phase_seconds": phase_seconds,
                 "record": str(record),
             },
+            relations={"smoothness": True, "phase": largest_phase},
             severity="high",
             leverage="high",
             proposed_fix=(
