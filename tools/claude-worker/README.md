@@ -159,6 +159,22 @@ settings unless you pass `--force` / `-Force`.
 A backup of the previous `settings.json` is created automatically
 (`settings.json.pre-ilk-<timestamp>`).
 
+### Benchmarking a model before switching to it
+
+`model_bench.py` asks each model the same read-only, multi-turn question about
+this repo through a worker home, and prints seconds per turn, output tokens and
+thinking characters per model, and whether the answer was correct. It reports
+the model the endpoint actually served, so a silent provider-side reroute
+shows up in its output. It changes no home.
+
+```bash
+python3 tools/claude-worker/model_bench.py mimo-v2.5-pro mimo-v2.6-pro mimo-v2.6-flash
+python3 tools/claude-worker/model_bench.py --reps 2 --effort low mimo-v2.6-pro
+```
+
+Include today's model as a control: live loops share the endpoint, so
+latencies from different days are not comparable.
+
 ## Safety notes
 
 - **Never prints tokens.** All output shows redacted placeholders like
