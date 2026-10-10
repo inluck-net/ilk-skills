@@ -162,6 +162,21 @@ def _write_release_train_stub(tmp_path: Path) -> Path:
     return stub
 
 
+def _write_measure_baseline_stub(tmp_path: Path, state: str = "present") -> Path:
+    """Write a stub measure_baseline.py that returns the given state.
+
+    Returns the path to the stub.
+    """
+    stub = tmp_path / "measure_baseline_stub.py"
+    stub.write_text(textwrap.dedent(f"""\
+        import sys
+        if len(sys.argv) > 1 and sys.argv[1] == "check":
+            print("{state}")
+        sys.exit(0)
+    """), encoding="utf-8")
+    return stub
+
+
 def _read_release_train_argv(stub_path: Path) -> list[str]:
     """Read the argv.json the release train stub recorded.
 
@@ -189,8 +204,9 @@ def test_ac1_no_permits_starts_train(tmp_path: Path) -> None:
     _write_sandbox_data(data_home, "proj1", tmp_path)
 
     stub = _write_release_train_stub(tmp_path)
+    baseline_stub = _write_measure_baseline_stub(tmp_path, state="present")
     env = _make_env(tmp_path, data_home)
-    post_source = f"_RELEASE_TRAIN_SCRIPT='{stub}'"
+    post_source = f"_RELEASE_TRAIN_SCRIPT='{stub}'\n_MEASURE_BASELINE_SCRIPT='{baseline_stub}'"
     result = _source_scheduler_fn(env, "offer_release_trains", "[]",
                                   post_source=post_source)
     assert result.returncode == 0, (
@@ -233,8 +249,9 @@ def test_ac2_permits_missing_then_present(tmp_path: Path) -> None:
     )
 
     stub = _write_release_train_stub(tmp_path)
+    baseline_stub = _write_measure_baseline_stub(tmp_path, state="present")
     env = _make_env(tmp_path, data_home)
-    post_source = f"_RELEASE_TRAIN_SCRIPT='{stub}'"
+    post_source = f"_RELEASE_TRAIN_SCRIPT='{stub}'\n_MEASURE_BASELINE_SCRIPT='{baseline_stub}'"
 
     # --- First call: no permit → skip-permits ---
     result = _source_scheduler_fn(env, "offer_release_trains", "[]",
@@ -306,8 +323,9 @@ def test_ac3_second_call_starts_nothing(tmp_path: Path) -> None:
     _write_sandbox_data(data_home, "proj1", tmp_path)
 
     stub = _write_release_train_stub(tmp_path)
+    baseline_stub = _write_measure_baseline_stub(tmp_path, state="present")
     env = _make_env(tmp_path, data_home)
-    post_source = f"_RELEASE_TRAIN_SCRIPT='{stub}'"
+    post_source = f"_RELEASE_TRAIN_SCRIPT='{stub}'\n_MEASURE_BASELINE_SCRIPT='{baseline_stub}'"
 
     # First call — starts the train
     r1 = _source_scheduler_fn(env, "offer_release_trains", "[]",
@@ -338,8 +356,9 @@ def test_ac4_key_in_scan_excluded(tmp_path: Path) -> None:
     _write_sandbox_data(data_home, "proj1", tmp_path)
 
     stub = _write_release_train_stub(tmp_path)
+    baseline_stub = _write_measure_baseline_stub(tmp_path, state="present")
     env = _make_env(tmp_path, data_home)
-    post_source = f"_RELEASE_TRAIN_SCRIPT='{stub}'"
+    post_source = f"_RELEASE_TRAIN_SCRIPT='{stub}'\n_MEASURE_BASELINE_SCRIPT='{baseline_stub}'"
 
     # Pass proj1 in the scan JSON → should be excluded
     scan_json = json.dumps([{"key": "proj1", "path": "x"}])
@@ -377,8 +396,9 @@ def test_ac5_failed_sentinel_starts_nothing(tmp_path: Path) -> None:
     )
 
     stub = _write_release_train_stub(tmp_path)
+    baseline_stub = _write_measure_baseline_stub(tmp_path, state="present")
     env = _make_env(tmp_path, data_home)
-    post_source = f"_RELEASE_TRAIN_SCRIPT='{stub}'"
+    post_source = f"_RELEASE_TRAIN_SCRIPT='{stub}'\n_MEASURE_BASELINE_SCRIPT='{baseline_stub}'"
 
     result = _source_scheduler_fn(env, "offer_release_trains", "[]",
                                   post_source=post_source)

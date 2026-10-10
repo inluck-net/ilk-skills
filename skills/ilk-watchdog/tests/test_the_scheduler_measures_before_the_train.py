@@ -158,6 +158,22 @@ def _run_maybe_start_release_train(
         / "runtime" / "launcher" / "last-exit.json"
     )
 
+    # Create a stub spawn_detached.py that runs the command directly
+    spawn_stub = tmp_path / "spawn_detached_stub.py"
+    spawn_stub.write_text(textwrap.dedent("""\
+import sys, os
+args = sys.argv[1:]
+# Parse --log PATH
+log_path = None
+if len(args) >= 2 and args[0] == "--log":
+    log_path = args[1]
+    args = args[2:]
+if not args:
+    sys.exit(2)
+# Run the command directly
+os.execvp(args[0], args)
+"""), encoding="utf-8")
+
     script = textwrap.dedent(f"""\
 set -euo pipefail
 PYTHON="{py}"
@@ -165,7 +181,7 @@ _ILK_SCRIPT_DIR="{str(_WATCHDOG_SCRIPTS)}"
 _SKILL_ROOT="{skill_root}"
 _RELEASE_TRAIN_SCRIPT="{str(_WATCHDOG_SCRIPTS / '..' / '..' / 'ilk-ship' / 'scripts' / 'release_train.py')}"
 _RELEASE_TRAIN_DISPATCH="{dispatch_dir}/release_train_dispatch.py"
-_SPAWN_DETACHED="{str(_WATCHDOG_SCRIPTS / 'spawn_detached.py')}"
+_SPAWN_DETACHED="{spawn_stub}"
 _MEASURE_BASELINE_SCRIPT="{stub}"
 SCHEDULER_LOG_DIR="{log_dir}"
 SCHEDULER_LOG_FILE="{log_file}"
@@ -247,6 +263,16 @@ sys.exit(0)
     )
 
     # Stub recorded the check and measure argv
+    # Wait for the background measure process to complete
+    import time
+    records = []
+    for _ in range(20):
+        if record_file.exists():
+            records = [json.loads(line) for line in record_file.read_text().splitlines() if line.strip()]
+            verbs = [r["verb"] for r in records]
+            if "measure" in verbs:
+                break
+        time.sleep(0.1)
     assert record_file.exists(), "stub did not record any calls"
     records = [json.loads(line) for line in record_file.read_text().splitlines() if line.strip()]
     verbs = [r["verb"] for r in records]
