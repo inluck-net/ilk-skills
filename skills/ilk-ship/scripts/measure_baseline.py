@@ -116,8 +116,9 @@ def check(project: Path, data_dir: Path, tag: Optional[str] = None) -> Dict[str,
     """Check the baseline measurement state for a tag.
 
     Returns a dict with "state" key:
-      - "missing": no baseline stored
+      - "missing": no baseline stored for the tag
       - "present": baseline is stored and available
+      - "no-tag": the project has no release tag (nothing to compare against)
       - "measuring": a measurement is currently in progress (live pid marker)
       - "unmeasurable": measurement failed after max attempts
     """
@@ -130,7 +131,8 @@ def check(project: Path, data_dir: Path, tag: Optional[str] = None) -> Dict[str,
             text=True,
         )
         if r.returncode != 0:
-            return {"state": "missing"}
+            # No tag exists: not "missing" — there is no release to measure.
+            return {"state": "no-tag"}
         tag = r.stdout.strip()
 
     # Check if baseline is already stored
@@ -288,11 +290,13 @@ def main() -> None:
     measure_parser = sub.add_parser("measure", help="Measure baseline at tag")
     measure_parser.add_argument("--project", required=True, help="Project root")
     measure_parser.add_argument("--data-dir", required=True, help="Data directory")
-    measure_parser.add_argument("--tag", required=True, help="Tag to measure")
+    measure_parser.add_argument(
+        "--tag", help="Tag to measure (default: the latest release tag)"
+    )
     measure_parser.add_argument(
         "--invocation",
-        default="python3 -m pytest -q -p no:cacheprovider",
-        help="Test invocation command",
+        default=None,
+        help="Test invocation command (default: the train's resolved invocation)",
     )
 
     args = parser.parse_args()
@@ -305,11 +309,22 @@ def main() -> None:
         )
         print(result["state"])
     elif args.command == "measure":
+        project = Path(args.project)
+        tag = args.tag
+        if tag is None:
+            from release_train import _get_latest_tag
+
+            tag = _get_latest_tag(project)
+        invocation = args.invocation
+        if invocation is None:
+            from release_train import _resolve_invocation
+
+            invocation = _resolve_invocation(project)
         result = measure(
-            project=Path(args.project),
+            project=project,
             data_dir=Path(args.data_dir),
-            tag=args.tag,
-            invocation=args.invocation,
+            tag=tag,
+            invocation=invocation,
         )
         print(json.dumps(result))
 
