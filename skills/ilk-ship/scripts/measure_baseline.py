@@ -29,6 +29,12 @@ from typing import Any, Dict, Optional
 
 MARKER_SUBDIR = "runtime/release"
 
+# Fallback suite for projects whose train resolves no invocation (no
+# .ilk-launch.json ship.suite).  This was this CLI's --invocation default
+# before c48ffc68; release_train._resolve_invocation returns "" -- not None --
+# for such a project, so an empty string must not be run as a command.
+DEFAULT_INVOCATION = "python3 -m pytest -q -p no:cacheprovider"
+
 
 def _marker_path(data_dir: Path, tag: str) -> Path:
     """Path to the marker file for a given tag."""
@@ -319,7 +325,13 @@ def main() -> None:
         if invocation is None:
             from release_train import _resolve_invocation
 
-            invocation = _resolve_invocation(project)
+            # Contract 14: the stored key is the train's resolved invocation.
+            # That resolution is "" for a project with no ship.suite, and "" is
+            # not a runnable command -- fall back to this CLI's pre-c48ffc68
+            # default so a measurement still happens.  (release_train.prove
+            # refuses earlier with "could not resolve suite invocation", so no
+            # baseline lookup can disagree with this key.)
+            invocation = _resolve_invocation(project) or DEFAULT_INVOCATION
         result = measure(
             project=project,
             data_dir=Path(args.data_dir),
