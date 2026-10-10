@@ -1,8 +1,8 @@
 """Pin the settled-rerun contract for run_head_reruns + classify_flaky.
 
-AC-1  xdist kept (invocation passed through unchanged)
+AC-1  xdist stripped (both rerun arms measure under the same shape)
 AC-2  settled ids dropped (an id that passes leaves the set after that pass)
-AC-3  verdict equivalence — exhaustive 16-case table
+AC-3  verdict equivalence — exhaustive 16-case table against the spec rule
 AC-4  touched ids are not rerun (computed before reruns at the call site)
 AC-5  bound fails closed (unsettled ids at the budget are attributed)
 AC-6  gate agrees (verify_attribution's N/K parser derives the same verdict)
@@ -64,11 +64,18 @@ class FakeRerunSequence:
 
 
 # ---------------------------------------------------------------------------
-# AC-1: xdist flags are kept in every rerun command
+# AC-1: xdist flags are stripped from every rerun command
 # ---------------------------------------------------------------------------
 
-def test_ac1_xdist_kept(tmp_path: Path):
-    """Every rerun command must contain the suite's -n and --dist flags."""
+def test_ac1_xdist_stripped(tmp_path: Path):
+    """Every rerun command must be serial: no -n, no --dist.
+
+    Contract updated by sub-plan ``both-rerun-arms-run-serially`` (step 1),
+    whose design item 1 is the evidence: the at-base arm strips xdist
+    (``verification_record.run_at_base``), so the head arm must too — both
+    arms measure under the same shape (row d0eaf52ab42bf5e6).  The rest of
+    the invocation still passes through unchanged.
+    """
     import verification_record as vr
 
     ids = ["tests/test_foo.py::test_a", "tests/test_foo.py::test_b"]
@@ -83,11 +90,12 @@ def test_ac1_xdist_kept(tmp_path: Path):
     with patch.object(vr.subprocess, "run", side_effect=fake):
         result, bound_hit = vr.run_head_reruns(tmp_path, ids, invocation)
 
-    # Every captured command must contain -n 8 and --dist loadfile.
     assert len(fake.call_log) >= 1, "expected at least one rerun command"
     for cmd in fake.call_log:
-        assert "-n 8" in cmd, f"missing -n 8 in: {cmd}"
-        assert "--dist loadfile" in cmd, f"missing --dist loadfile in: {cmd}"
+        assert "-n 8" not in cmd, f"xdist -n 8 survived strip: {cmd}"
+        assert "--dist loadfile" not in cmd, f"xdist --dist survived strip: {cmd}"
+        # The non-xdist flags are still the suite's own.
+        assert "--timeout=17" in cmd, f"non-xdist flag lost: {cmd}"
 
 
 # ---------------------------------------------------------------------------
@@ -140,16 +148,22 @@ def test_ac2_settled_ids_dropped(tmp_path: Path):
 
 def test_ac3_verdict_equivalence_exhaustive():
     """For every outcome sequence in {red,pass}^3 and touched ∈ {T,F},
-    the new classification equals the old one (inlined reference).
+    the classification equals the specified rule (inlined reference).
 
-    This is a pure-function test that holds before AND after the change,
-    because the contract is designed so that (red_count == runs) is
-    equivalent to (red_count == K) when runs == K (the old code).
+    Contract updated by sub-plan ``both-rerun-arms-run-serially`` (step 1):
+    the rule gained a ``contention`` clause (at base ``passed`` + 0 reds in
+    its serial head rerun), so the inlined reference carries that clause too.
+    Every other case keeps the pre-change verdict, and the comparison stays
+    exhaustive over all 16 sequences x touched x at-base.
+
+    The ``seen_contention`` tally is asserted so the new clause cannot be
+    dropped from BOTH the reference and the function without this test
+    noticing — the equivalence alone would still hold if both went away.
     """
     from verification_record import classify_flaky
 
-    # Reference: old fixed-K classify_flaky semantics inlined.
-    def old_classify_flaky(
+    # Reference: the specified classify_flaky semantics inlined.
+    def spec_classify_flaky(
         node_id: str, at_base: str, head_red_count: int,
         K: int, batch_touched: bool,
     ) -> str | None:
@@ -157,28 +171,42 @@ def test_ac3_verdict_equivalence_exhaustive():
             return "pre-existing"
         if head_red_count == K:
             return "attributed"
+        if at_base == "passed" and head_red_count == 0:
+            return "contention"
         if batch_touched:
             return "attributed"
         return "flaky-owed"
 
     K = 3
     outcomes = list(itertools.product(["red", "pass"], repeat=3))
+    seen_contention = 0
 
     for seq in outcomes:
         for touched in (True, False):
             for at_base in ("passed", "absent-at-base"):
                 red_count = sum(1 for o in seq if o == "red")
-                runs = K  # old code always runs K passes
+                runs = K  # the call site always runs K passes
 
-                old_verdict = old_classify_flaky(
+                spec_verdict = spec_classify_flaky(
                     "nid", at_base, red_count, K, touched)
                 new_verdict = classify_flaky(
                     "nid", at_base, red_count, K, touched)
 
-                assert old_verdict == new_verdict, (
+                assert spec_verdict == new_verdict, (
                     f"mismatch for seq={seq}, touched={touched}, "
-                    f"at_base={at_base}: old={old_verdict}, new={new_verdict}"
+                    f"at_base={at_base}: spec={spec_verdict}, "
+                    f"new={new_verdict}"
                 )
+                if at_base == "passed" and red_count == 0:
+                    seen_contention += 1
+                    assert new_verdict == "contention", (
+                        f"0 red at base-passed must be contention, got "
+                        f"{new_verdict} (touched={touched})")
+
+    # all-pass x {T, F} x "passed" — the exhaustive set the new clause owns.
+    assert seen_contention == 2, (
+        f"expected exactly 2 contention cells in the table, saw "
+        f"{seen_contention} — the exhaustive loop stopped covering it")
 
 
 # ---------------------------------------------------------------------------

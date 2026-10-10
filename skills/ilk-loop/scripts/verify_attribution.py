@@ -314,6 +314,9 @@ def derive_attributed(rows: list[list[str]]) -> tuple[list[list[str]], list[str]
     **5-column (current):** adds flaky classification:
         failed / declared-at-base at base  ⇒  pre-existing, not attributed
         otherwise, head reruns = K/K  ⇒  attributed (red every time)
+        otherwise, ``passed`` at base + 0 reds in its serial head rerun
+          ⇒  ``contention``: not attributed, whatever ``batch touched file``
+          says (counted in ``flaky_owed``)
         otherwise (intermittent 1..K-1, or 0/K) + batch touched file: yes  ⇒  attributed
         otherwise  ⇒  flaky, fix owed: does NOT block
 
@@ -322,7 +325,8 @@ def derive_attributed(rows: list[list[str]]) -> tuple[list[list[str]], list[str]
     ``no``.
 
     Returns ``(bad_rows, flaky_owed)`` where ``bad_rows`` are attributed
-    regressions and ``flaky_owed`` are node ids classified as flaky.
+    regressions and ``flaky_owed`` are node ids classified as flaky or as
+    ``contention`` (either way, not attributed).
     """
     bad: list[list[str]] = []
     flaky_owed: list[str] = []
@@ -397,8 +401,15 @@ def derive_attributed(rows: list[list[str]]) -> tuple[list[list[str]], list[str]
                 # owned-by ⇒ a foreign sub-plan owns this red; not this batch's fault.
                 continue
             # at_base is passed, absent-at-base, or failed-differently.
+            # K/K first: (0, 0) rows (never ran, bound hit, filtered out)
+            # must fail closed as attributed.
             if red_count == K:
                 bad.append(r)
+            elif at_base == "passed" and red_count == 0:
+                # contention — green in its serial head rerun at base-passed,
+                # whatever `batch touched file` says.  Not attributed, and
+                # counted here with flaky-owed (mirrors classify_flaky).
+                flaky_owed.append(node)
             elif batch_touched:
                 bad.append(r)
             else:
@@ -625,11 +636,19 @@ def _rederive_carried(missing: list[str], text: str,
         if ab.startswith("born-red-at:"):
             continue
         red_count, runs = reruns[node]
+        # red_in_suite=False: `missing = all_historical - current_nodes`, so a
+        # carried id is NOT among this record's failing nodes — it is not red
+        # in this suite run and cannot be an xdist contention.  It gets the
+        # pre-contention rule (its batch touch still attributes it), which is
+        # what keeps a config-only retry from erasing attempt 1's attribution.
         cls = vr.classify_flaky(node, ab, red_count, runs,
-                                touched.get(node, True))
+                                touched.get(node, True),
+                                red_in_suite=False)
         if cls == "attributed":
             attributed.append(node)
-        elif cls == "flaky-owed":
+        elif cls in ("flaky-owed", "contention"):
+            # contention is unreachable with red_in_suite=False; listed so a
+            # future call-site change still counts it as not attributed.
             owed.append(node)
     if attributed:
         raise VerificationError(

@@ -1,4 +1,4 @@
-"""Red-first pins: both rerun arms run serially, and serial-green is contention.
+"""Both rerun arms run serially, and serial-green is contention.
 
 Retro 2026-10-10 root cause 2 (`retro-2026-10-10-a-verify-that-cannot-
 fit-its-own-gate.md`): at-base strips xdist, head reruns kept it, so a
@@ -42,13 +42,6 @@ SHIP_SCRIPTS = Path(__file__).resolve().parents[2] / "ilk-ship" / "scripts"
 for _p in (str(LOOP_SCRIPTS), str(SHIP_SCRIPTS)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
-
-REDS_FIRST = pytest.mark.xfail(
-    strict=True,
-    raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError),
-    reason="not built yet",
-)
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -120,7 +113,6 @@ def _render_record(path: Path, *, at_base: dict[str, str],
 # AC-1: head reruns strip xdist, so both arms measure under one shape
 # ---------------------------------------------------------------------------
 
-@REDS_FIRST
 def test_ac1_head_reruns_strip_xdist(tmp_path: Path) -> None:
     """Every rerun command is serial: no ``-n``, no ``--dist``."""
     import verification_record as vr
@@ -144,7 +136,6 @@ def test_ac1_head_reruns_strip_xdist(tmp_path: Path) -> None:
 # AC-2: contention label + its falsifier
 # ---------------------------------------------------------------------------
 
-@REDS_FIRST
 def test_ac2_contention_overrides_batch_touched() -> None:
     """Serial-green at base-passed is contention; serial K/K stays attributed."""
     from verification_record import classify_flaky
@@ -169,7 +160,6 @@ def test_ac2_contention_overrides_batch_touched() -> None:
 # AC-3: the step-1 gate re-derives contention as not-attributed
 # ---------------------------------------------------------------------------
 
-@REDS_FIRST
 def test_ac3_contention_row_passes_the_step1_gate(tmp_path: Path) -> None:
     """A contention row is no attributed row; a serial-red K/K row is."""
     import verify_attribution as va
@@ -214,7 +204,6 @@ def test_ac3_contention_row_passes_the_step1_gate(tmp_path: Path) -> None:
 # AC-4: end to end in a tiny tmp project
 # ---------------------------------------------------------------------------
 
-@REDS_FIRST
 def test_ac4_xdist_only_timeout_is_contention(tmp_path: Path) -> None:
     """Red under ``-n 2``, green serially ⇒ the recorder says contention."""
     import verification_record as vr
@@ -239,10 +228,17 @@ def test_ac4_xdist_only_timeout_is_contention(tmp_path: Path) -> None:
     python = shlex.quote(sys.executable)
     base_inv = f"{python} -m pytest --timeout=2 --timeout-method=signal -q -rf"
     xdist_inv = base_inv + " -n 2"
-    env = {**os.environ,
-           "HOME": str(tmp_path / "home"),
-           "ILK_DATA_HOME": str(tmp_path / "ilk-data"),
-           "ILK_DATA_DIR": str(tmp_path / "ilk-data")}
+    # The declared gate runs this file under xdist (-n 8), so this test
+    # process may itself BE a worker.  PYTEST_XDIST_WORKER would be inherited
+    # by every subprocess below and make the serial runs look like workers,
+    # so the premise is measured with the outer worker var stripped.
+    env = {k: v for k, v in os.environ.items()
+           if k != "PYTEST_XDIST_WORKER"}
+    env.update({
+        "HOME": str(tmp_path / "home"),
+        "ILK_DATA_HOME": str(tmp_path / "ilk-data"),
+        "ILK_DATA_DIR": str(tmp_path / "ilk-data"),
+    })
     if _USER_SITE and os.path.isdir(_USER_SITE):
         prior = env.get("PYTHONPATH") or ""
         env["PYTHONPATH"] = os.pathsep.join(
@@ -262,7 +258,10 @@ def test_ac4_xdist_only_timeout_is_contention(tmp_path: Path) -> None:
         f"the sleeper must be green serially:\n{serial_run.stdout[-2000:]}")
 
     # The recorder's own classification path, on the recorder's own reruns.
+    # run_head_reruns takes no env= and inherits os.environ, so the outer
+    # worker var has to be absent there too; patch.dict restores it.
     with patch.dict(os.environ, env):
+        os.environ.pop("PYTEST_XDIST_WORKER", None)
         results, bound_hit = vr.run_head_reruns(project, [nid], xdist_inv, K=3)
     red_count, runs = results[nid]
     assert red_count == 0, (
@@ -277,7 +276,6 @@ def test_ac4_xdist_only_timeout_is_contention(tmp_path: Path) -> None:
 # AC-5: baseline_diff's evidence reader counts contention like flaky_owed
 # ---------------------------------------------------------------------------
 
-@REDS_FIRST
 def test_ac5_baseline_diff_counts_contention_as_not_attributed() -> None:
     """``contention`` evidence is inherited, never left as a regression."""
     import baseline_diff as bd

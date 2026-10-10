@@ -1533,9 +1533,10 @@ def run_head_reruns(project: Path, node_ids: list[str], invocation: str,
                     ) -> tuple[dict[str, tuple[int, int]], bool]:
     """Run failing node ids at HEAD, dropping settled ids after each pass.
 
-    Each rerun is ONE pytest process over the remaining set, using the suite's
-    own invocation and flags (xdist included).  An id that does NOT fail in a
-    pass leaves the set; subsequent passes skip it.  Stop after K passes or
+    Each rerun is ONE pytest process over the remaining set, running serially:
+    xdist flags are stripped (as in ``run_at_base``) so both arms measure
+    under the same shape (row d0eaf52ab42bf5e6).  An id that does NOT fail in
+    a pass leaves the set; subsequent passes skip it.  Stop after K passes or
     when the set is empty.
 
     The total wall clock is bounded by *budget_s*.  Each pass's subprocess
@@ -1549,7 +1550,10 @@ def run_head_reruns(project: Path, node_ids: list[str], invocation: str,
     """
     if not node_ids:
         return {}, False
-    # Keep xdist — the suite's own flags.
+    # Serial: both rerun arms must measure under the same shape.  At-base
+    # reruns strip xdist, so the head arm does too (row d0eaf52ab42bf5e6).
+    import suite_ledger
+    runner = suite_ledger.strip_xdist(invocation)
     remaining = list(node_ids)
     red_counts: dict[str, int] = {nid: 0 for nid in node_ids}
     runs: dict[str, int] = {nid: 0 for nid in node_ids}
@@ -1566,7 +1570,7 @@ def run_head_reruns(project: Path, node_ids: list[str], invocation: str,
         pass_timeout = max(1, int(remaining_budget))
         try:
             r = subprocess.run(
-                f"{invocation} {' '.join(remaining)}", shell=True,
+                f"{runner} {' '.join(remaining)}", shell=True,
                 cwd=project, capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=pass_timeout)
         except subprocess.TimeoutExpired:
@@ -1681,20 +1685,37 @@ def batch_touched_files(project: Path, base_sha: str,
 
 
 def classify_flaky(node_id: str, at_base: str, head_red_count: int,
-                   K: int, batch_touched: bool) -> str | None:
+                   K: int, batch_touched: bool, *,
+                   red_in_suite: bool = True) -> str | None:
     """Classify a failing node id's flaky status.
+
+    *red_in_suite* is the third condition of ``contention``: the id was red
+    in the suite run this verdict describes.  The recorder's call sites and
+    the record's At-base table only ever carry suite-red ids, so the default
+    holds; the carried-failure re-derivation passes ``False`` because a
+    carried id is, by construction, absent from the current suite's failures.
 
     Returns one of:
     - ``"pre-existing"`` — failed or declared-at-base at base; not attributed
     - ``"attributed"`` — red every time (K/K), or intermittent with batch touch
+    - ``"contention"`` — passed at base, red in the suite, green in its serial
+      head rerun: an xdist contention, never attributed (overrides
+      ``batch_touched``; MASTER judgment call (b))
     - ``"flaky-owed"`` — intermittent or did-not-reproduce, batch did NOT touch
     - ``None`` — not a flaky test (passed at base and no reruns needed)
     """
     if at_base in ("failed", "declared-at-base"):
         return "pre-existing"
     # at_base is passed, absent-at-base, or failed-differently.
+    # (0, 0) — never ran, bound hit, or filtered out — must reach this arm
+    # first so it fails closed as attributed.
     if head_red_count == K:
         return "attributed"
+    # Red at head, green in every serial pass, passed at base: contention,
+    # whatever the batch touched.  Requires `passed` — `absent-at-base` keeps
+    # its rule — and a suite-red id; a green id is not contending with anything.
+    if red_in_suite and at_base == "passed" and head_red_count == 0:
+        return "contention"
     # Intermittent (1..K-1) or did-not-reproduce (0).
     if batch_touched:
         return "attributed"
@@ -2557,7 +2578,7 @@ def _write_measured_record(project: Path, record: Path, args,
                     nid, at_base.get(nid, "failed"),
                     red_count, runs,
                     batch_touched.get(nid, False))
-                if cls == "flaky-owed":
+                if cls in ("flaky-owed", "contention"):
                     flaky_owed.append(nid)
         except (TimeoutError, subprocess.SubprocessError) as exc:
             print(f"WARNING: HEAD reruns could not run: {exc}", file=sys.stderr)
@@ -2959,7 +2980,7 @@ def _write_record_from_output(project: Path, record: Path, args,
                     nid, at_base.get(nid, "failed"),
                     red_count, runs,
                     batch_touched.get(nid, False))
-                if cls == "flaky-owed":
+                if cls in ("flaky-owed", "contention"):
                     flaky_owed.append(nid)
         except (TimeoutError, subprocess.SubprocessError) as exc:
             print(f"WARNING: HEAD reruns could not run: {exc}", file=sys.stderr)

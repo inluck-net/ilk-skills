@@ -463,8 +463,8 @@ def store_baseline_red_evidence(
     """Store baseline_red evidence entries for later use by prove().
 
     Evidence is keyed identically to the baseline (tag + invocation hash).
-    Each entry carries a node_id and structured evidence (failed_at_base
-    or flaky_owed with invocation + serial_green).
+    Each entry carries a node_id and structured evidence (failed_at_base,
+    or flaky_owed / contention with invocation + serial_green).
     """
     d = baseline_dir(project_root)
     d.mkdir(parents=True, exist_ok=True)
@@ -483,7 +483,7 @@ def load_baseline_red_evidence(
 
     Returns a tuple of entry dicts, or None when no evidence file exists.
     Each entry has: node_id, reason, as_of, and optionally evidence
-    (with failed_at_base or flaky_owed sub-keys).
+    (with failed_at_base or flaky_owed / contention sub-keys).
     """
     d = baseline_dir(project_root)
     key = baseline_key(tag, suite_invocation)
@@ -582,7 +582,8 @@ def _apply_evidence_policy(
     """Apply baseline_red evidence policy to diff results.
 
     AC-3: a node with measured failed_at_base=True evidence → inherited.
-    AC-4: flaky_owed requires exact node + invocation + serial-green.
+    AC-4: flaky_owed (and contention) require exact node + invocation +
+    serial-green — both mean "not attributed".
     A declared node without evidence remains a regression (stays in new_failures).
     """
     red_map: Dict[str, dict] = {}
@@ -604,8 +605,9 @@ def _apply_evidence_policy(
         if evidence.get("failed_at_base"):
             # AC-3: measured evidence → inherited
             promoted.add(node_id)
-        elif evidence.get("flaky_owed"):
-            # AC-4: flaky-owed requires exact match
+        elif evidence.get("flaky_owed") or evidence.get("contention"):
+            # AC-4: flaky-owed and contention both require exact match —
+            # contention is "green serially at base-passed", i.e. not attributed.
             if (
                 evidence.get("invocation") == suite_invocation
                 and evidence.get("serial_green") is True
@@ -629,7 +631,7 @@ def check_baseline_red_evidence(
         evidence = entry.get("evidence")
         if evidence is None:
             continue
-        if evidence.get("flaky_owed"):
+        if evidence.get("flaky_owed") or evidence.get("contention"):
             if evidence.get("invocation") != suite_invocation:
                 errors.append({
                     "node_id": entry.get("node_id"),
