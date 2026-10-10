@@ -513,6 +513,30 @@ def _resolve_expected_invocation(project_path: Path) -> str:
         return ""
 
 
+def _verification_subplan_is_optional(project_path: Path) -> bool:
+    """Does the LIVE ship block waive the verify sub-plan?
+
+    Delegates to ``ship_config.verification_subplan_mode`` so the fail-closed
+    rule lives in one place: anything but a loaded ``ShipConfig`` whose key
+    reads ``optional`` resolves to ``required`` here.
+    """
+    try:
+        _scripts_dir = str(Path(__file__).resolve().parent)
+        if _scripts_dir not in sys.path:
+            sys.path.insert(0, _scripts_dir)
+        # batch_gate._skill_root() resolves the skills/ directory
+        from batch_gate import _skill_root  # type: ignore[import-untyped]
+        sys_path_backup = list(sys.path)
+        try:
+            sys.path.insert(0, str(_skill_root() / "ilk-ship" / "scripts"))
+            from ship_config import verification_subplan_mode  # type: ignore[import-untyped]
+        finally:
+            sys.path[:] = sys_path_backup
+        return verification_subplan_mode(project_path) == "optional"
+    except (ImportError, FileNotFoundError):
+        return False
+
+
 def _resolve_batch_record(
     runtime_dir: Path | None,
     cwd: Path | None = None,
@@ -521,8 +545,9 @@ def _resolve_batch_record(
     """Read the persisted batch-gate verdict using SP2's validator.
 
     Returns ``(gate_verdict, reason)`` where verdict is one of:
-    ``"pass"``, ``"fail"``, ``"stale_head"``, ``"stale_invocation"``,
-    ``"absent"``, ``"incomplete"``, or ``None`` (no runtime_dir supplied).
+    ``"pass"``, ``"fail"``, ``"delegated"``, ``"stale_head"``,
+    ``"stale_invocation"``, ``"absent"``, ``"incomplete"``, or ``None``
+    (no runtime_dir supplied).
 
     AC-1: reads the verdict from the record.
     AC-2: stale / invalid / absent each its own outcome (validator vocabulary).
@@ -620,6 +645,26 @@ def _resolve_batch_record(
         if isinstance(_rec, dict) and _rec.get("verdict") == "not_configured":
             return "not_configured", _rec.get("invocation") or "no suite configured"
 
+    # A `delegated` record is the designed name for "this project waived the
+    # verify sub-plan; the consumer's GitHub CI is the verdict and ilk does
+    # not read it" (batch_gate.py writes it without running the suite).  Same
+    # LIVE-config gate as `not_configured` above: only while the config still
+    # says `optional`.  Once the project goes back to `required` (or loses its
+    # ship block), the record describes a world that no longer exists and must
+    # be graded normally — its invocation names no suite the live config would
+    # run, so validate_record grades it `stale_invocation` and refuses.  Never
+    # as pass.
+    if _verification_subplan_is_optional(project_path):
+        try:
+            _rec = json.loads(rp.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            _rec = None
+        if isinstance(_rec, dict) and _rec.get("verdict") == "delegated":
+            return (
+                "delegated",
+                _rec.get("invocation") or "delegated (no invocation recorded)",
+            )
+
     # AC-3: delegate to SP2's validator.
     outcome = validate_record(
         rp, current_head, expected_invocation, expected_tree_sha=current_tree,
@@ -669,9 +714,10 @@ def _evaluate_gate(
     """Run the gate half via ``ship_integrity.evaluate_ship``.
 
     Returns ``(gate_verdict, reason)`` where verdict is ``None`` for no-gate
-    sub-plans, ``"pass"`` or ``"fail"`` for trusted records, or one of
-    ``"stale_head"``, ``"stale_invocation"``, ``"incomplete"``, ``"absent"``
-    for untrusted records (validator vocabulary from SP2).
+    sub-plans, ``"pass"``, ``"fail"``, or ``"delegated"`` for trusted
+    records, or one of ``"stale_head"``, ``"stale_invocation"``,
+    ``"incomplete"``, ``"absent"`` for untrusted records (validator
+    vocabulary from SP2).
 
     When *runtime_dir* is provided, reads the persisted batch-gate verdict
     via SP2's ``batch_gate.validate_record`` (AC-1 through AC-3).  Falls
@@ -1060,6 +1106,14 @@ def audit_ship(
     # alone -- steps have commits and nothing verifies the tree.  That gap is
     # surfaced at PLAN time instead (plan_lint flags zero coverage, and
     # batch_gate still prints the verdict), which is where the design puts it.
+    #
+    # `delegated` is the same non-blocking shape for a project that waived the
+    # verify sub-plan.  The cost is different and larger: `proven` then rests
+    # on the commit half plus the consumer's CI, which ilk does not read -- so
+    # nothing in this repo verifies the tree.  Gated on the LIVE config still
+    # saying `optional` (see `_resolve_batch_record`); a `delegated` record in
+    # a project that went back to `required` grades `stale_invocation` and
+    # refuses, never as pass.
 
     # Check for pre_existing_red in ledger records.
     # A step that advanced past an excused red is UNPROVEN with a named reason.
@@ -1094,7 +1148,7 @@ def audit_ship(
         and not _final_step_gate_failed
         and not _per_step_gate_failed
         and not _has_pre_existing_red
-        and gate_verdict in (None, "pass", "not_configured")
+        and gate_verdict in (None, "pass", "not_configured", "delegated")
     )
     # Legacy label: per-step records were not required, but the gate still ran.
     # Only add when there are no missing steps (missing steps are a separate issue).

@@ -10,7 +10,7 @@ cover it).  Appends during the freeze are deferred to the next batch.
 
 Record format (JSON):
 {
-  "verdict":    "pass" | "fail" | "not_configured" | "error",
+  "verdict":    "pass" | "fail" | "not_configured" | "error" | "delegated",
   "head_sha":   "<40-char hex>",
   "invocation": "<the command that was run>",
   "timestamp":  "<ISO-8601>",
@@ -110,8 +110,9 @@ class BatchGateRecord:
 
     ``None`` means the gate that wrote this record did not record
     attribution — an older writer, or a verdict for which attribution was
-    never computed (``not_configured``, ``error``).  It does NOT mean "no
-    undeclared failures"; that is the computed-empty case, ``[]``.
+    never computed (``not_configured``, ``error``, ``delegated``).  It does
+    NOT mean "no undeclared failures"; that is the computed-empty case,
+    ``[]``.
     """
     verdict: str
     head_sha: str
@@ -234,8 +235,9 @@ def _is_measured(record: BatchGateRecord) -> bool:
     """Does this record claim a suite actually ran?
 
     ``pass`` and ``fail`` assert the suite executed and produced a result.
-    ``not_configured``, ``error``, and ``malformed_config`` make no such
-    claim — they are unmeasured and legitimately replace nothing.
+    ``not_configured``, ``error``, ``delegated``, and ``malformed_config``
+    make no such claim — they are unmeasured and legitimately replace
+    nothing.
     """
     return record.verdict in ("pass", "fail")
 
@@ -462,8 +464,8 @@ def validate_record(
     return "fresh"
 
 
-#: Verdicts that assert a suite actually ran.  ``not_configured`` and
-#: ``error`` make no such claim and legitimately name no suite.
+#: Verdicts that assert a suite actually ran.  ``not_configured``, ``error``,
+#: and ``delegated`` make no such claim and legitimately name no suite.
 _VERDICTS_CLAIMING_A_RUN = ("pass", "fail")
 
 
@@ -1169,6 +1171,24 @@ def _run_gate_inner(
             writer=WRITER_ID,
         )
 
+    # A project that waived the verify sub-plan records `delegated` and runs
+    # nothing: the consumer's GitHub CI is the verdict and ilk does not read
+    # it.  Same shape as `not_configured` above — a verdict computed without
+    # running the suite, so unmeasured evidence that claims no run (stays out
+    # of `_VERDICTS_CLAIMING_A_RUN` and out of `_is_measured`).
+    if config.ship["verification_subplan"] == "optional":
+        return BatchGateRecord(
+            verdict="delegated",
+            head_sha=head_sha,
+            invocation=(
+                "delegated: ship.verification_subplan optional in "
+                f"{config.resolved_path}"
+            ),
+            timestamp=_now_iso(),
+            tree_sha=_git_head_tree(project_path),
+            writer=WRITER_ID,
+        )
+
     invocation = config.ship["suite"]["command"]
     flags = config.ship["suite"].get("flags", [])
     full_cmd = invocation if not flags else f"{invocation} {' '.join(flags)}"
@@ -1338,6 +1358,10 @@ def main() -> None:
     # both undoes it.  It is still printed, and plan_lint flags the batch at
     # plan time.  Wrong if batch-end should hard-stop on zero coverage —
     # that wants a third exit code, not this one folded into 1.
+    #
+    # `delegated` is the same shape: the project waived the verify sub-plan
+    # and the consumer's CI is the verdict.  Exiting non-zero would read as
+    # "the suite failed" for a run that never attempted one.
     if rec.verdict in ("fail", "error"):
         raise SystemExit(1)
 

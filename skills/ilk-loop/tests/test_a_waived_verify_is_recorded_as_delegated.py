@@ -19,8 +19,7 @@ AC-5  a ``delegated`` verdict is unmeasured evidence and never replaces a
 
 Hermetic: tmp git projects, tmp data homes (HOME / ILK_DATA_HOME /
 ILK_DATA_DIR all point into tmp_path). Never touches the real
-``~/.ilk-data``. Tests marked ``xfail(strict=True)`` are red-first pins
-that step 1 removes.
+``~/.ilk-data``.
 """
 from __future__ import annotations
 
@@ -179,7 +178,6 @@ def _audit(repo: Path, runtime: Path) -> dict:
 class TestAC1:
     """``ship.verification_subplan: optional`` ⇒ ``delegated``, no suite."""
 
-    @pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
     def test_optional_records_delegated_and_skips_the_suite(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -240,7 +238,6 @@ class TestAC2:
 class TestAC3:
     """A ``delegated`` record + live optional config ⇒ delegated, proven."""
 
-    @pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
     def test_ship_audit_accepts_delegated_while_optional(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -276,7 +273,6 @@ class TestAC3:
 class TestAC4:
     """The delegated short-circuit is gated on the LIVE config."""
 
-    @pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
     def test_delegated_record_refuses_once_required(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -319,7 +315,6 @@ class TestAC4:
 class TestAC5:
     """The never-overwrite-measured rule must keep holding for ``delegated``."""
 
-    @pytest.mark.xfail(strict=True, raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError), reason="not built yet")
     def test_delegated_is_unmeasured_and_never_replaces_a_measured_record(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:

@@ -1600,7 +1600,7 @@ another.
 
 ```json
 {
-  "verdict":    "pass" | "fail" | "not_configured" | "error",
+  "verdict":    "pass" | "fail" | "not_configured" | "error" | "delegated",
   "head_sha":   "<40-char hex>",
   "invocation": "<the command that was run>",
   "timestamp":  "<ISO-8601>",
