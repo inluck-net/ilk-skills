@@ -1791,6 +1791,7 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   phase_seconds: dict[str, int] | None = None,
                   contention: dict[str, dict] | None = None,
                   owners: dict[str, dict] | None = None,
+                  owner_reused: tuple[int, int] | None = None,
                   head_rerun_bound_hit: bool = False,
                   carried_from: str | None = None,
                   rerun_selection: int | None = None) -> str:
@@ -1858,6 +1859,9 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
     if phase_seconds is not None:
         parts = [f"{k}={v}" for k, v in phase_seconds.items()]
         lines.append(f"phase_seconds: {' '.join(parts)}")
+    if owner_reused is not None:
+        reused_n, requested_n = owner_reused
+        lines.append(f"owner_reused: {reused_n} of {requested_n}")
     if contention is not None:
         def _fmt_side(side: dict) -> str:
             os_val = side.get("other_suites", "unmeasured")
@@ -2595,6 +2599,8 @@ def _write_measured_record(project: Path, record: Path, args,
     # the table.  how: budget / unknown changes nothing — never emit owned-by
     # without a sha.
     owners: dict[str, dict] = {}
+    owner_stats: dict = {}
+    owner_reused: tuple[int, int] | None = None
     owner_start = time.monotonic()
     if registry_slugs:
         import suite_ledger
@@ -2609,6 +2615,7 @@ def _write_measured_record(project: Path, record: Path, args,
                 resolved = suite_ledger.owners_of(
                     project, reliably_red,
                     base_sha=args.base_sha, head_sha=head,
+                    stats=owner_stats,
                 ) or {}
             except Exception as exc:
                 print(f"WARNING: owners_of failed for {reliably_red}: {exc}",
@@ -2622,6 +2629,13 @@ def _write_measured_record(project: Path, record: Path, args,
                 if slug and slug not in registry_slugs and sha:
                     # Foreign owner — mark as owned-by, not attributed.
                     at_base[nid] = f"owned-by:{slug}@{sha[:12]}"
+            # A reuse is only announced when there was one: the line's whole
+            # job is to let a reader see the phase skipped work it would
+            # otherwise have paid for.
+            reused_n = owner_stats.get("reused") or 0
+            requested_n = owner_stats.get("requested") or 0
+            if reused_n and requested_n:
+                owner_reused = (reused_n, requested_n)
     owner_elapsed = round(time.monotonic() - owner_start)
 
     # R3: determine attempt number and write history.
@@ -2688,6 +2702,7 @@ def _write_measured_record(project: Path, record: Path, args,
         phase_seconds=phase_seconds,
         contention=contention,
         owners=owners or None,
+        owner_reused=owner_reused,
         head_rerun_bound_hit=head_rerun_bound_hit,
     )
     # Inject attempt header after the batch line.

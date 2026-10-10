@@ -668,10 +668,77 @@ def _bisect_first_red(snap: Path, commits: list[str], *,
     return commits[lo]
 
 
+def _owner_cache_path(project: Path, base_sha: str,
+                      cache_dir: Path | None = None) -> Path | None:
+    """``<ext logs>/verification/owners-<base_sha>.json``, or None.
+
+    The directory is the one the at-base cache resolves through — the same
+    helper, so the two caches cannot drift to different trees — and
+    *cache_dir* overrides it for a test.  The cache is an optimization, so a
+    locator or ``mkdir`` fault disables it instead of failing the owner
+    search: an owner search that raises is worse than one that re-probes.
+    """
+    if cache_dir is None:
+        try:
+            from verification_record import (  # type: ignore[import-untyped]
+                _resolve_project_verification_dir,
+            )
+            cache_dir = _resolve_project_verification_dir(project)
+        except Exception:
+            return None
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return cache_dir / f"owners-{base_sha}.json"
+
+
+def _owner_cache_load(path: Path | None, stripped: str | None) -> dict:
+    """Cached rows at *path* for *stripped*; {} when absent or stale.
+
+    A file written under a different stripped invocation describes a
+    different suite, so its rows are not this call's to reuse.
+    """
+    if path is None or stripped is None:
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict) or data.get("invocation") != stripped:
+        return {}
+    rows = data.get("rows")
+    return rows if isinstance(rows, dict) else {}
+
+
+def _owner_cache_save(path: Path | None, stripped: str | None,
+                      rows: dict) -> None:
+    """Write *rows* atomically (tmp + ``os.replace``); best effort.
+
+    A write fault leaves the previous file in place — the next call falls
+    back to probing, which is correct, just slower.
+    """
+    if path is None or stripped is None:
+        return
+    tmp = path.parent / f".{path.name}.{os.getpid()}.tmp"
+    try:
+        payload = {"invocation": stripped, "rows": rows}
+        tmp.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n",
+                       encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
 def owners_of(project: Path, node_ids, *,
               base_sha: str, head_sha: str,
               budget_s: float = OWNER_BUDGET_S,
-              runner=None) -> dict:
+              runner=None,
+              cache_dir: Path | None = None,
+              stats: dict | None = None) -> dict:
     """Resolve the owning sub-plan for every id in *node_ids*.
 
     Steps 1-3 of :func:`owner_of` run unchanged; step 4 is a binary search
@@ -682,10 +749,23 @@ def owners_of(project: Path, node_ids, *,
 
     Ids the budget does not finish carry ``how: "budget"``; nothing raises
     past the caller.
+
+    **Owner cache.**  The batch base is fixed, so a verdict reached at head
+    H0 still holds at any head H1 that descends from H0: the commits up to
+    H0 did not change.  ``point``/``bisect`` rows are stored per base in
+    ``owners-<base_sha>.json`` and reused when the stripped invocation
+    matches, ``row.sha`` is non-empty and ``row.head`` is an ancestor of
+    *head_sha*; anything else is recomputed and overwritten.  ``budget`` and
+    ``unknown`` verdicts are never written — they are not finished
+    answers.  *stats*, when given, receives ``{"requested": m, "reused": n}``
+    so a caller can put the reuse on the record.
     """
     single = isinstance(node_ids, str)
     ids = [node_ids] if single else list(node_ids)
     run = runner if runner is not None else _bounded_run
+    if stats is not None:
+        stats["requested"] = len(ids)
+        stats["reused"] = 0
 
     verdicts: dict[str, dict] = {
         nid: {"slug": None, "sha": None, "how": "unknown"} for nid in ids
@@ -697,15 +777,42 @@ def owners_of(project: Path, node_ids, *,
         invocation = _resolve_invocation(project)
     except LedgerNotConfigured:
         invocation = None
+    stripped = strip_xdist(invocation) if invocation else None
+
+    # Owner cache: reuse the rows the base and head cannot have invalidated.
+    cache_path = (_owner_cache_path(project, base_sha, cache_dir)
+                  if stripped else None)
+    cached_rows = _owner_cache_load(cache_path, stripped)
+    pending = list(ids)
+    reused = 0
+    for nid in list(pending):
+        row = cached_rows.get(nid)
+        if not isinstance(row, dict):
+            continue
+        if row.get("how") not in ("point", "bisect") or not row.get("sha"):
+            continue
+        try:
+            covered = _is_ancestor(project, str(row.get("head") or ""),
+                                   head_sha)
+        except (OSError, subprocess.SubprocessError, TimeoutError):
+            covered = False
+        if not covered:
+            continue
+        verdicts[nid] = {"slug": row.get("slug"), "sha": row.get("sha"),
+                         "how": row["how"]}
+        pending.remove(nid)
+        reused += 1
+    if stats is not None:
+        stats["reused"] = reused
 
     # Steps 1-3 share the id-independent work: one points read, one filter.
-    in_range = _owner_points(project, base_sha, head_sha)
+    in_range = _owner_points(project, base_sha, head_sha) if pending else []
 
     deadline = time.monotonic() + budget_s
     snap: Path | None = None
     snap_attempted = False
     try:
-        for nid in ids:
+        for nid in pending:
             if time.monotonic() >= deadline:
                 verdicts[nid] = {"slug": None, "sha": None, "how": "budget"}
                 continue
@@ -747,6 +854,18 @@ def owners_of(project: Path, node_ids, *,
     finally:
         if snap is not None:
             shutil.rmtree(snap, ignore_errors=True)
+
+    # Cache this call's point/bisect verdicts — never budget/unknown — and
+    # keep the rows the cache already held for ids outside this call.
+    if cache_path is not None:
+        rows = dict(cached_rows)
+        for nid in pending:
+            v = verdicts[nid]
+            if v.get("how") in ("point", "bisect") and v.get("sha"):
+                rows[nid] = {"slug": v.get("slug"), "sha": v["sha"],
+                             "how": v["how"], "head": head_sha}
+        if rows:
+            _owner_cache_save(cache_path, stripped, rows)
 
     if single:
         return verdicts[ids[0]]

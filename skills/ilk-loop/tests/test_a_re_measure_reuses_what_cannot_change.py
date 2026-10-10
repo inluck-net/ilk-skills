@@ -34,8 +34,8 @@ AC-4 (07m invariant)     — a re-measure after a fix commit touching a shared
 AC-5 (recorded)          — the reusing call's record carries
                            ``owner_reused: 3 of 3``.
 
-Each test imports the module under test in its own body; every red-first
-test carries the MASTER's pin shape until step 1 removes every pin.
+Each test imports the module under test in its own body; step 1 removed
+every red-first pin (all five are plain tests now).
 """
 from __future__ import annotations
 
@@ -51,13 +51,6 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
-
-# The MASTER's literal red-first pin shape.
-_XFAIL_NOT_BUILT = dict(
-    strict=True,
-    raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError),
-    reason="not built yet",
-)
 
 _IDS = [
     "tests/test_a.py::test_a",
@@ -217,7 +210,6 @@ def _owner_rows(text: str) -> list[str]:
 # ── AC-1: a descendant head reuses the owners, so no probe runs ─────────────
 
 
-@pytest.mark.xfail(**_XFAIL_NOT_BUILT)
 def test_ac1_descendant_head_reuses_owners(tmp_path: Path) -> None:
     """3 ids, first call at H0, second at H1 (a child of H0).
 
@@ -492,7 +484,6 @@ def test_ac4_remeasure_runs_the_full_current_tree(
 # ── AC-5: the reuse is recorded, not silent ──────────────────────────────────
 
 
-@pytest.mark.xfail(**_XFAIL_NOT_BUILT)
 def test_ac5_record_carries_owner_reused(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
