@@ -175,6 +175,10 @@ python3 tools/claude-worker/model_bench.py --reps 2 --effort low mimo-v2.6-pro
 Include today's model as a control: live loops share the endpoint, so
 latencies from different days are not comparable.
 
+Past results are kept in `bench-results/` (per-run rows plus host, CLI version
+and commit). 2026-10-10, 3 runs each: mimo-v2.5-pro 2.6 s/turn, mimo-v2.6-pro
+5.0, mimo-v2.6-flash 2.9 (medians), all answers correct.
+
 ## Safety notes
 
 - **Never prints tokens.** All output shows redacted placeholders like
