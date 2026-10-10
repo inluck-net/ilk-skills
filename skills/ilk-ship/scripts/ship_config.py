@@ -125,6 +125,17 @@ def _validate_ship_block(ship: Any, resolved_path: Path, location: Location,
             location=location,
         )
 
+    # Validate ship.verification_subplan (optional; absent → "required")
+    mode = ship.get("verification_subplan")
+    if mode is None:
+        ship["verification_subplan"] = "required"
+    elif mode not in ("required", "optional"):
+        return MalformedConfig(
+            detail="'ship.verification_subplan' must be 'required' or 'optional'",
+            resolved_path=resolved_path,
+            location=location,
+        )
+
     # Validate baseline_red entries (AC-5, AC-6)
     baseline_red = ship.get("baseline_red", [])
     if not isinstance(baseline_red, list):
@@ -310,6 +321,18 @@ def load_ship_config(
         return NotConfigured(resolved_path=resolved_path, location=location)
 
     return _validate_ship_block(ship, resolved_path, location, staleness_days)
+
+
+def verification_subplan_mode(project_path: Path) -> str:
+    """Return ``"optional"`` only when the live ship block says so.
+
+    Fail closed: ``NotConfigured``, ``MalformedConfig``, or any value other
+    than the normalised ``"optional"`` all resolve to ``"required"``.
+    """
+    result = load_ship_config(project_path)
+    if isinstance(result, ShipConfig) and result.ship.get("verification_subplan") == "optional":
+        return "optional"
+    return "required"
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────

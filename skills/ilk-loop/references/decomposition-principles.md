@@ -1009,7 +1009,10 @@ The whole-suite obligation belongs to a **named sub-plan** marked
 `batch_verification: true`, not to "the batch gate". This sub-plan must be
 **last** in registry order — running the suite before the last sub-plan ships
 proves nothing about the batch. A master without a batch-verification sub-plan
-is a HARD finding (`lint_master_has_verification_subplan`). A whole-suite gate
+is a HARD finding (`lint_master_has_verification_subplan`) — unless the
+project's `.ilk-launch.json` sets `ship.verification_subplan: "optional"` (its
+CI is the verdict); then write no verification sub-plan unless the task asks
+for one, and the batch-end gate records `delegated`. A whole-suite gate
 in any other sub-plan is reported (`lint_wholesuite_gate_outside_verification_subplan`).
 
 The verification sub-plan's exit condition is **"no failure attributed to this

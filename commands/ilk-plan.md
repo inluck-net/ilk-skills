@@ -373,7 +373,7 @@ verification. Since v0.9.100 that run is **scoped to the batch's changed
 area** — the `base_sha..HEAD` diff plus the test files of every importer
 of a changed module — falling back to the whole suite when the importer
 set cannot be computed or the diff touches anything global. No other
-sub-plan runs a broad gate; they stay change-scoped. A master without one is a HARD lint finding. Add it as
+sub-plan runs a broad gate; they stay change-scoped. A master without one is a HARD lint finding — unless the project's `.ilk-launch.json` sets `ship.verification_subplan: "optional"` (its CI is the verdict); then write no verification sub-plan unless the task asks for one, and the batch-end gate records `delegated`. Add it as
 the last row in your grouping table:
 
 ```
@@ -455,7 +455,10 @@ Once approved, write all files in one batch under the
   changed module, falling back to the whole suite when that set cannot be
   computed. No other sub-plan may run a broad gate — they stay
   change-scoped. A master
-  without this sub-plan as the last registry entry is a HARD lint finding.
+  without this sub-plan as the last registry entry is a HARD lint finding —
+  unless the project's `.ilk-launch.json` sets `ship.verification_subplan:
+  "optional"` (its CI is the verdict); then write no verification sub-plan
+  unless the task asks for one, and the batch-end gate records `delegated`.
   See the template for the step-0 / step-1 shape and the attributed-failure
   exit condition.
 

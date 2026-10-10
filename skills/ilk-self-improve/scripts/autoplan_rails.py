@@ -300,14 +300,37 @@ def rank(entries: list[dict], *, now: datetime | None = None,
 
 # ── 4. check_master ──────────────────────────────────────────────────────────
 
+def _verification_subplan_mode(repo: Path) -> str:
+    """``ship.verification_subplan`` for *repo*, fail closed to ``"required"``.
+
+    Imports ``ship_config`` (ilk-ship) the same guarded way plan_lint does —
+    a sibling skill's scripts dir, inserted on ``sys.path`` only for the call.
+    """
+    ship_scripts = _HERE.parent.parent / "ilk-ship" / "scripts"
+    sys_path_backup = list(sys.path)
+    try:
+        if str(ship_scripts) not in sys.path:
+            sys.path.insert(0, str(ship_scripts))
+        from ship_config import verification_subplan_mode  # type: ignore[import-untyped]
+        return verification_subplan_mode(repo)
+    except Exception:
+        return "required"
+    finally:
+        sys.path[:] = sys_path_backup
+
+
 
 def check_master(master_path: Path, plans_dir: Path,
-                 kernel: dict | None = None) -> list[str]:
+                 kernel: dict | None = None,
+                 repo: Path | None = None) -> list[str]:
     """Check a master's batch against the rails. Returns problems (empty = clean).
 
     Checks:
     - Every registry file exists.
-    - The LAST registry file has ``batch_verification: true``, no other one does.
+    - The LAST registry file has ``batch_verification: true``, no other one does
+      — waived for the "must exist" half when *repo* resolves to
+      ``ship.verification_subplan: "optional"`` (the project's CI is the
+      verdict); the ordering checks still apply when one exists.
     - For each non-verification sub-plan, every ``scope_paths`` entry and every
       backticked path in ``Write``/``Edit`` bullets passes ``touches_kernel``.
     - No other MASTER in *plans_dir* with ``auto_planned: true`` has status
@@ -349,7 +372,12 @@ def check_master(master_path: Path, plans_dir: Path,
         last_existing -= 1
 
     if not verify_indices:
-        problems.append("no sub-plan has batch_verification: true")
+        # Waived when the project opts out at plan time: its CI is the verdict.
+        waived = (
+            repo is not None and _verification_subplan_mode(repo) == "optional"
+        )
+        if not waived:
+            problems.append("no sub-plan has batch_verification: true")
     else:
         # The last existing sub-plan must be the verification one.
         if last_existing not in verify_indices:

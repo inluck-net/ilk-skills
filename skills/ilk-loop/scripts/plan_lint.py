@@ -5528,14 +5528,17 @@ def _has_batch_verification_marker(text: str) -> bool:
 def lint_master_has_verification_subplan(
     master_text: str,
     subplans: list[tuple[str, str]],
+    project_root: Path | None = None,
 ) -> list[str]:
     """Master-level check: every batch ends with a verification sub-plan.
 
     *subplans* is a list of ``(slug, text)`` pairs for the batch's sub-plans.
 
-    AC-2: no sub-plan declares ``batch_verification: true`` → HARD finding.
+    AC-2: no sub-plan declares ``batch_verification: true`` → HARD finding,
+          unless *project_root* resolves to ``ship.verification_subplan:
+          "optional"`` (the project's CI is the verdict).
     AC-3: a verification sub-plan exists but is not last in registry order
-          → HARD finding.
+          → HARD finding (still applies in an optional project).
     AC-4: last registry entry has the marker → 0 findings.
     """
     findings: list[str] = []
@@ -5557,6 +5560,17 @@ def lint_master_has_verification_subplan(
 
     # AC-2: no verification sub-plan at all.
     if not marker_slugs:
+        # Same guarded import lint_batch_has_no_suite uses.
+        sys_path_backup = list(__import__("sys").path)
+        try:
+            __import__("sys").path.insert(
+                0, str(_SHIP_CONFIG_SCRIPT.parent))
+            from ship_config import verification_subplan_mode  # type: ignore[import-untyped]
+        finally:
+            __import__("sys").path[:] = sys_path_backup
+
+        if project_root is not None and verification_subplan_mode(project_root) == "optional":
+            return findings  # waived: the project's CI is the verdict
         findings.append(
             "MASTER: no sub-plan declares `batch_verification: true`. "
             "Every batch must end with a verification sub-plan whose job "
@@ -5874,11 +5888,13 @@ def main() -> int:
         for msg in lint_one_batch_one_branch(master_text, subplans):
             print(f"WARN: {msg}")
             total += 1
-        for msg in lint_master_has_verification_subplan(master_text, subplans):
+        project_root = Path(args.project_root).resolve() if args.project_root else Path.cwd()
+        for msg in lint_master_has_verification_subplan(
+            master_text, subplans, project_root=project_root,
+        ):
             print(f"WARN: {msg}")
             total += 1
         # Batch-has-no-suite check (AC-4: master-level only).
-        project_root = Path(args.project_root).resolve() if args.project_root else Path.cwd()
         subplan_texts = [text for _, text in subplans]
         for msg in lint_batch_has_no_suite(master_text, subplan_texts, project_root):
             print(f"WARN: {msg}")

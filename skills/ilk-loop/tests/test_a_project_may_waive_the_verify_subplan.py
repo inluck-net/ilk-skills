@@ -42,12 +42,6 @@ from ship_config import (  # noqa: E402
 
 REPO_ROOT = _HERE.parent.parent.parent  # skills/ilk-loop/tests → repo root
 
-XFAIL = pytest.mark.xfail(
-    strict=True,
-    raises=(AssertionError, ImportError, AttributeError, TypeError, KeyError),
-    reason="not built yet",
-)
-
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -128,7 +122,6 @@ def _master(subplan_names: list[str]) -> str:
 class TestAC1:
     """``ship.verification_subplan`` is validated and normalised."""
 
-    @XFAIL
     def test_optional_sometimes_absent(self, tmp_path: Path) -> None:
         optional = _valid_suite() | {"verification_subplan": "optional"}
         result = load_ship_config(
@@ -161,7 +154,6 @@ class TestAC2:
     """``verification_subplan_mode`` is ``optional`` only for a live
     ``optional`` ShipConfig; everything else is ``required``."""
 
-    @XFAIL
     def test_optional_only_for_the_optional_shipconfig(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -195,7 +187,6 @@ class TestAC3:
     """A master with no verify sub-plan is a finding in a required
     project and clean in an optional one."""
 
-    @XFAIL
     def test_required_finds_optional_silences(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -226,7 +217,6 @@ class TestAC3:
 class TestAC4:
     """A verify sub-plan that is not last is still a finding."""
 
-    @XFAIL
     def test_verify_not_last_is_still_a_finding(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -256,7 +246,6 @@ class TestAC5:
     """``check_master`` drops only the "no batch_verification" problem
     for an optional repo; ``repo=None`` keeps today's finding."""
 
-    @XFAIL
     def test_repo_optional_silences_the_no_verify_problem(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -288,7 +277,6 @@ class TestAC5:
 class TestAC6:
     """``commands/ilk-plan.md`` teaches the opt-out."""
 
-    @XFAIL
     def test_ilk_plan_names_the_key(self) -> None:
         text = (REPO_ROOT / "commands" / "ilk-plan.md").read_text(encoding="utf-8")
         # The bare token `verification_subplan` already appears as a

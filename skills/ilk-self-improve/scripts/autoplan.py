@@ -925,7 +925,9 @@ def plan(
         mark_master(master_path, candidate_id=candidate_id, run_id=run_id)
 
         # Run check_master
-        master_problems = check_master(master_path, plans_dir, kernel=project_kernel)
+        master_problems = check_master(
+            master_path, plans_dir, kernel=project_kernel, repo=Path(toolkit_repo),
+        )
         problems.extend(master_problems)
 
         # Run plan_lint
