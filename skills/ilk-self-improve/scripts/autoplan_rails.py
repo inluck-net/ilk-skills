@@ -43,7 +43,7 @@ from triage_backlog import read_backlog_strict  # noqa: E402
 # ── 1. touches_kernel ────────────────────────────────────────────────────────
 
 
-def touches_kernel(path: str) -> str | None:
+def touches_kernel(path: str, kernel: dict | None = None) -> str | None:
     """Return the kernel entry hit by *path*, or ``None``.
 
     Delegates to ``safety_kernel.touches_kernel`` (the single source of truth
@@ -51,7 +51,7 @@ def touches_kernel(path: str) -> str | None:
     only as a test fixture — a pin that every entry in it is covered by
     ``kernel_entries()``.
     """
-    return _sk_touches_kernel(path, kernel=_load_kernel_cached())
+    return _sk_touches_kernel(path, kernel=kernel if kernel is not None else _load_kernel_cached())
 
 
 # ── 2. screen_candidate ──────────────────────────────────────────────────────
@@ -60,14 +60,16 @@ def touches_kernel(path: str) -> str | None:
 _PATH_TOKEN_RE = re.compile(r"[\w./\\-]+\.\w+")
 
 
-def screen_candidate(entry: dict) -> str | None:
+def screen_candidate(entry: dict, kernel: dict | None = None) -> str | None:
     """Return the first kernel entry mentioned in *entry*'s text fields, or None.
 
     Searches ``title``, ``gap``, ``proposed_fix`` and every value in
     ``evidence`` (recursively flattened).  A hit is either a full kernel path
-    or a basename that matches a kernel entry.
+    or a basename that matches a kernel entry.  *kernel* is the planned
+    project's own kernel (``load_project_kernel``); None means the toolkit's.
     """
-    kernel = _load_kernel_cached()
+    if kernel is None:
+        kernel = _load_kernel_cached()
 
     # Collect all text to search.
     texts: list[str] = []
@@ -114,6 +116,33 @@ def _collect_strings(obj: Any, out: list[str]) -> None:
     elif isinstance(obj, list):
         for v in obj:
             _collect_strings(v, out)
+
+
+#: Auto-planned masters rank below every consumer/owner master.  Promotion is
+#: priority desc (promote_next_master._prio, which reads null/"P0" as 0), so 0
+#: tied with gh-resolve's 90 null-priority masters and lost only on age.
+#: -1 sorts below all of them.  Judgment call (2026-10-10, track B); wrong if
+#: a reader rejects negative priorities.
+AUTO_PLANNED_PRIORITY = -1
+
+
+def load_project_kernel(kernel_file: Path) -> dict:
+    """Load a planned project's own safety kernel, FAIL CLOSED.
+
+    Unlike ``_load_kernel_cached`` (the toolkit's, which tolerates a missing
+    file), a project kernel that cannot be read or has no ``kernel`` list
+    raises ``ValueError``: the caller must refuse to plan for that project
+    rather than screen against nothing.
+    """
+    try:
+        data = json.loads(Path(kernel_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"project kernel unreadable: {kernel_file}: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("kernel"), list):
+        raise ValueError(f"project kernel has no kernel list: {kernel_file}")
+    data.setdefault("rules", [])
+    data.setdefault("kernel_basenames", [])
+    return data
 
 
 # Kernel cache (loaded once per process, invalidated on file change).
@@ -197,7 +226,8 @@ def _as_int(value: Any) -> int:
         return 0
 
 
-def rank(entries: list[dict], *, now: datetime | None = None) -> list[dict]:
+def rank(entries: list[dict], *, now: datetime | None = None,
+         sources: tuple[str, ...] | list[str] | None = None) -> list[dict]:
     """Filter and rank eligible autoplan candidates.
 
     Eligible: ``status == "open"``, ``source in ELIGIBLE_SOURCES``,
@@ -212,6 +242,9 @@ def rank(entries: list[dict], *, now: datetime | None = None) -> list[dict]:
     """
     if now is None:
         now = datetime.now(timezone.utc)
+    # A project other than the toolkit declares its own sources
+    # (autoplan.backlog.sources); None keeps the toolkit's list.
+    admitted = tuple(sources) if sources else ELIGIBLE_SOURCES
 
     eligible = []
     for e in entries:
@@ -220,7 +253,7 @@ def rank(entries: list[dict], *, now: datetime | None = None) -> list[dict]:
         if e.get("status") != "open":
             continue
         source = e.get("source")
-        if source not in ELIGIBLE_SOURCES:
+        if source not in admitted:
             continue
         rel = _relations(e)
         if _as_int(rel.get("autoplan_attempts", 0)) >= 2:
@@ -251,7 +284,8 @@ def rank(entries: list[dict], *, now: datetime | None = None) -> list[dict]:
 # ── 4. check_master ──────────────────────────────────────────────────────────
 
 
-def check_master(master_path: Path, plans_dir: Path) -> list[str]:
+def check_master(master_path: Path, plans_dir: Path,
+                 kernel: dict | None = None) -> list[str]:
     """Check a master's batch against the rails. Returns problems (empty = clean).
 
     Checks:
@@ -338,7 +372,7 @@ def check_master(master_path: Path, plans_dir: Path) -> list[str]:
 
         if not is_verify:
             for sp in scope_paths:
-                hit = touches_kernel(sp)
+                hit = touches_kernel(sp, kernel)
                 if hit is not None:
                     problems.append(
                         f"{fname}: scope_path hits kernel: {sp} -> {hit}"
@@ -348,7 +382,7 @@ def check_master(master_path: Path, plans_dir: Path) -> list[str]:
         if not is_verify:
             for match in write_edit_re.finditer(sub_text):
                 bp = match.group(1)
-                hit = touches_kernel(bp)
+                hit = touches_kernel(bp, kernel)
                 if hit is not None:
                     problems.append(
                         f"{fname}: Write/Edit bullet hits kernel: {bp} -> {hit}"
@@ -437,7 +471,7 @@ def mark_master(
             new_lines.append(f"autoplan_run: {run_id}\n")
             replaced_run = True
         elif key == "priority":
-            new_lines.append(f"priority: 0\n")
+            new_lines.append(f"priority: {AUTO_PLANNED_PRIORITY}\n")
             replaced_priority = True
         else:
             new_lines.append(line)
@@ -453,7 +487,7 @@ def mark_master(
     if not replaced_run:
         new_lines.append(f"autoplan_run: {run_id}\n")
     if not replaced_priority:
-        new_lines.append(f"priority: 0\n")
+        new_lines.append(f"priority: {AUTO_PLANNED_PRIORITY}\n")
 
     new_text = "---" + "".join(new_lines) + rest
     tmp = master_path.with_suffix(master_path.suffix + ".tmp")

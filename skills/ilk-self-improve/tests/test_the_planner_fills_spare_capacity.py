@@ -389,7 +389,13 @@ def test_ac5_yesterdays_date_not_capped(tmp_path):
 
 
 def test_ac6_yield_priority_0(tmp_path):
-    """A stubbed plan that writes a master yields priority: 0."""
+    """A stubbed plan that writes a master yields: priority -1.
+
+    Was 0 until 2026-10-10 (track B): promotion reads a null/"P0" priority as
+    0, so an auto-planned master tied with gh-resolve's 90 null-priority
+    consumer masters and lost only on age.  -1 ranks below every one of them
+    (autoplan_rails.AUTO_PLANNED_PRIORITY).  The test name is kept for history.
+    """
     mod = _load_module()
     data_root = _build_fake_data_root(tmp_path)
     toolkit = _build_fake_toolkit(tmp_path, data_root)
@@ -436,8 +442,8 @@ def test_ac6_yield_priority_0(tmp_path):
     masters = list(plans_dir.glob("MASTER-*.md"))
     assert len(masters) == 1
     fm = parse_frontmatter(masters[0].read_text(encoding="utf-8-sig"))
-    assert fm.get("priority") == "0", (
-        f"Auto-planned master should yield with priority: 0, got: {fm.get('priority')}"
+    assert fm.get("priority") == "-1", (
+        f"Auto-planned master should yield with priority: -1, got: {fm.get('priority')}"
     )
 
 
