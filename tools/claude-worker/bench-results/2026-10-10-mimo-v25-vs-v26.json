@@ -1,0 +1,194 @@
+{
+ "date": "2026-10-10",
+ "host": "chad-mbp",
+ "home": "~/.claude-worker",
+ "endpoint": "token-plan-cn.xiaomimimo.com/anthropic",
+ "claude_cli": "2.1.296 (Claude Code)",
+ "repo_commit": "13919eff",
+ "reps": 3,
+ "max_turns": 25,
+ "effort": null,
+ "note": "Run by the pre-commit scratch version of model_bench.py (same question, answer key and metrics). Live loops (ilk-skills 10b, gh-resolve) shared the endpoint. Flash rep 3 (15.0 s/turn) looks like an endpoint stall. Question too easy to separate the models on quality: all 9 correct.",
+ "runs": [
+  {
+   "model": "mimo-v2.5-pro",
+   "rep": 1,
+   "rc": 0,
+   "init_model": "mimo-v2.5-pro",
+   "is_error": false,
+   "turns": 5,
+   "wall_s": 34.1,
+   "api_s": 33.2,
+   "s_per_turn": 6.6,
+   "out_tok": 1223,
+   "out_tok_per_turn": 245,
+   "think_chars": 3448,
+   "correct": true,
+   "missing": [],
+   "served_models": [
+    "mimo-v2.5-pro"
+   ],
+   "served_as_asked": true
+  },
+  {
+   "model": "mimo-v2.6-pro",
+   "rep": 1,
+   "rc": 0,
+   "init_model": "mimo-v2.6-pro",
+   "is_error": false,
+   "turns": 6,
+   "wall_s": 30.7,
+   "api_s": 29.7,
+   "s_per_turn": 5.0,
+   "out_tok": 1165,
+   "out_tok_per_turn": 194,
+   "think_chars": 2402,
+   "correct": true,
+   "missing": [],
+   "served_models": [
+    "mimo-v2.6-pro"
+   ],
+   "served_as_asked": true
+  },
+  {
+   "model": "mimo-v2.6-flash",
+   "rep": 1,
+   "rc": 0,
+   "init_model": "mimo-v2.6-flash",
+   "is_error": false,
+   "turns": 7,
+   "wall_s": 17.0,
+   "api_s": 16.2,
+   "s_per_turn": 2.3,
+   "out_tok": 628,
+   "out_tok_per_turn": 90,
+   "think_chars": 364,
+   "correct": true,
+   "missing": [],
+   "served_models": [
+    "mimo-v2.6-flash"
+   ],
+   "served_as_asked": true
+  },
+  {
+   "model": "mimo-v2.5-pro",
+   "rep": 2,
+   "rc": 0,
+   "init_model": "mimo-v2.5-pro",
+   "is_error": false,
+   "turns": 6,
+   "wall_s": 15.7,
+   "api_s": 14.9,
+   "s_per_turn": 2.5,
+   "out_tok": 625,
+   "out_tok_per_turn": 104,
+   "think_chars": 1082,
+   "correct": true,
+   "missing": [],
+   "served_models": [
+    "mimo-v2.5-pro"
+   ],
+   "served_as_asked": true
+  },
+  {
+   "model": "mimo-v2.6-pro",
+   "rep": 2,
+   "rc": 0,
+   "init_model": "mimo-v2.6-pro",
+   "is_error": false,
+   "turns": 7,
+   "wall_s": 32.8,
+   "api_s": 32.0,
+   "s_per_turn": 4.6,
+   "out_tok": 1077,
+   "out_tok_per_turn": 154,
+   "think_chars": 1668,
+   "correct": true,
+   "missing": [],
+   "served_models": [
+    "mimo-v2.6-pro"
+   ],
+   "served_as_asked": true
+  },
+  {
+   "model": "mimo-v2.6-flash",
+   "rep": 2,
+   "rc": 0,
+   "init_model": "mimo-v2.6-flash",
+   "is_error": false,
+   "turns": 7,
+   "wall_s": 21.2,
+   "api_s": 20.4,
+   "s_per_turn": 2.9,
+   "out_tok": 673,
+   "out_tok_per_turn": 96,
+   "think_chars": 599,
+   "correct": true,
+   "missing": [],
+   "served_models": [
+    "mimo-v2.6-flash"
+   ],
+   "served_as_asked": true
+  },
+  {
+   "model": "mimo-v2.5-pro",
+   "rep": 3,
+   "rc": 0,
+   "init_model": "mimo-v2.5-pro",
+   "is_error": false,
+   "turns": 6,
+   "wall_s": 16.5,
+   "api_s": 15.4,
+   "s_per_turn": 2.6,
+   "out_tok": 612,
+   "out_tok_per_turn": 102,
+   "think_chars": 642,
+   "correct": true,
+   "missing": [],
+   "served_models": [
+    "mimo-v2.5-pro"
+   ],
+   "served_as_asked": true
+  },
+  {
+   "model": "mimo-v2.6-pro",
+   "rep": 3,
+   "rc": 0,
+   "init_model": "mimo-v2.6-pro",
+   "is_error": false,
+   "turns": 6,
+   "wall_s": 33.2,
+   "api_s": 32.3,
+   "s_per_turn": 5.4,
+   "out_tok": 1224,
+   "out_tok_per_turn": 204,
+   "think_chars": 3137,
+   "correct": true,
+   "missing": [],
+   "served_models": [
+    "mimo-v2.6-pro"
+   ],
+   "served_as_asked": true
+  },
+  {
+   "model": "mimo-v2.6-flash",
+   "rep": 3,
+   "rc": 0,
+   "init_model": "mimo-v2.6-flash",
+   "is_error": false,
+   "turns": 6,
+   "wall_s": 90.8,
+   "api_s": 90.0,
+   "s_per_turn": 15.0,
+   "out_tok": 680,
+   "out_tok_per_turn": 113,
+   "think_chars": 620,
+   "correct": true,
+   "missing": [],
+   "served_models": [
+    "mimo-v2.6-flash"
+   ],
+   "served_as_asked": true
+  }
+ ]
+}
