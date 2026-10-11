@@ -376,7 +376,7 @@ def read_sentinel(project_path: Path) -> dict | None:
         return None
     if isinstance(rec, dict) and detect_stale_running is not None:
         stale, reported_state, raw_state = detect_stale_running(
-            rec.get("state"), rec.get("pid"), runtime=f.parent
+            rec.get("state"), rec.get("pid"), runtime=f.parent, run_id=rec.get("run_id")
         )
         rec["stale"] = stale
         rec["state"] = reported_state
@@ -1225,6 +1225,40 @@ def batch_unverified_tiers(project_path: Path) -> list[dict[str, str]]:
     return unverified
 
 
+
+def recorded_measured_progress(iters: list[dict], run_id: str | None) -> list[dict]:
+    """Read exact closed non-green observations for narrative, never proof.
+
+    Feedback does not revalidate Git/receipt authority and cannot grant green
+    acceptance. An open, mismatched or green-conflated record is omitted.
+    """
+    result=[]
+    if not run_id:return result
+    for row in iters:
+        context=row.get('context') or {};accepted=row.get('driver_acceptance') or {}
+        if not isinstance(context,dict) or not isinstance(accepted,dict):continue
+        if (row.get('record_phase')!='close' or row.get('run_id')!=run_id
+                or context.get('run_id')!=run_id or context.get('iteration')!=row.get('iteration')
+                or accepted.get('run_id')!=run_id or accepted.get('iteration')!=row.get('iteration')
+                or row.get('driver_integrity_passed') is not False
+                or row.get('driver_progress_integrity_passed') is not True
+                or accepted.get('progress_accepted') is not True or accepted.get('accepted') is not False
+                or accepted.get('green_accepted') is not False):continue
+        observation=accepted.get('progress_observation') or {}
+        dispatch=context.get('dispatch') or {}
+        if not isinstance(observation,dict) or not isinstance(dispatch,dict):continue
+        observations=observation.get('observations')
+        if not isinstance(observations,list) or not observations:continue
+        if any(not isinstance(item,dict) or not isinstance(item.get('node_ids'),list)
+               or not item['node_ids'] or any(not isinstance(node,str) for node in item['node_ids']) for item in observations):continue
+        result.append(dict(iteration=row['iteration'],slug=dispatch.get('slug'),step=dispatch.get('step'),
+            plan_path=dispatch.get('subplan_path'),master_path=dispatch.get('master_path'),
+            iteration_base=context.get('base_commit'),batch_base=dispatch.get('batch_base_sha'),
+            failed_nodes=sorted({node for item in observations for node in item['node_ids']}),
+            observation_basis='recorded driver close; diagnostic only; not green proof'))
+    return result
+
+
 def _classify_core(
     iters: list[dict],
     last_launch: dict | None,
@@ -1366,6 +1400,7 @@ def _classify_core(
             "iter_at_stop": last.get("iteration"),
             "reason": "run_exit terminal state",
             "route": "shipped-unproven",
+            "measured_red_progress": recorded_measured_progress(iters,(terminal or last).get('run_id')),
         }
     # Work-tree invalid: the declared work_tree path is invalid.
     if last_stop == "work_tree_invalid":
@@ -1859,6 +1894,8 @@ def classify(
                 # route-specific text for shipped-unverified.
                 if label == "shipped-unverified":
                     facts["route"] = sentinel_state
+                if sentinel_state == "shipped-unproven":
+                    facts['measured_red_progress']=recorded_measured_progress(iters,run_id)
                 if sentinel_state == "ship_integrity_violation":
                     facts["integrity_violations"] = _integrity_violations(project_path, run_id)
                 if sentinel_state == "local_checks_failed":
@@ -2134,6 +2171,11 @@ def recommend_params(
                 "the ship was reverted. Fix the gate or the sub-plan, then relaunch."
             )
         if route == "shipped-unproven":
+            if facts.get('measured_red_progress'):
+                return cur_max, cur_to, (
+                    "driver recorded completed steps with failures measured at both starting points; "
+                    "green proof remains absent. Review the recorded failures; final verification remains opt-in."
+                )
             return cur_max, cur_to, (
                 "every sub-plan says shipped, but at least one has no ship-proof. "
                 "A human must verify the unproven sub-plans before relaunching."
@@ -3000,6 +3042,11 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
                 "the ship was reverted and the master parked."
             )
         if route == "shipped-unproven":
+            if facts.get('measured_red_progress'):
+                return (
+                    "stopped unproven: the driver recorded completed steps with failures measured "
+                    "at both starting points. Green proof remains absent; final verification remains opt-in."
+                )
             return (
                 "stopped: every sub-plan says shipped, but at least one has "
                 "no ship-proof."

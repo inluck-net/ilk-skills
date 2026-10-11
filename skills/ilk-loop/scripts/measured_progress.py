@@ -85,7 +85,8 @@ def assess(context,attempt,*,budget_s):
                 return dict(rejected,reason='base sample observation is incomplete',observations=observations+[receipt])
             path=Path(receipt['receipt'])
             observations.append(dict(scope=check['scope'],command=check['command'],node_ids=nodes,
-                receipt=str(path),sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+                receipt=str(path),sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                sample_started_monotonic=receipt['started_monotonic'],sample_ended_monotonic=receipt['ended_monotonic']))
     require_driver(context)
     if working_tree(root)!=attempt['working_tree'] or gate_input_fingerprint(context,selected)!=fingerprint:
         raise ContextError('progress inputs changed during base measurements')
@@ -93,7 +94,7 @@ def assess(context,attempt,*,budget_s):
         raise ContextError('head output changed during base measurements')
     return dict(rejected,progress_eligible=True,reason='measured pre-existing red; green proof remains absent',
         **identity,tree=attempt['working_tree'],attempt_id=identifier,input_fingerprint=fingerprint,
-        head_captures=head_captures,observations=observations,attribution_deadline_monotonic=attribution_deadline,attribution_started_monotonic=started,attribution_allowance=budget_s)
+        head_captures=head_captures,observations=observations,attribution_deadline_monotonic=attribution_deadline,attribution_started_monotonic=started,attribution_ended_monotonic=monotonic(),attribution_allowance=budget_s)
 
 
 def verify(context,attempt,decision):

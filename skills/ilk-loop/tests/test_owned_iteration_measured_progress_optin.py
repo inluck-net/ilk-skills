@@ -54,6 +54,11 @@ except OSError:
 else:assert fault=='none','fault injection not exercised'
 assert len(turns)==1 and row['progress_accepted'] is True and row['accepted'] is False and row['green_accepted'] is False,row
 assert row['attempts'][-1]['all_passed'] is False
+from phase_observation import observe
+spans=observe(row,{})['intervals']
+for name in ('driver_attribution','driver_base_sample'):
+    matching=[span for span in spans if span['name']==name]
+    assert matching and all(span['observation_complete'] and span['duration_sec']>=0 for span in matching),spans
 from driver_step import project_result
 from iteration_context import ContextError
 projection=project_result(row,ctx)

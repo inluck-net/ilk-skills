@@ -23,3 +23,13 @@ def test_same_command_tree_candidates_do_not_claim_identical_inputs():
     later=dict(attempt,working_tree='changed')
     result=observe({'attempts':[attempt,later]}, {},cwd='/fixture')
     assert result['command_tree_repeat_candidates']==0 and result['identical_driver_gate_count']==0
+
+
+def test_attribution_and_base_samples_preserve_overlap_and_missing_old_clocks():
+    current=dict(attribution_started_monotonic=2,attribution_ended_monotonic=6,
+        observations=[dict(sample_started_monotonic=3,sample_ended_monotonic=5,scope='declared',receipt='/exact/receipt')])
+    result=observe(dict(attribution_attempts=[current,{}]),{})
+    assert [row['name'] for row in result['intervals']]==['driver_attribution','driver_base_sample','driver_attribution']
+    assert [row['duration_sec'] for row in result['intervals']]==[4,2,None]
+    assert result['intervals'][1]['receipt']=='/exact/receipt'
+    assert 'total_seconds' not in result

@@ -145,7 +145,7 @@ def ilk_pid_alive(pid: int) -> bool:
     return any(pat in low for pat in ILK_PROCESS_PATTERNS)
 
 
-def detect_stale_running(state: object, pid: object, *, runtime=None) -> tuple[bool, str, str | None]:
+def detect_stale_running(state: object, pid: object, *, runtime=None, run_id=None) -> tuple[bool, str, str | None]:
     """Shared stale-running detection for ``last-exit.json`` sentinels.
 
     Returns ``(stale, reported_state, raw_state)``.
@@ -175,10 +175,18 @@ def detect_stale_running(state: object, pid: object, *, runtime=None) -> tuple[b
     sentinel_state = state or ""
     if sentinel_state=="running" and runtime is not None:
         from run_registry import project_status,RegistryError
-        try:busy=project_status(runtime)['busy']
+        try:status=project_status(runtime)
         except (RegistryError,OSError,ValueError):
             # Unknown ownership never proves a run ended or permits relaunch.
             return False,"running",None
+        busy=status['busy']
+        if run_id is not None and status.get('source')=='registry':
+            # A newer run's ownership cannot keep an older sentinel alive.
+            # This describes the requested sentinel only; project-level
+            # launch/stop guards still consult the complete busy registry.
+            busy=any(row.get('run_id')==run_id and
+                     (row.get('pid')==pid or row.get('state')=='launching')
+                     for row in status.get('runs',[]))
         return (False,"running",None) if busy else (True,"unknown","running")
     probeable = isinstance(pid, int) and not isinstance(pid, bool)
     stale = False

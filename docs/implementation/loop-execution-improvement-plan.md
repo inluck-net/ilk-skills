@@ -3102,3 +3102,30 @@ not a checkbox count. Next: read-only remaining consumer/feedback/ownership
 reader migrations, representative actual provider measurement of the opt-in
 path, prepared remote delivery, remaining parity/hermeticity/CAS writers and
 requirement-to-evidence closure. Do not stop at this checkpoint.
+
+
+### Feedback identity and attribution clocks — candidate follow-up
+
+Feedback now reads exact recorded closed non-green progress as diagnostic
+narrative only; unverified taxonomy and opt-in final verification stay intact.
+Open, foreign-run/context and green-conflated records are omitted. Reader test
+selection first **30 passed / 1 failed in 0.15s** on stale argv-only fixture;
+real registered owner fixture **31 passed in 0.14s**. Additional exact-run
+negative reproduced cross-run sentinel liveness laundering: **1 failed / 11
+ deselected in 0.07s**. Shared pid_health now takes optional sentinel run_id;
+feedback/display pass it, while launch/stop guards retain full project busy
+ownership. **58 passed in 1.88s** across feedback and registry callers.
+Display selection **2 passed / 1 failed / 6 deselected in 0.04s** revealed the
+same older argv-only control; updated actual registered owner, foreign-run and
+missing-sentinel caller **3 passed / 6 deselected in 0.04s**. All fixtures live
+under both private data variables and signal only their own processes.
+
+Added additive driver_attribution and driver_base_sample shared-monotonic
+intervals; exact sample receipt clocks and all completed attribution decisions
+(including commit-hook remeasurement) remain recorded. Overlap is explicit,
+old missing clocks stay unknown, no total/thinking subtraction is invented.
+Phase/core/hook recovery **6 passed / 14 deselected in 15.24s**, model none.
+Actual owned-iteration phase assertion check pending. No installed pointer or
+active controller change for this candidate increment. Next actual-provider
+consumer opt-in measured-red probe, prepared remote delivery, then safe local
+activation of this reader/metrics follow-up.

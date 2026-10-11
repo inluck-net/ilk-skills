@@ -410,7 +410,7 @@ def detect_sentinel_health(
     # how the postmortem laundered a crashed run into clean-success while
     # this printed ⚠ STALE-RUNNING (2026-09-22, pid 26627).
     stale, reported_state, raw_state = detect_stale_running(
-        sentinel_state, launcher_pid, runtime=runtime_dir
+        sentinel_state, launcher_pid, runtime=runtime_dir, run_id=(sentinel or {}).get("run_id")
     )
 
     # When stale, report state as "unknown" so consumers that read only

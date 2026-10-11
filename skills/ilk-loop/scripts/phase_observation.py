@@ -26,6 +26,18 @@ def observe(acceptance,boundaries,*,cwd=None):
             if not check.get('command') or not attempt.get('working_tree'):continue
             key=json.dumps([check['command'],cwd,attempt['working_tree']],sort_keys=True)
             candidates[hashlib.sha256(key.encode()).hexdigest()]+=1
+    attribution=acceptance.get('attribution_attempts')
+    if attribution is None:
+        attribution=[acceptance['progress_observation']] if isinstance(acceptance.get('progress_observation'),dict) else []
+    for index,decision in enumerate(attribution if isinstance(attribution,list) else []):
+        if not isinstance(decision,dict):continue
+        spans.append(interval('driver_attribution',decision.get('attribution_started_monotonic'),
+            decision.get('attribution_ended_monotonic'),attribution_attempt=index))
+        for observation in decision.get('observations') or []:
+            if not isinstance(observation,dict):continue
+            spans.append(interval('driver_base_sample',observation.get('sample_started_monotonic'),
+                observation.get('sample_ended_monotonic'),attribution_attempt=index,
+                scope=observation.get('scope'),receipt=observation.get('receipt')))
     if 'commit_started_monotonic' in acceptance:
         spans.append(interval('driver_commit_and_hooks',acceptance.get('commit_started_monotonic'),
             acceptance.get('commit_ended_monotonic'),commit_count=len(acceptance.get('commits') or [])))

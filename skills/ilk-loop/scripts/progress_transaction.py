@@ -106,7 +106,8 @@ def _finish_commit(context,result,*,gate_timeout,budget_s):
         decision=assess(context,attempt,budget_s=allowance)
         if decision.get('progress_eligible') is not True:
             raise ContextError('changed progress commit tree needs a different verified transaction')
-        result=dict(result,attempts=result['attempts']+[attempt],tree=tree,progress_observation=decision)
+        result=dict(result,attempts=result['attempts']+[attempt],tree=tree,progress_observation=decision,
+                    attribution_attempts=result.get('attribution_attempts',[result['progress_observation']])+[decision])
     result=dict(result,commits=[head],head_commit=head,commit_ended_monotonic=monotonic(),progress_accepted=True)
     _save(context,result,'prepared')
     return result
@@ -137,7 +138,7 @@ def accept(context,attempt,decision,*,deadline,gate_timeout,budget_s):
             raise ContextError('measured-red progress needs a changed code tree')
         result=dict(accepted=False,green_accepted=False,progress_accepted=False,
             protocol='measured-red-progress-v1',run_id=context['run_id'],iteration=context['iteration'],
-            attempts=[attempt],progress_observation=decision,tree=decision['tree'],commits=[],
+            attempts=[attempt],progress_observation=decision,attribution_attempts=[decision],tree=decision['tree'],commits=[],
             head_commit=context['base_commit'],proof_provisional=True,
             commit_started_monotonic=monotonic(),gate_timeout=gate_timeout,attribution_allowance=budget_s)
         _save(context,result,'commit-intent')

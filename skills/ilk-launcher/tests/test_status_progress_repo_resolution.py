@@ -333,27 +333,30 @@ def test_detect_sentinel_health_stale_returns_unknown(tmp_path: Path) -> None:
     assert result["pid"] == 99999999
 
 
-def test_detect_sentinel_health_live_returns_running(tmp_path: Path, live_ilk_pid: int) -> None:
-    """When sentinel says state=running and the PID is a live run,
-    detect_sentinel_health must return state='running' (not 'unknown').
-
-    The PID must belong to an actual runner: liveness is command-verified,
-    so an arbitrary live PID (os.getpid(), say) reads as recycled.
-    """
-    runtime_dir = tmp_path / "runtime"
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    sentinel_file = runtime_dir / "last-exit.json"
-    sentinel_file.write_text(json.dumps({"state": "running", "pid": live_ilk_pid}))
-
-    result = status_progress.detect_sentinel_health(runtime_dir, live_ilk_pid)
-
-    assert result["state"] == "running", (
-        f"Expected state='running' for live sentinel, got {result['state']!r}"
-    )
-    assert result["stale"] is False
-    assert "raw_state" not in result, (
-        "raw_state should not be present for non-stale sentinel"
-    )
+def test_detect_sentinel_health_live_registered_owner_returns_running(tmp_path: Path) -> None:
+    """Display honors exact registered ownership without an argv heuristic."""
+    import time
+    from run_registry import reserve,bind_running,finish,process_identity
+    runtime_dir=tmp_path/'runtime';runtime_dir.mkdir()
+    project=tmp_path/'repo';project.mkdir()
+    owner=subprocess.Popen([sys.executable,'-c','import threading;threading.Event().wait()'],start_new_session=True)
+    try:
+        # Existing 30s reservation fixture margin; immediate bind.
+        reserve(runtime_dir,run_id='display',project_key='fixture',clone=project,exec_tree=project,
+                toolkit_sha='fixture',expires_at=time.time()+30)
+        bind_running(runtime_dir,'display',pid=owner.pid)
+        sentinel_file=runtime_dir/'last-exit.json'
+        sentinel_file.write_text(json.dumps(dict(state='running',pid=owner.pid,run_id='display')))
+        result=status_progress.detect_sentinel_health(runtime_dir,owner.pid)
+        assert result['state']=='running' and result['stale'] is False and 'raw_state' not in result
+        sentinel_file.write_text(json.dumps(dict(state='running',pid=owner.pid,run_id='old-run')))
+        result=status_progress.detect_sentinel_health(runtime_dir,owner.pid)
+        assert result['state']=='unknown' and result['stale'] is True
+        sentinel_file.unlink()
+        assert status_progress.detect_sentinel_health(runtime_dir,owner.pid)['state']=='unknown'
+        finish(runtime_dir,'display',identity=process_identity(owner.pid))
+    finally:
+        owner.terminate();owner.wait(timeout=10) # existing fixture cleanup margin
 
 
 def test_detect_sentinel_health_terminal_state(tmp_path: Path) -> None:

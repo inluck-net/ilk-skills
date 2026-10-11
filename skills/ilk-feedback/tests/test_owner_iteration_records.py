@@ -37,3 +37,25 @@ def test_report_counts_driver_time_without_double_counting_worker(tmp_path,monke
     assert 'total_elapsed_sec: 600' in report
     assert 'unknown_elapsed_iterations: 1' in report
     assert 'started_at: "start"' in report
+
+
+def test_feedback_keeps_measured_progress_non_green_and_exact_run(tmp_path):
+    import copy
+    row=dict(record_phase='close',run_id='run',iteration=1,duration_sec=4,exit_code=0,
+        driver_integrity_passed=False,driver_progress_integrity_passed=True,
+        context=dict(run_id='run',iteration=1,dispatch=dict(slug='fixture',step=0,subplan_path='/exact/plan',master_path='/exact/master')),
+        driver_acceptance=dict(run_id='run',iteration=1,accepted=False,green_accepted=False,progress_accepted=True,
+            progress_observation=dict(observations=[dict(node_ids=['test_existing.py::test_existing'])])))
+    terminal=dict(record_type='run_exit',run_id='run',stop_reason='shipped-unproven')
+    label,facts=collect._classify_core([row,terminal],None,tmp_path)
+    assert label=='shipped-unverified' and len(facts['measured_red_progress'])==1
+    assert facts['measured_red_progress'][0]['plan_path']=='/exact/plan'
+    assert 'green proof remains absent' in collect.recommend_params(label,[row],None,facts)[2]
+    assert 'final verification remains opt-in' in collect._label_narrative(label,facts)
+    for change in ('open','foreign','green'):
+        modified=copy.deepcopy(row)
+        if change=='open':modified['record_phase']='open'
+        elif change=='foreign':modified['context']['run_id']='other'
+        else:modified['driver_acceptance']['green_accepted']=True
+        assert collect.recorded_measured_progress([modified],'run')==[]
+    assert collect.recorded_measured_progress([row],'other')==[]

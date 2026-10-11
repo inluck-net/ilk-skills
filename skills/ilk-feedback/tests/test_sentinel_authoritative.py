@@ -319,47 +319,36 @@ class TestReadSentinelProbesLiveness:
             else:
                 os.environ.pop("ILK_DATA_HOME", None)
 
-    def test_running_with_live_runner_pid_is_not_stale(self, tmp_path, live_ilk_pid):
-        """AC-6: a live runner pid is NOT reported stale (mirror-image guard).
-
-        The plan phrases this as "the current process id", but the probe is
-        command-verified (``pid_health.ilk_pid_alive``): pytest's own pid is
-        precisely the unrelated command a recycled PID lands on, so it reads
-        as stale — see the test below and ``conftest.py:live_ilk_pid``.  The
-        positive control is therefore a live runner-shaped pid.  A probe that
-        could not see one would report every sentinel stale — the mirror
-        image of the bug this class exists for.
-        """
-        fake_home = tmp_path / "home"
-        fake_home.mkdir()
-        data_home = tmp_path / "ilk-data"
-        data_home.mkdir()
-        project_path = tmp_path / "repo"
-        project_path.mkdir()
-        with patch.dict(
-            os.environ,
-            {"HOME": str(fake_home), "ILK_DATA_HOME": str(data_home)},
-        ):
-            _write_raw_sentinel(project_path, {
-                "state": "running",
-                "pid": live_ilk_pid,
-                "run_id": "20260922-110200",
-                "iteration": 1,
-                "exit_code": None,
-                "generated_at": "2026-09-22T12:00:00+08:00",
-            })
-            rec = collect.read_sentinel(project_path)
-
-        assert rec is not None, "sentinel file was written; reader returned None"
-        assert rec.get("stale") is False, (
-            f"a live runner pid {live_ilk_pid} must not read as stale, got {rec}"
-        )
-        assert rec.get("state") == "running", (
-            f"a non-stale sentinel must keep its state, got {rec.get('state')!r}"
-        )
-        assert "raw_state" not in rec, (
-            f"raw_state is only preserved on a stale sentinel, got {rec}"
-        )
+    def test_running_with_live_registered_owner_is_not_stale(self, tmp_path):
+        """Exact registry PID/start/PGID, independent of command spelling."""
+        import time
+        from run_registry import reserve,bind_running,finish,process_identity
+        fake_home=tmp_path/'home';fake_home.mkdir()
+        data_home=tmp_path/'ilk-data';data_home.mkdir()
+        project_path=tmp_path/'repo';project_path.mkdir()
+        owner=subprocess.Popen([sys.executable,'-c','import threading;threading.Event().wait()'],
+                               start_new_session=True)
+        try:
+            with patch.dict(os.environ,{'HOME':str(fake_home),'ILK_DATA_HOME':str(data_home),'ILK_DATA_DIR':str(data_home)}):
+                runtime=collect.external_launcher_dir(collect._project_key_for(project_path))
+                # Existing 30s reservation fixture judgment; bind immediately.
+                reserve(runtime,run_id='20260922-110200',project_key='fixture',clone=project_path,
+                        exec_tree=project_path,toolkit_sha='fixture',expires_at=time.time()+30)
+                bind_running(runtime,'20260922-110200',pid=owner.pid)
+                _write_raw_sentinel(project_path,dict(state='running',pid=owner.pid,
+                    run_id='20260922-110200',iteration=1,exit_code=None))
+                rec=collect.read_sentinel(project_path)
+                assert rec is not None and rec.get('stale') is False,rec
+                assert rec['state']=='running' and 'raw_state' not in rec
+                _write_raw_sentinel(project_path,dict(state='running',pid=owner.pid,
+                    run_id='finished-old-run',iteration=1,exit_code=None))
+                old=collect.read_sentinel(project_path)
+                assert old['stale'] is True and old['state']=='unknown',old
+                finish(runtime,'20260922-110200',identity=process_identity(owner.pid))
+        finally:
+            owner.terminate()
+            # Reuse the existing live-pid fixture cleanup margin, no production cap.
+            owner.wait(timeout=10)
 
     def test_current_pid_reads_as_recycled_not_live(self, tmp_path):
         """os.getpid() is NOT a valid live control (AC-6's phrasing, corrected).
