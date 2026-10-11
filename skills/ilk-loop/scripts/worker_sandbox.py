@@ -82,7 +82,23 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
     if shell:
         rules.append('(deny network*)')
         if context.get('private_worker_home'):
-            rules.append(_rule('deny','file-read*',Path(context['private_worker_home']).resolve()))
+            home=Path(context['private_worker_home']).resolve(strict=True)
+            rules.append(_rule('deny','file-read*',home))
+            for row in context.get('global_instruction_inventory',[]):
+                path=Path(row['path'])
+                try:relative=path.relative_to(home)
+                except ValueError:raise ContextError('global instruction escapes private home')
+                permitted=str(relative) in {'CLAUDE.md','CLAUDE.local.md'} or (
+                    relative.parts[0]=='rules' and len(relative.parts)>1 and relative.suffix=='.md')
+                if not permitted or path.resolve(strict=True)!=path or not path.is_file():
+                    raise ContextError('global instruction adapter unavailable')
+                import hashlib
+                if hashlib.sha256(path.read_bytes()).hexdigest()!=row.get('sha256'):
+                    raise ContextError('global instruction changed')
+                rules.append(f'(allow file-read* (literal {json.dumps(str(path))}))')
+                for parent in path.parents:
+                    if not _inside(parent,home):break
+                    rules.append(f'(allow file-read-metadata (literal {json.dumps(str(parent))}))')
         if context.get('worker_inputs_dir'):
             rules.append(_rule('deny','file-read*',Path(context['worker_inputs_dir']).resolve()/'settings'))
     elif private_home:

@@ -232,6 +232,9 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
         global_instructions=[]
         for source_instruction in _global_instruction_paths(worker_home):
             payload=source_instruction.read_bytes()
+            from instruction_inputs import import_paths
+            if list(import_paths(payload.decode('utf-8-sig',errors='replace'),source_instruction.parent)):
+                raise InputPinError('global instruction imports require an explicit rebasing adapter')
             target=home/source_instruction.relative_to(worker_home)
             target.parent.mkdir(parents=True,exist_ok=True)
             target.write_bytes(payload);target.chmod(0o400)

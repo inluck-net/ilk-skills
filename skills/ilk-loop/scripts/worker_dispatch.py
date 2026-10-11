@@ -49,6 +49,7 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
                  worker_sandbox_adapter='macos-brokered-shell',run_registry_dir=str(registry),
                  runner_owner_pid=owner_pid,iteration_deadline_monotonic=deadline)
     from instruction_inputs import inventory
+    context['instruction_input_inventory_protocol']=2
     context['instruction_input_inventory']=inventory(context)
     if context.get('entry_dirty') is not False:
         import driver_step
@@ -71,9 +72,12 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
                  shell_broker_nonce=uuid.uuid4().hex,run_registry_dir=str(registry),runner_owner_pid=owner_pid,
                  iteration_deadline_monotonic=deadline,scratch_disposable=True)
     from instruction_inputs import inventory
+    context['global_instruction_inventory']=manifest.get('global_instruction_inputs',[])
     context['instruction_input_inventory']=inventory(context)
-    context['root_instruction_inventory']=[{'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
-        for path in (root/'AGENTS.md',root/'CLAUDE.md',root/'.claude/CLAUDE.md') if path.is_file()]
+    context['root_instruction_inventory']=[{'path':row['path'],'sha256':row['sha256']}
+        for row in context['global_instruction_inventory']]+[
+        {'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+        for path in (root/'AGENTS.md',root/'CLAUDE.md',root/'CLAUDE.local.md',root/'.claude/CLAUDE.md') if path.is_file()]
     log=context_path.parent/(context_path.stem+'-broker.log');log.parent.mkdir(parents=True,exist_ok=True)
     process=None
     try:

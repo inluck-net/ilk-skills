@@ -252,6 +252,15 @@ def test_global_instructions_are_private_frozen_inputs_not_live_home_links(tmp_p
     with pytest.raises(InputPinError,match='changed'):verify_launch_resources(destination)
 
 
+def test_global_imports_require_rebasing_adapter_before_preparation(tmp_path):
+    repo,home,_=fixture(tmp_path)
+    (home/'CLAUDE.md').write_text('@guide.md\n')
+    (home/'guide.md').write_text('source-home instructions')
+    destination=tmp_path/'run'
+    with pytest.raises(InputPinError,match='import.*adapter'):prepare(repo,home,destination)
+    assert not destination.exists()
+
+
 @pytest.mark.parametrize('mutation',['edit','add','manifest'])
 def test_complete_code_inventory_detects_changed_or_added_runtime_inputs(tmp_path,mutation):
     from run_inputs import verify_code_snapshot

@@ -1,9 +1,55 @@
 """Freeze named repository/ancestor instruction inputs under owned deadlines."""
 from pathlib import Path
 import hashlib
+import re
 from iteration_context import ContextError
 
 NAMES=('AGENTS.md','CLAUDE.md','CLAUDE.local.md')
+
+
+def import_paths(text, parent):
+    """Observe documented @ paths outside Markdown code; grant no import access."""
+    lines=[];fence=None
+    for line in text.splitlines(keepends=True):
+        marker=re.match(r'^\s*(`{3,}|~{3,})',line)
+        if marker:
+            token=marker.group(1)
+            if fence is None:fence=token
+            elif token[0]==fence[0] and len(token)>=len(fence):fence=None
+            continue
+        if fence is None:lines.append(line)
+    plain=re.sub(r'(?<!`)(`+)(?!`)(.*?)(?<!`)\1(?!`)', '', ''.join(lines),flags=re.S)
+    for match in re.finditer(r'''(?<![\w@])@((?:\\[ \t]|[^\s`"'<>])+)''',plain):
+        raw=re.sub(r'\\([ \t])',r'\1',match.group(1))
+        path=Path(raw).expanduser()
+        yield path if path.is_absolute() else parent/path
+
+
+def referenced_inventory(paths, *, deadline=None):
+    """Freeze manually followed references; unique file/parent roles bound cycles.
+
+    Owned print mode disables automatic memory sources. Its worker explicitly
+    follows references, so Claude's automatic four-hop limit cannot bound this
+    inventory. No new numeric limit or import authorization is introduced.
+    """
+    from collections import deque
+    rows={};expanded=set();queue=deque((Path(path),False) for path in sorted(paths,key=str))
+    while queue:
+        if deadline is not None:
+            from iteration_clock import monotonic
+            if monotonic()>=deadline:raise ContextError('instruction inventory reached original iteration deadline')
+        path,referenced=queue.popleft();path=path.absolute();key=str(path)
+        if key in rows:continue
+        if not path.is_file():
+            if referenced:rows[key]=dict(path=key,resolved_path=str(path.resolve()),present=False)
+            continue
+        raw=path.read_bytes();resolved=str(path.resolve())
+        rows[key]=dict(path=key,resolved_path=resolved,sha256=hashlib.sha256(raw).hexdigest())
+        role=(resolved,str(path.parent.resolve()))
+        if role in expanded:continue
+        expanded.add(role)
+        queue.extend((imported,True) for imported in import_paths(raw.decode('utf-8-sig',errors='replace'),path.parent))
+    return [rows[key] for key in sorted(rows)]
 
 
 def inventory(context):
@@ -34,6 +80,16 @@ def inventory(context):
                     from iteration_clock import monotonic
                     if monotonic()>=deadline:raise ContextError('instruction inventory reached original iteration deadline')
                 if path.is_file():paths.add(path)
+    protocol=context.get('instruction_input_inventory_protocol')
+    if protocol is not None and (type(protocol) is not int or protocol!=2):
+        raise ContextError('unknown instruction input inventory protocol')
+    if protocol==2:
+        home=context.get('private_worker_home')
+        if home:
+            home=Path(home)
+            paths.update(home/name for name in ('CLAUDE.md','CLAUDE.local.md'))
+            paths.update(path for path in (home/'rules').rglob('*.md') if path.is_file())
+        return referenced_inventory(paths,deadline=deadline)
     result=[]
     for path in sorted(paths,key=str):
         if deadline is not None:

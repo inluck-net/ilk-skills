@@ -78,6 +78,8 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
             'suite':{'command':'python3 -I -c '+shlex.quote(command),'flags':[],'timeout':10}}}))
         git('add','.gitignore','.ilk-launch.json');git('commit','-qm','fixture optional final suite')
     home=tmp_path/'source-home';home.mkdir()
+    (home/'CLAUDE.md').write_text('fixture global instruction')
+    (home/'rules').mkdir();(home/'rules/entry.md').write_text('fixture global rule')
     (home/'settings.json').write_text(json.dumps({'env':{'ANTHROPIC_BASE_URL':'https://example.invalid','ANTHROPIC_MODEL':'fixture-model','ANTHROPIC_AUTH_TOKEN':'fixture-token'}}))
     original=(home/'settings.json').read_bytes()
     cli=world['bin']/'claude'
@@ -87,6 +89,15 @@ from iteration_context import read_context
 from worker_shell import canonical_command
 assert sys.argv[sys.argv.index('--setting-sources')+1]==''
 path=Path(os.environ['ILK_ITER_CONTEXT']);ctx=read_context(path)
+globals=ctx['global_instruction_inventory']
+assert len(globals)==2
+prompt=sys.argv[sys.argv.index('--append-system-prompt')+1]
+for row in globals:
+ assert row['path'] in prompt
+ cp=subprocess.run(['/bin/bash','-c',canonical_command(ctx,path,'cat -- '+__import__('shlex').quote(row['path']))],capture_output=True,text=True)
+ assert cp.returncode==0 and 'fixture global' in cp.stdout,cp.stderr
+cp=subprocess.run(['/bin/bash','-c',canonical_command(ctx,path,'cat -- '+__import__('shlex').quote(str(Path(ctx['private_worker_home'])/'settings.json')))],capture_output=True,text=True)
+assert cp.returncode!=0
 command="printf 'accepted' > later.txt" if ctx['dispatch']['slug']=='later' else "printf 'def f(value): return value + 2\\n' > counter.py"
 if ctx.get('worker_tools')=='native':
  assert sys.argv[sys.argv.index('--tools')+1]=='Bash,Read,Grep,Glob,Edit,Write'

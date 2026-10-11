@@ -62,3 +62,32 @@ def test_symlinked_rules_directory_observes_target_files(tmp_path):
     assert any(row['resolved_path']==str(target) for row in context['instruction_input_inventory'])
     target.write_text('changed')
     with pytest.raises(ContextError,match='instruction inputs changed'):verify(context)
+
+
+@pytest.mark.parametrize('mutation',['edit','new-missing','delete','symlink'])
+def test_referenced_instruction_inputs_are_frozen(tmp_path,mutation):
+    context,root,plan=fixture(tmp_path);context['instruction_input_inventory_protocol']=2
+    imported=root/'guides/team notes.md';imported.parent.mkdir();imported.write_text('Team guidance\n@../shared.txt\n')
+    shared=root/'shared.txt';shared.write_text('original imported guidance')
+    missing=root/'future.md'
+    (root/'CLAUDE.md').write_text('Guidance @guides/team\\ notes.md and @future.md\n')
+    context['instruction_input_inventory']=inventory(context)
+    assert any(row['resolved_path']==str(shared) for row in context['instruction_input_inventory'])
+    assert any(row['path']==str(missing) and row.get('present') is False for row in context['instruction_input_inventory'])
+    if mutation=='edit':shared.write_text('changed')
+    elif mutation=='new-missing':missing.write_text('new imported instruction')
+    elif mutation=='delete':shared.unlink()
+    else:
+        alternate=root/'other.txt';alternate.write_text(shared.read_text());shared.unlink();shared.symlink_to(alternate)
+    with pytest.raises(ContextError,match='instruction inputs changed'):verify(context)
+
+
+def test_import_code_examples_are_literal_and_manual_cycles_are_bounded(tmp_path):
+    context,root,plan=fixture(tmp_path);context['instruction_input_inventory_protocol']=2
+    (root/'CLAUDE.md').write_text('`@literal.md`\n```\n@fenced.md\n```\n@level1.md\n')
+    for level in range(1,6):(root/('level'+str(level)+'.md')).write_text('@level'+str(level+1)+'.md\n')
+    (root/'level5.md').write_text('@level1.md\n')
+    paths={row['path'] for row in inventory(context)}
+    assert str(root/'level4.md') in paths
+    assert str(root/'level5.md') in paths
+    assert str(root/'literal.md') not in paths and str(root/'fenced.md') not in paths

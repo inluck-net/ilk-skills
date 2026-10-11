@@ -45,6 +45,25 @@ def test_shell_network_is_denied_before_connecting(tmp_path):
     assert cp.returncode!=0 and 'PermissionError' in cp.stderr
 
 
+def test_shell_reads_only_prepared_global_instructions_from_private_home(tmp_path):
+    import hashlib
+    ctx,temporary,home=fixture(tmp_path)
+    guide=home/'rules/guide.md';guide.parent.mkdir()
+    paths=[home/'CLAUDE.md',guide]
+    for path in paths:path.write_text('frozen global instructions');path.chmod(0o600)
+    secret=home/'settings.json';secret.write_text('private settings')
+    ctx['private_worker_home']=str(home)
+    ctx['global_instruction_inventory']=[dict(path=str(path),sha256=hashlib.sha256(path.read_bytes()).hexdigest()) for path in paths]
+    policy=profile(ctx,temporary=temporary,shell=True)
+    read=['/usr/bin/python3','-c','import pathlib,sys;print(pathlib.Path(sys.argv[1]).read_text())']
+    for path in paths:
+        assert run(policy,*read,str(path)).returncode==0
+        assert run(policy,'/bin/sh','-c','printf forged > "$1"','fixture',str(path)).returncode!=0
+    assert run(policy,*read,str(secret)).returncode!=0
+    ctx['global_instruction_inventory'].append(dict(path=str(secret),sha256='forged'))
+    with pytest.raises(ContextError):profile(ctx,temporary=temporary,shell=True)
+
+
 def test_tools_can_stop_their_own_children_but_not_independent_peers(tmp_path):
     ctx,temporary,_=fixture(tmp_path);policy=profile(ctx,temporary=temporary,shell=True)
     child='import subprocess,sys;p=subprocess.Popen([sys.executable,"-c","import threading;threading.Event().wait()"]);p.terminate();assert p.wait()==-15'

@@ -24,7 +24,7 @@ required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: wire candidate measured-red progress into opt-in Mac
 worker/loop, close/result and consumer readers, then finish remaining
-legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview 60941f1d
+legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview 3bb6f710
 and consumer compatibility 3987a299 are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -3320,3 +3320,29 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
   10.37s; unknown flag/schema and non-green continuation checks passed nine in
   4.94s. Next: archive owned progress entry and deliver these checked readers
   and return-red recovery at the next freshly proved idle-services boundary.
+
+- D2 instruction consumption correction (candidate): actual Claude Code
+  2.1.296 localhost provider probes, requested sonnet / actual
+  claude-sonnet-5-5, showed no automatic memory imports with owned
+  `--setting-sources ''` (0.672s), versus four automatic import hops with
+  normal sources (0.677s). These are generated fixtures, not batch performance
+  samples. The worker follows references manually, so inventory now follows
+  the complete reference graph with cycle detection under the original deadline.
+  Protocol 2 is additive; absent protocol retains prior named/rule semantics.
+  Prepared plain global instructions are explicit bootstrap reads; Mac shell
+  can read only verified instruction literals inside its otherwise unreadable
+  private home. Settings remain unreadable and instructions unwritable.
+  Root CLAUDE.local.md is included. Global imports explicitly refuse preparation
+  pending a rebasing adapter rather than silently reading changed paths.
+  New negatives failed before the correction; 54 affected inventory, preparation
+  and actual Mac OS-boundary checks passed in 29.17s with private HOME/data pins.
+  An earlier unpinned negative invocation emitted the live-data monitor warning;
+  tests operated on generated fixtures, but that warning is not clean isolation
+  evidence. Subsequent run pinned both data environment variables and HOME.
+  Next: committed archive production-entry check, then safe delivery.
+
+- Local delivery state: 3bb6f710 installed in preview q; consumer remains
+  3987a299. Controller 94556 retained original private 4de1eb06 inputs, pause
+  and 1,891 protected file hashes. Only positively idle services were removed
+  temporarily and restored. Public release and shared rezmac activation remain
+  pending; no active worker was stopped.
