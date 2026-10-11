@@ -2677,6 +2677,12 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
   if ($iterMetrics.ToolCalls -gt 0) { $jsonlRecord['tool_calls'] = $iterMetrics.ToolCalls }
   if ($iterMetrics.TestInvocations -gt 0) { $jsonlRecord['test_invocations'] = $iterMetrics.TestInvocations }
   Write-JsonlRecord -Record $jsonlRecord
+  & python (Join-Path $SkillRoot 'ilk-loop/scripts/iteration_record.py') --log $JsonlLog --run-id $RunId --iteration $i | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    $iterStopReason = 'iteration_record_projection_failed'
+    $stopReason = $iterStopReason
+  }
+  Remove-Item Env:ILK_ITER_RECORD_STAGE -ErrorAction SilentlyContinue
 
   }
 

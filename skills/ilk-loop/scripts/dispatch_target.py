@@ -93,7 +93,7 @@ def format_brief(identity: dict, step: int, project: str, skills: Path) -> str:
     path = identity['subplan_path']
     master = identity.get('master_path') or 'unknown; use the selected subplan link'
     base = identity.get('batch_base_sha') or 'unknown'
-    return '\n'.join([
+    lines = [
         'DISPATCH CONTEXT (driver-selected work; keep required instruction reads):',
         f'Project: {project}', f'Plans: {Path(path).parent}',
         f'Pinned loop instructions: {skills / "ilk-loop" / "SKILL.md"}',
@@ -103,7 +103,13 @@ def format_brief(identity: dict, step: int, project: str, skills: Path) -> str:
         'Read the exact instructions/master/subplan above; use existing fixtures and repository guidance.',
         'Start at this step. Do not scan all plans or rediscover the skill root; group independent reads when supported.',
         'These paths are context, not gate success or permission to change driver-owned proof/state.',
-    ])
+    ]
+    from iteration_context import read_context
+    context=read_context()
+    if context and context.get('recovery_dir'):
+        from recovery import brief
+        lines.extend(brief(context,identity['slug'],step))
+    return '\n'.join(lines)
 
 
 def main():

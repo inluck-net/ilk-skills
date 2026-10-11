@@ -70,6 +70,15 @@ def plan_snapshot(path: Path) -> dict:
                 fingerprint=hashlib.sha256(immutable.encode()).hexdigest())
 
 
+def plan_status_from_context(context: dict) -> dict:
+    subplans=[]
+    for name,row in context.get('plans',{}).items():
+        current=plan_snapshot(Path(row['path']))
+        subplans.append(dict(fname=name,slug=row.get('slug'),status=current.get('status'),
+                             current_step=current.get('step'),estimated_steps=current.get('estimated_steps')))
+    return {'master':(context.get('dispatch') or {}).get('master_path'),'subplans':subplans}
+
+
 def capture_execution(context: dict) -> dict:
     root=Path(context['exec_tree'])
     head=git_value(root,'HEAD')
@@ -127,11 +136,17 @@ def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
         else:
             snapshots[selected.name]=plan_snapshot(selected)
     runtime=Path(runtime_dir).resolve()
+    recovery_identity={'master':(dispatch or {}).get('master_path'),
+                       'base':(dispatch or {}).get('batch_base_sha'),
+                       'master_fingerprint':(master_snapshot or {}).get('fingerprint'),
+                       'plan_fingerprint':snapshots.get(Path((dispatch or {}).get('subplan_path','')).name,{}).get('fingerprint')}
+    recovery_key=hashlib.sha256(json.dumps(recovery_identity,sort_keys=True).encode()).hexdigest()
     return dict(schema_version=1,run_id=run_id,iteration=int(iteration),
                 clone=clone,exec_tree=exec_tree,observe_tree=observed,mode=mode,
                 plans_dir=plans_dir,runtime_dir=str(runtime),
                 ledger_path=str(runtime/'launcher/ship-proof.jsonl'),
                 registry_path=None, # D4 has no canonical registry yet.
+                recovery_dir=str(runtime/'launcher/recovery'/recovery_key),
                 data_root=str(Path(data_root).resolve()),code_root=code_root,
                 toolkit_sha=git_value(Path(code_root),'HEAD'),
                 base_commit=git_value(Path(exec_tree),'HEAD'),

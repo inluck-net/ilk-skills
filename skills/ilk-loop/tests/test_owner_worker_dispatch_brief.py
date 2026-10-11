@@ -199,6 +199,7 @@ from pathlib import Path
 if '-p' not in sys.argv:
  print('fixture-cli');sys.exit(0)
 Path(os.environ['CAPTURE']).write_text(sys.argv[-1])
+Path(os.environ['CAPTURE_STAGE']).write_text(os.environ.get('ILK_ITER_RECORD_STAGE',''))
 if os.environ.get('TAMPER_GATE') == '1':
  p=Path(os.environ['SELECTED_PLAN']);p.write_text(p.read_text().replace('printf green','printf invented-green'))
 print(json.dumps({'type':'system','subtype':'init','model':'stub-model','session_id':'stub-session'}))
@@ -212,6 +213,7 @@ print(json.dumps({'type':'result','subtype':'success','duration_ms':1,'duration_
                ILK_SKILL_HOME=str(skills),ILK_MASTER=master.name,
                CLAUDE_CONFIG_DIR=str(home/'.claude'),CAPTURE=str(capture),
                SELECTED_PLAN=str(selected),TAMPER_GATE='1' if tamper_gate else '0',
+               CAPTURE_STAGE=str(tmp_path/'worker-stage.txt'),
                PATH=str(bin_dir)+os.pathsep+os.environ['PATH'])
     for name in ['BASH_ENV','ILK_WORKER_SESSION','ILK_RUN_LOCK_HELD']:
         env.pop(name,None)
@@ -221,6 +223,7 @@ print(json.dumps({'type':'result','subtype':'success','duration_ms':1,'duration_
                         cwd=tmp_path,env=env,capture_output=True,text=True,timeout=90)
     assert capture.exists(), cp.stdout[-2500:]+cp.stderr[-2500:]
     prompt = capture.read_text()
+    assert (tmp_path/'worker-stage.txt').read_text() == ''
     assert str(selected) in prompt
     assert str(master) in prompt
     assert str(skills/'ilk-loop/SKILL.md') in prompt
@@ -233,6 +236,12 @@ print(json.dumps({'type':'result','subtype':'success','duration_ms':1,'duration_
     assert measured, cp.stdout[-2500:]+cp.stderr[-2500:]
     assert measured[0]['worker_cost_observation']['models_actual_init'] == ['stub-model']
     assert measured[0]['record_phase'] == 'close'
+    ledgers = list(data.rglob('ship-proof.jsonl'))
+    if ledgers:
+        proof_rows = [json.loads(line) for line in ledgers[0].read_text().splitlines() if line.strip()]
+        finalized = [row for row in proof_rows if row.get('record_phase') == 'close']
+        assert finalized
+        assert all(row['integrity_passed'] is (not tamper_gate) for row in finalized)
     if tamper_gate:
         assert measured[0]['stop_reason'] == 'ship_integrity_violation'
         assert 'invented-green' not in selected.read_text()

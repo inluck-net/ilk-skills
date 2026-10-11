@@ -325,6 +325,8 @@ def ledger_record_is_reachable(record: dict, cwd: Path | None = None) -> bool:
     Rows predating commit identity fields retain their legacy interpretation;
     newly produced rows always carry commits or a gate-at-head identity.
     """
+    if record.get('record_phase')=='close' and (record.get('integrity_passed') is not True or record.get('landed') is not True or record.get('gate_outcome')!='pass'):
+        return False
     commits=record.get('commits')
     head=record.get('head') or record.get('head_sha')
     if commits is None and not head:

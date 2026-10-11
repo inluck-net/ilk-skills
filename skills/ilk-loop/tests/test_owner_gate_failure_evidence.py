@@ -43,3 +43,17 @@ _extract_failing_ids "$RESULTS"
     rows=[json.loads(line) for line in cp.stdout.splitlines() if line.startswith('[')]
     assert rows[0]==['tests/red.py::test_red']
     assert 'tests/early.py::test_red' in rows[1]
+
+
+def test_retry_count_reader_reads_the_saved_value(tmp_path):
+    env=dict(os.environ,HOME=str(tmp_path),ILK_DOTSOURCE_ONLY='1')
+    code='''source "$1"
+RUN_LOG_DIR="$HOME"
+_read_gate_red_count work 0
+_increment_gate_red_count work 0
+_increment_gate_red_count work 0
+_read_gate_red_count work 0
+'''
+    cp=subprocess.run(['bash','-c',code,'fixture',str(SCRIPTS/'run_ilk_loop_claude.sh')],env=env,capture_output=True,text=True,timeout=20)
+    assert cp.returncode==0,cp.stderr
+    assert cp.stdout.splitlines()==['0','1','2','2']

@@ -1644,7 +1644,16 @@ write_ship_proof_records() {
   # "probe did not answer (exit 2) -- writing no ledger rows"). Same recorded
   # root merge_selfmod_worktree restores from; :- fallback keeps non-selfmod
   # runs probing $PROJECT_PATH exactly as before.
+  if [[ -n "${ILK_ITER_CONTEXT:-}" ]]; then
+    status_json=$(python3 -c '
+import json,sys
+sys.path.insert(0,sys.argv[1])
+from iteration_context import read_context,plan_status_from_context
+print(json.dumps(plan_status_from_context(read_context())))
+' "${_SKILL_ROOT}/ilk-loop/scripts") || probe_rc=$?
+  else
   status_json=$(cd "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}" && python3 "$LOOP_STATUS_SCRIPT" --json) || probe_rc=$?
+  fi
   if (( probe_rc >= 2 )) || [[ -z "$status_json" ]] \
      || ! printf '%s' "$status_json" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
     echo "  ! [ship-proof] loop_status --json probe did not answer (exit ${probe_rc}) -- writing no ledger rows for iteration ${iteration}. A row asserting zero progress would be a false negative, not a safe default." >&2
@@ -1838,7 +1847,11 @@ d = {
 attr = sys.argv[8] if len(sys.argv) > 8 else ''
 if attr:
     d['attribution'] = attr
-print(json.dumps(d, separators=(',', ':')))" "$RUN_ID" "$iteration" "$slug" "$r" "$step_from" "$step_to" "$shas_json" "$_attribution_arg" 2>/dev/null) || continue
+sys.path.insert(0, sys.argv[9])
+from ship_proof_ledger import with_iteration_provenance
+d['gate_outcome'] = sys.argv[10]
+d = with_iteration_provenance(d)
+print(json.dumps(d, separators=(',', ':')))" "$RUN_ID" "$iteration" "$slug" "$r" "$step_from" "$step_to" "$shas_json" "$_attribution_arg" "${_SKILL_ROOT}/ilk-loop/scripts" "$gate_outcome" 2>/dev/null) || continue
 
       # Terminate a neighbour's unterminated line before appending.
       #
@@ -1879,7 +1892,7 @@ print(json.dumps(d, separators=(',', ':')))" "$RUN_ID" "$iteration" "$slug" "$r"
         local record
         record=$(python3 -c "
 import json, sys
-print(json.dumps({
+d = {
     'run_id': sys.argv[1],
     'iteration': int(sys.argv[2]),
     'slug': sys.argv[3],
@@ -1891,7 +1904,10 @@ print(json.dumps({
     'proof': 'gate_pass_at_head',
     'head': sys.argv[7],
     'gate_outcome': 'pass',
-}, separators=(',', ':')))" "$RUN_ID" "$iteration" "${slug_list[0]}" "$r" "$step_from" "$step_to" "$gate_head" 2>/dev/null) || true
+ }
+sys.path.insert(0, sys.argv[8])
+from ship_proof_ledger import with_iteration_provenance
+print(json.dumps(with_iteration_provenance(d), separators=(',', ':')))" "$RUN_ID" "$iteration" "${slug_list[0]}" "$r" "$step_from" "$step_to" "$gate_head" "${_SKILL_ROOT}/ilk-loop/scripts" 2>/dev/null) || true
         if [[ -n "$record" ]]; then
           if [[ -s "$ledger" ]] && [[ -n "$(tail -c 1 "$ledger")" ]]; then
             printf '\n' >> "$ledger"
@@ -1988,6 +2004,10 @@ write_ilk_sentinel() {
 #   {"<slug>:<step>": <count>, ...}
 
 _gate_red_count_file() {
+  if [[ -n "${ILK_ITER_CONTEXT:-}" && -n "${_CONTEXT_RECOVERY_DIR:-}" ]]; then
+    printf '%s\n' "${_CONTEXT_RECOVERY_DIR}/gate-red-counts.json"
+    return
+  fi
   echo "${RUN_LOG_DIR}/gate-red-counts.json"
 }
 
@@ -1995,19 +2015,27 @@ _read_gate_red_count() {
   local slug="$1"
   local step="$2"
   local f
-  f="$(_gate_red_count_file)" || echo 0; return 0
+  f="$(_gate_red_count_file)" || { echo 0; return 0; }
   if [[ ! -f "$f" ]]; then
     echo 0
     return 0
   fi
   python3 -c "
-import json, sys
+import json, sys, os
 try:
     d = json.load(open(sys.argv[1]))
-    print(d.get(sys.argv[2] + ':' + sys.argv[3], 0))
+    value = d.get(sys.argv[2] + ':' + sys.argv[3], 0)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError('invalid retry count')
+    print(value)
 except Exception:
+    if os.environ.get('ILK_ITER_CONTEXT'):
+        raise SystemExit('persistent retry count unreadable')
     print(0)
-" "$f" "$slug" "$step" 2>/dev/null || echo 0
+" "$f" "$slug" "$step" 2>/dev/null || {
+    [[ -n "${ILK_ITER_CONTEXT:-}" ]] && return 1
+    echo 0
+  }
 }
 
 _increment_gate_red_count() {
@@ -2035,6 +2063,10 @@ print(d[key])
 # gate-retry logic can detect progress (different failing set = progress).
 
 _gate_red_ids_file() {
+  if [[ -n "${ILK_ITER_CONTEXT:-}" && -n "${_CONTEXT_RECOVERY_DIR:-}" ]]; then
+    printf '%s\n' "${_CONTEXT_RECOVERY_DIR}/gate-red-ids.json"
+    return
+  fi
   echo "${RUN_LOG_DIR}/gate-red-ids.json"
 }
 
@@ -2048,15 +2080,20 @@ _read_gate_red_ids() {
     return 0
   fi
   python3 -c "
-import json, sys
+import json, sys, os
 try:
     d = json.load(open(sys.argv[1]))
 except Exception:
+    if os.environ.get('ILK_ITER_CONTEXT'):
+        raise SystemExit('persistent failing IDs unreadable')
     d = {}
 key = sys.argv[2] + ':' + sys.argv[3]
 ids = d.get(key, [])
 print(json.dumps(sorted(ids)))
-" "$f" "$slug" "$step" 2>/dev/null || echo "[]"
+" "$f" "$slug" "$step" 2>/dev/null || {
+    [[ -n "${ILK_ITER_CONTEXT:-}" ]] && return 1
+    echo "[]"
+  }
 }
 
 _write_gate_red_ids() {
@@ -6117,7 +6154,7 @@ print(fm.get('result_file', ''))
     iter_start=$(date +%s)
     # The previous context stays on disk for recovery, but may not select this
     # iteration's identity while isolation/dispatch are being resolved.
-    unset ILK_ITER_CONTEXT ILK_EXEC_TREE _CONTEXT_PLANS_DIR _CONTEXT_LAUNCHER_DIR
+    unset ILK_ITER_CONTEXT ILK_EXEC_TREE ILK_ITER_RECORD_STAGE _CONTEXT_PLANS_DIR _CONTEXT_LAUNCHER_DIR _CONTEXT_RECOVERY_DIR
 
     # -- Orphan stash warning ──────────────────────────────────────────
     # Warn about leftover ilk-gate-isolation or ilk auto-stash entries
@@ -6259,8 +6296,11 @@ write_context(Path(a[9]),context)
     fi
     _CONTEXT_OBSERVATIONS=("${_context_observed[@]}")
     export ILK_ITER_CONTEXT
+    export ILK_ITER_RECORD_STAGE="driver-check"
     _CONTEXT_PLANS_DIR="$_dispatch_plans_dir"
     _CONTEXT_LAUNCHER_DIR="$_context_launcher"
+    _CONTEXT_RECOVERY_DIR=$(jq -r '.recovery_dir' "$ILK_ITER_CONTEXT")
+    mkdir -p "$_CONTEXT_RECOVERY_DIR"
     ILK_EXEC_TREE="$_context_exec"
     export ILK_EXEC_TREE
 
@@ -6775,7 +6815,7 @@ print(json.dumps(d))
     fi
 
     if [[ "$GATE_FIRST_GREEN" -eq 0 && "$GATE_FIRST_NO_DISPATCH" -eq 0 ]]; then
-      invoke_claude_iteration "$ILK_EXEC_TREE" "$iter_log" "$iter_prompt" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
+      ILK_ITER_RECORD_STAGE="" invoke_claude_iteration "$ILK_EXEC_TREE" "$iter_log" "$iter_prompt" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
     elif [[ "$GATE_FIRST_NO_DISPATCH" -eq 1 ]]; then
       # A finished batch-verify with a red gate or no gate_first — the
       # iteration ends without dispatch.  Set the same defaults the green
@@ -6864,6 +6904,11 @@ print(json.dumps(d))
     local iter_end iter_dur_sec
     iter_end=$(date +%s)
     iter_dur_sec=$((iter_end - iter_start))
+
+    if [[ "$ITER_COMPLETED" -ne 1 && -s "${iter_log}.jsonl" ]]; then
+      python3 "${_SKILL_ROOT}/ilk-loop/scripts/recovery.py" \
+        --salvage "${iter_log}.jsonl" --out "${_CONTEXT_RECOVERY_DIR}/last-worker-salvage.json" || true
+    fi
 
     # Count tool calls and test invocations from the stream JSON log (AC-12).
     local iter_tool_calls=0 iter_test_invocations=0
@@ -7431,7 +7476,8 @@ print('false')
               local _gate_retry_step="${PRE_ITER_TARGET#* }"
               [[ "$_gate_retry_step" =~ ^[0-9]+$ ]] || _gate_retry_step=0
               local _gate_red_count
-              _gate_red_count=$(_read_gate_red_count "${_iter_slug:-}" "$_gate_retry_step")
+              local _recovery_invalid=0
+              _gate_red_count=$(_read_gate_red_count "${_iter_slug:-}" "$_gate_retry_step") || _recovery_invalid=1
 
               # Extract failing ids and compare with previous red.
               local _current_failing_ids="[]"
@@ -7440,7 +7486,7 @@ print('false')
                 _current_failing_ids=$(_extract_failing_ids "$local_checks_results")
                 if [[ "$_gate_red_count" -ge 1 ]]; then
                   local _previous_failing_ids
-                  _previous_failing_ids=$(_read_gate_red_ids "${_iter_slug:-}" "$_gate_retry_step")
+                  _previous_failing_ids=$(_read_gate_red_ids "${_iter_slug:-}" "$_gate_retry_step") || _recovery_invalid=1
                   if [[ "$_current_failing_ids" == "$_previous_failing_ids" && \
                         "$_current_failing_ids" != "[]" ]]; then
                     _same_failing_set="true"
@@ -7454,6 +7500,9 @@ print('false')
                 --is-env-fault "$_is_env_fault" \
                 --is-no-commits "$_is_no_commits" \
                 --same-failing-set "$_same_failing_set" 2>/dev/null) || _retry_json=""
+              if [[ "$_recovery_invalid" -eq 1 ]]; then
+                _retry_json='{"should_stop":true,"stop_reason":"recovery_history_invalid"}'
+              fi
               local _should_stop _retry_stop_reason
               if [[ -n "$_retry_json" ]]; then
                 _should_stop=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print('true' if d.get('should_stop') else 'false')" "$_retry_json" 2>/dev/null || echo "true")
@@ -7505,6 +7554,10 @@ for line in sys.stdin:
             print(f'{channel} complete output: {output_path}')
     print()
 " < "$local_checks_results" > "$_gate_red_file" 2>/dev/null || true
+                fi
+                if [[ -s "$_gate_red_file" && -n "${ILK_ITER_CONTEXT:-}" ]]; then
+                  python3 "${_SKILL_ROOT}/ilk-loop/scripts/recovery.py" \
+                    --save-notice "$_gate_red_file" --slug "${_iter_slug:-}" --step "$_gate_retry_step" || true
                 fi
                 echo "  [gate-retry] first red gate for ${_iter_slug:-?} step ${_gate_retry_step} — retrying next iteration (red count: $((_gate_red_count + 1)))" >&2
               fi
@@ -8085,6 +8138,14 @@ print(json.dumps(d))
 
     # Restore set -e: terminal decision logic below must be fatal.
     set -e
+
+    # Finalize the existing sidecar only from the durable close record.
+    if ! python3 "${_SKILL_ROOT}/ilk-loop/scripts/iteration_record.py" \
+      --log "$JSONL_LOG" --run-id "$RUN_ID" --iteration "$i" >/dev/null; then
+      iter_stop_reason="iteration_record_projection_failed"
+      stop_reason="iteration_record_projection_failed"
+    fi
+    unset ILK_ITER_RECORD_STAGE
 
     # Every reader in this iteration is done with it.
     rm -f "$local_checks_results"

@@ -15,11 +15,26 @@ Sub-plan: ``a-shared-remote-ship-can-be-proven`` (AC-1, AC-2, AC-5, AC-6).
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
 from sandbox_guard import SandboxWriteRefused, stable_write_refusal
+
+
+def with_iteration_provenance(record: dict) -> dict:
+    from iteration_context import read_context, ContextError
+    context=read_context()
+    if not context or record.get('record_phase') == 'close': return record
+    if record.get('run_id')!=context['run_id'] or record.get('iteration')!=context['iteration']:
+        raise ContextError('proof row contradicts current iteration identity')
+    dispatch=context.get('dispatch') or {}
+    marked=dict(record,record_phase='provisional',context_schema_version=1,
+                master_path=dispatch.get('master_path'),batch_base_sha=dispatch.get('batch_base_sha'))
+    marked['proof_id']=hashlib.sha256(json.dumps(marked,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    return marked
 
 
 def append_record(path: Path, record: dict[str, Any]) -> None:
@@ -33,12 +48,13 @@ def append_record(path: Path, record: dict[str, Any]) -> None:
     if refusal is not None:
         print(f"! [sandbox] {refusal}", file=sys.stderr)
         raise SandboxWriteRefused(refusal)
+    record=with_iteration_provenance(record)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, separators=(",", ":")) + "\n")
 
 
-def read_records(path: Path) -> list[dict[str, Any]]:
+def read_raw_records(path: Path) -> list[dict[str, Any]]:
     """Read all records from the ledger file.
 
     Skips unparseable lines rather than raising (AC-6 — an unreadable
@@ -101,3 +117,26 @@ def read_records(path: Path) -> list[dict[str, Any]]:
             file=sys.stderr,
         )
     return records
+
+
+def read_records(path: Path) -> list[dict[str, Any]]:
+    """Expose closed proof, or current provisional proof to the driver check."""
+    raw=read_raw_records(path)
+    finalized={r.get('proof_id') for r in raw if r.get('record_phase')=='close' and r.get('proof_id')}
+    context=None
+    if os.environ.get('ILK_ITER_RECORD_STAGE')=='driver-check' and os.environ.get('ILK_WORKER_SESSION')!='1':
+        from iteration_context import read_context
+        context=read_context()
+    result=[]
+    seen=set()
+    for row in raw:
+        phase=row.get('record_phase')
+        proof_id=row.get('proof_id')
+        if phase=='provisional':
+            if proof_id in finalized: continue
+            if not context or row.get('run_id')!=context['run_id'] or row.get('iteration')!=context['iteration']: continue
+        if phase=='close' and proof_id:
+            if proof_id in seen: continue
+            seen.add(proof_id)
+        result.append(row)
+    return result
