@@ -25,26 +25,30 @@ def project(context,result,*,deadline):
             raise ContextError('progress projection lacks exact advanced receipt')
         selected=read_dispatch(context);root=Path(context['exec_tree'])
         transaction._decision(context,result['attempts'][-1],result['progress_observation'])
-        if (transaction.driver.git(root,'rev-parse','HEAD')!=result['head_commit']
+        head=transaction.driver._transaction_head(context,result)
+        if (transaction.driver.git(root,'rev-parse','HEAD')!=head
                 or transaction.driver.git(root,'rev-parse','HEAD^{tree}')!=result['tree']
                 or transaction.driver.working_tree(root)!=result['tree']):
             raise ContextError('progress projection tree changed')
         state=parse_frontmatter(Path(selected['subplan_path']).read_text())
-        if (state.get('current_step')!=str(selected['step']+1) or state.get('status')!='in-progress'
+        if (state.get('current_step')!=str(selected['step']+1) or state.get('status') not in {'in-progress','shipped'}
                 or state.get('hold')=='human' or audit_context(context).get('explained') is not True):
             raise ContextError('progress projection state changed')
+        if state.get('status')=='shipped':
+            from progress_ship import verify_shipped
+            verify_shipped(context,result,head)
         observations=result['progress_observation']['observations']
         reds=[dict(verdict='pre-existing',command=observation['command'],scope=observation['scope'],
             base_sha=selected['batch_base_sha'],iteration_base=context['base_commit'],
             node_ids=observation['node_ids'],measurement_receipt=observation['receipt'],
             measurement_sha256=observation['sha256']) for observation in observations]
         checks=result['attempts'][-1]['check_observations']
-        data=dict(results=checks,head_sha=result['head_commit'])
+        data=dict(results=checks,head_sha=head)
         record=build_record(selected['slug'],selected['step'],'fail',1,extract_failing_check(data),data)
         record.update(driver_owned=True,driver_attempts=result['attempts'],
             run_id=context['run_id'],iteration=context['iteration'],
             progress_accepted=True,green_accepted=False,accepted=False,
-            accepted_tree=None,progress_tree=result['tree'],progress_head=result['head_commit'],
+            accepted_tree=None,progress_tree=result['tree'],progress_head=head,
             progress_protocol='measured-red-progress-v1',progress_receipt=str(path),
             progress_receipt_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
             pre_existing_red=reds,reason='measured pre-existing red; step progressed without green proof',

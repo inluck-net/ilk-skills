@@ -45,8 +45,8 @@ def finalize(context,log,*,deadline):
             clone=Path(context['clone']);git=transaction.driver.git
             landed=(close.get('merge_outcome')=='merged' and landing.get('outcome')=='merged'
                 and landing.get('green_accepted') is False and landing.get('progress_accepted') is True
-                and landing.get('head_after')==result['head_commit'] and landing.get('accepted_tree') is None
-                and git(clone,'rev-parse','HEAD')==result['head_commit']
+                and landing.get('head_after')==projected['progress_head'] and landing.get('accepted_tree') is None
+                and git(clone,'rev-parse','HEAD')==projected['progress_head']
                 and git(clone,'rev-parse','HEAD^{tree}')==result['tree'] and transaction.driver.working_tree(clone)==result['tree'])
         if not landed:raise ContextError('progress close has pending or changed landing')
         selected=read_dispatch(context)
@@ -54,8 +54,8 @@ def finalize(context,log,*,deadline):
         projected.update(record_phase='close',close_record_id=close_id,proof_id='progress-'+close_id,
             integrity_passed=False,progress_integrity_passed=True,landed=True,gate_outcome='fail',
             step_from=selected['step'],step_to=selected['step']+1,
-            before_sha=context['base_commit'],after_sha=result['head_commit'],
-            head=result['head_commit'],commits=result['commits'],
+            before_sha=context['base_commit'],after_sha=projected['progress_head'],
+            head=projected['progress_head'],commits=result['commits'],
             master_path=selected.get('master_path'),batch_base_sha=selected.get('batch_base_sha'),
             driver_progress_accepted=True,owned_children_retired=True,
             context_plan_path=selected['subplan_path'],

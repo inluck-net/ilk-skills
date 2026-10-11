@@ -2970,3 +2970,28 @@ plans, pause and private dispatched inputs remain unchanged.
   validated pre-existing-red progress step, retain raw fail, land/close it
   before selecting the next step, and tell terminal consumers unproven rather
   than green/completed claim. Final verification stays opt-in.
+
+### Candidate final-step unproven marker/status boundary
+
+- New progress_ship.complete/verify_shipped finish only the exact final
+  authored step of an advanced measured-red transaction. Durable marker intent
+  precedes its empty ship marker commit and CAS status; intermediate steps
+  remain in-progress. Source tree, holds/master state, exact receipt and
+  original deadline still guard all writes. No green/proven claim is added.
+- Progress recovery/projection/landing/close now recognize only this exact
+  empty marker continuation. Historical gate artifacts stay raw failed;
+  typed closed rows identify the actual marker tip while keeping separate
+  progress acceptance and green proof. This lets a future loop select the
+  next registered plan without claiming verification. Runtime remains unwired.
+- Actual final marker/idempotence/recovery/selfmod landing/closed ledger and
+  audit fixture exceeded its old 30s allowance (1 failed in 30.43s; original
+  deadline/unknown-child refusal retained no success claim). Measured valid
+  combined path falsified that fixture margin. Only this fixture now uses
+  50/55/60s original/reservation/outer; attribution remains 15s and production
+  caps unchanged. Corrected selection: 1 passed in 41.36s.
+- That duration includes repeated idempotence/recovery/projection/audit and
+  negative checks, not a production per-step benchmark. Repeated registered
+  Git metadata calls are observed overhead to reduce after lifecycle wiring.
+  Native Windows/member/timeout entry and marker crash tests remain open.
+- No model/full suite, current worker/plan/pause/inputs or installation change.
+  Next opt-in worker/loop integration plus marker-crash/terminal consumers.

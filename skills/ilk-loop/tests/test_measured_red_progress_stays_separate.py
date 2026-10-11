@@ -18,13 +18,13 @@ def run_case(tmp_path,case,transaction='none'):
     git(root,'commit','--allow-empty','-qm','iteration fixture')
     context.update(base_commit=git(root,'rev-parse','HEAD'),base_tree=git(root,'rev-parse','HEAD^{tree}'))
     context['dispatch']['batch_base_sha']=batch
-    if transaction in {'projection','landing','close'}:
+    if transaction in {'projection','landing','close','shipped-close'}:
         from iteration_context import plan_snapshot
         master=plan.parent/'MASTER-progress.md'
         master.write_text('---\nmaster_plan: progress\nstatus: active\n---\n[plan](./'+plan.name+')\n')
         context['dispatch']['master_path']=str(master)
         context['master_snapshot']=plan_snapshot(master)
-    if transaction in {'landing','close'}:
+    if transaction in {'landing','close','shipped-close'}:
         clone=Path(context['clone']);git(clone,'merge','--ff-only',context['base_commit'])
         context.update(clone_base_commit=git(clone,'rev-parse','HEAD'),clone_entry_dirty=False)
     (root/'counter.py').write_text('def f(value): return value + 2\n')
@@ -38,9 +38,10 @@ from run_registry import reserve,bind_running,finish,process_identity
 from driver_step import gate
 from measured_progress import assess
 ctx=json.loads(Path(sys.argv[1]).read_text());registry=Path(sys.argv[1]).parent/'registry'
-reserve(registry,run_id=ctx['run_id'],project_key='fixture',clone=ctx['clone'],exec_tree=ctx['exec_tree'],toolkit_sha='a'*40,expires_at=time.time()+35)
+original_margin=50 if sys.argv[3]=='shipped-close' else 30
+reserve(registry,run_id=ctx['run_id'],project_key='fixture',clone=ctx['clone'],exec_tree=ctx['exec_tree'],toolkit_sha='a'*40,expires_at=time.time()+original_margin+5)
 bind_running(registry,ctx['run_id'],pid=os.getpid())
-ctx.update(run_registry_dir=str(registry),runner_owner_pid=os.getpid(),iteration_deadline_monotonic=monotonic()+30)
+ctx.update(run_registry_dir=str(registry),runner_owner_pid=os.getpid(),iteration_deadline_monotonic=monotonic()+original_margin)
 path=Path(sys.argv[1]).parent/'frozen.json';write_context(path,ctx)
 os.environ['ILK_ITER_CONTEXT']=str(path)
 selected=read_dispatch(ctx)
@@ -87,7 +88,14 @@ if sys.argv[3]!='none':
         assert original_git(Path(ctx['exec_tree']),'rev-list','--count',ctx['base_commit']+'..HEAD')=='1'
         again=tx.recover(ctx,deadline=ctx['iteration_deadline_monotonic'])
         assert again['head_commit']==row['head_commit'] and again['accepted'] is False
-        if mode in {'landing','close'}:
+        if mode=='shipped-close':
+            from progress_ship import complete
+            shipped=complete(ctx,row,deadline=ctx['iteration_deadline_monotonic'])
+            assert shipped['shipped'] is True and shipped['proven'] is False and shipped['green_accepted'] is False
+            assert complete(ctx,row,deadline=ctx['iteration_deadline_monotonic'])['head']==shipped['head']
+            row=tx.recover(ctx,deadline=ctx['iteration_deadline_monotonic'])
+            assert row['accepted'] is False and row['progress_accepted'] is True
+        if mode in {'landing','close','shipped-close'}:
             from selfmod_landing import land,land_progress
             from iteration_context import ContextError
             try:land(ctx,row,deadline=ctx['iteration_deadline_monotonic'])
@@ -95,10 +103,10 @@ if sys.argv[3]!='none':
             else:raise AssertionError('legacy green landing accepted raw-red transaction')
             landed=land_progress(ctx,row,deadline=ctx['iteration_deadline_monotonic'])
             assert landed['outcome']=='merged' and landed['green_accepted'] is False and landed['accepted_tree'] is None,landed
-            assert original_git(Path(ctx['clone']),'rev-parse','HEAD')==row['head_commit']
-            assert land_progress(ctx,row,deadline=ctx['iteration_deadline_monotonic'])['head_after']==row['head_commit']
+            assert original_git(Path(ctx['clone']),'rev-parse','HEAD')==landed['head_after']
+            assert land_progress(ctx,row,deadline=ctx['iteration_deadline_monotonic'])['head_after']==landed['head_after']
             assert Path(ctx['exec_tree']).is_dir()
-        if mode in {'projection','close'}:
+        if mode in {'projection','close','shipped-close'}:
             from progress_projection import project
             from iteration_context import ContextError
             projected=project(ctx,row,deadline=ctx['iteration_deadline_monotonic'])
@@ -115,7 +123,7 @@ if sys.argv[3]!='none':
                 [{'command':projected['command']}],'false',selected['slug'],
                 cwd=Path(ctx['exec_tree']),ledger_records=[projected],subplan_path=Path(selected['subplan_path']),master_path=Path(selected['master_path']))
             assert audit['proven'] is False and any('pre-existing red' in reason for reason in audit['reasons']),audit
-        if mode=='close':
+        if mode in {'close','shipped-close'}:
             from progress_close import finalize
             from plan_state import audit_context
             from ship_proof_ledger import read_raw_records
@@ -158,14 +166,18 @@ print(json.dumps(row))
     for key in ('ILK_ITER_CONTEXT','ILK_WORKER_SESSION'):env.pop(key,None)
     # 15s gate/sample, 30s original, 35s reservation, 40s outer are fixture
     # judgments for the measured sub-6s two-sample path plus a head gate.
-    # A legitimate slower host falsifies these margins; no default changes.
-    result=subprocess.run([sys.executable,'-c',program,str(request),case,transaction],env=env,start_new_session=True,capture_output=True,text=True,timeout=40)
+    # Shipped-close measured >30s across repeated marker/landing/projection
+    # checks, falsifying the old margin. Its fixture uses 50/55/60s original/
+    # reservation/outer only; attribution stays 15s and no default changes.
+    # A legitimate slower host falsifies these fixture margins.
+    result=subprocess.run([sys.executable,'-c',program,str(request),case,transaction],env=env,start_new_session=True,capture_output=True,text=True,timeout=60 if transaction=='shipped-close' else 40)
     assert result.returncode==0,result.stdout+result.stderr
     if transaction in {'none','changed-output','forged-observation'}:
         assert plan.read_bytes()==before and git(root,'rev-parse','HEAD')==head
     else:
         assert 'current_step: 1' in plan.read_text()
-        assert git(root,'rev-list','--count',head+'..HEAD')=='1'
+        assert git(root,'rev-list','--count',head+'..HEAD')==('2' if transaction=='shipped-close' else '1')
+        if transaction=='shipped-close':assert 'status: shipped' in plan.read_text()
 
 
 @pytest.mark.parametrize('case',['pre-existing','owned','runner-error'])
@@ -173,6 +185,6 @@ def test_real_gate_and_bases_keep_distinct_decisions(tmp_path,case):
     run_case(tmp_path,case)
 
 
-@pytest.mark.parametrize('phase',['normal','commit-intent','committed','prepared','advanced','changed-output','hook-changed','hook-committed','forged-observation','projection','landing','close'])
+@pytest.mark.parametrize('phase',['normal','commit-intent','committed','prepared','advanced','changed-output','hook-changed','hook-committed','forged-observation','projection','landing','close','shipped-close'])
 def test_progress_transaction_recovers_without_green_or_duplicate_commit(tmp_path,phase):
     run_case(tmp_path,'pre-existing',phase)

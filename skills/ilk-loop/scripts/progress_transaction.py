@@ -179,13 +179,16 @@ def recover(context,*,deadline):
                 if driver.git(root,'write-tree')!=result['tree']:raise ContextError('progress recovered index changed')
                 driver.git(root,'commit','-m',driver._commit_message(selected))
             result=_finish_commit(context,result,gate_timeout=result['gate_timeout'],budget_s=result['attribution_allowance'])
-        if (result.get('progress_accepted') is not True or head not in {context['base_commit'],result['head_commit']}
-                or driver.git(root,'rev-parse','HEAD')!=result['head_commit'] or driver.working_tree(root)!=result['tree']):
+        if (result.get('progress_accepted') is not True
+                or driver._transaction_head(context,result)!=driver.git(root,'rev-parse','HEAD') or driver.working_tree(root)!=result['tree']):
             raise ContextError('progress recovery committed tree changed')
         state=parse_frontmatter(Path(selected['subplan_path']).read_text())
         if state.get('current_step')==str(selected['step']):result=_advance(context,result)
-        elif state.get('current_step')!=str(selected['step']+1) or state.get('status')!='in-progress' or state.get('hold')=='human':
+        elif state.get('current_step')!=str(selected['step']+1) or state.get('status') not in {'in-progress','shipped'} or state.get('hold')=='human':
             raise ContextError('progress recovery pointer or hold changed')
+        elif state.get('status')=='shipped':
+            from progress_ship import verify_shipped
+            verify_shipped(context,result,driver.git(root,'rev-parse','HEAD'))
         if audit_context(context).get('explained') is not True:raise ContextError('progress recovery state unexplained')
         _save(context,result,'advanced')
         return dict(result,recovered_progress=True)

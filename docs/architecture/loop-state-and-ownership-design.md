@@ -451,3 +451,13 @@ its gate/step proof readers still reject it. Open-only, pending landing, wrong
 tree/scope and green-conflated fields are refused in actual Mac fixture checks.
 These APIs remain unwired into loop and consumer lifecycle; final verification
 stays opt-in and no running worker or dispatched input is changed.
+
+New candidate progress_ship.complete/verify_shipped supply an explicit final
+sub-plan marker/status boundary for measured-red progress. Only the exact
+final authored step qualifies; intent, unchanged empty marker and guarded
+status CAS remain durable/recoverable. Progress transaction, projection,
+landing and close recognize only that exact marker continuation, retaining
+failed checks and named unproven reasons. This finishes a sub-plan for next
+selection without asserting green proof. Actual Mac combined lifecycle checks
+are recorded in the tracker; runtime/consumer wiring and marker-crash tests
+remain required before enabling the protocol.
