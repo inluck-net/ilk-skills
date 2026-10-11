@@ -19,3 +19,24 @@ def test_node_is_one_literal_argument(tmp_path,at_base):
         assert result[node]=='passed'
     else:assert red_owner._run_test(tmp_path,str(stub),[node]) is True
     assert not marker.exists() and not marker.with_name(marker.name+']').exists()
+
+
+def test_real_pytest_space_parameter_keeps_complete_node_id(tmp_path):
+    import os, subprocess, sys
+    fixture=tmp_path/'test_parameter.py'
+    fixture.write_text("import pytest\n@pytest.mark.parametrize('value',[1],ids=['alpha beta'])\ndef test_parameter(value):\n    assert value == 2\n")
+    env=dict(os.environ, PYTHONUSERBASE='/Users/chad/Library/Python/3.9')
+    result=subprocess.run([sys.executable,'-m','pytest','-q','--color=no',str(fixture)],cwd=tmp_path,env=env,capture_output=True,text=True)
+    assert result.returncode == 1, result.stdout+result.stderr
+    nodes=red_owner._parse_pytest_nodes(result.stdout)
+    assert len(nodes)==1 and nodes[0].endswith('::test_parameter[alpha beta]'), nodes
+
+
+@pytest.mark.parametrize('line,expected', [
+    ('FAILED test_a.py::test_x[alpha - beta] - assertion failed', ['test_a.py::test_x[alpha - beta]']),
+    ('ERROR test_a.py::test_x[alpha beta] - fixture error', ['test_a.py::test_x[alpha beta]']),
+    ('FAILED test_a.py::test_x[alpha', []),
+    ('FAILED test_a.py::test_x - reason with [brackets]', ['test_a.py::test_x']),
+])
+def test_summary_selector_or_unknown(line,expected):
+    assert red_owner._parse_pytest_nodes(line)==expected

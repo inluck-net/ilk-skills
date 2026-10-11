@@ -26,6 +26,7 @@ from run_registry import register_child
 from driver_step import accept_step,recover_acceptance
 from recovery import read_retry_state,update_retry_state,save_notice
 from gate_retry import decide_gate_retry
+from red_owner import _parse_pytest_nodes
 
 
 def phase(context,name):
@@ -237,12 +238,12 @@ def run(context,path,prompt,*,claude,model,budget,mcp,gate_timeout,turn=worker_t
             if check['passed']:continue
             for channel in ('stdout','stderr'):
                 output=check.get(channel+'_path')
-                if output:failures.update(re.findall(r'FAILED\s+(\S+)',Path(output).read_text(errors='replace')))
+                if output:failures.update(_parse_pytest_nodes(Path(output).read_text(errors='replace')))
         previous=read_retry_state(ids_path,'ids').get(key,[])
         count=read_retry_state(counts,'count').get(key,0)
         decision=decide_gate_retry(red_count=count,is_no_commits=latest['working_tree']==context['base_tree'],
             is_environment_fault=any(str(check.get('reason','')).startswith('environment-fault:') for check in checks),
-            same_failing_set=bool(failures) and sorted(failures)==previous,progress_known=bool(failures and previous))
+            same_failing_set=bool(failures) and sorted(failures)==previous,progress_known=bool(failures and previous) and all(_parse_pytest_nodes('FAILED '+node)==[node] for node in previous))
         update_retry_state(counts,key,'count');update_retry_state(ids_path,key,'ids',sorted(failures))
         detail='Driver gate red; pointer unchanged. Repair only this step, leave a diff.\n'+json.dumps(latest,indent=2)
         source=path.parent/(path.stem+'-red.txt');source.write_text(detail);save_notice(context,selected['slug'],selected['step'],source)

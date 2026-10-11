@@ -208,12 +208,27 @@ def _bisect_red_owner(
 
 
 def _parse_pytest_nodes(stdout: str) -> list[str]:
-    """Extract failing node ids from pytest output."""
-    import re
-    ansi_re = re.compile(r"\x1b\[[0-9;]*m")
-    clean = ansi_re.sub("", stdout)
-    node_re = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)", re.MULTILINE)
-    return list(dict.fromkeys(node_re.findall(clean)))
+    """Keep complete summary IDs, including spaces in parameter brackets.
+
+    A reason delimiter inside parameter brackets belongs to the ID. An
+    unbalanced bracket is unknown rather than a truncated runnable selector.
+    """
+    clean = re.sub(r"\x1b\[[0-9;]*m", "", stdout)
+    nodes = []
+    for line in clean.splitlines():
+        match = re.match(r"^(?:FAILED|ERROR)[ \t]+(.+)$", line)
+        if not match: continue
+        value = match.group(1).strip(); depth = 0; end = len(value)
+        for index, char in enumerate(value):
+            if depth == 0 and value[index:index+3] == ' - ':
+                end = index; break
+            if char == '[': depth += 1
+            elif char == ']': depth -= 1
+            if depth < 0: break
+        node = value[:end].strip()
+        if depth != 0 or not node: return []
+        if node not in nodes: nodes.append(node)
+    return nodes
 
 
 def _strip_runner_flags(cmd: str) -> str:

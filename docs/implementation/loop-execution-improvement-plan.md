@@ -23,10 +23,10 @@ request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: close remaining legacy reader/recovery/parity requirements
-and delivery documentation in this isolated worktree. Toolkit preview 95be4d75
-and consumer compatibility 2cb713ae are locally installed and checked. The old
-toolkit controller was freshly proved paused before first dispatch, exited at
-that idle boundary, and the original pause/plan bytes were preserved. No active
+and delivery documentation in this isolated worktree. Toolkit preview f40c8aaa
+and consumer compatibility 2cb713ae are locally installed and checked. The original idle controller exit is historical. Current controller 94556
+remained alive on private pinned inputs during the latest activation; its
+pause, plans, hooks and manifest bytes were preserved. No active
 worker was interrupted. Source main fast-forwarded without overlapping batch
 output because the paused run had dispatched no work. Do not remove the pause
 or infer permission to change another host's working batch.
@@ -2168,3 +2168,24 @@ anchors at the time of inspection and can move as integration changes code.
   introducing an unproven replacement parser. More complex parsing remains
   outside the claimed evidence. Preparation 6081dff0 is superseded by this
   literal-argument correction before activation.
+
+
+### Installed attribution corrections and complete parameter selectors
+
+- Local main/current now f40c8aaa; external delivery-preview-20261012b
+  installed.json records activation. Exact pinned controller 94556 was preserved,
+  no children were active, and 769 protected files retained their hashes. Only
+  the sleep-only scheduler was restarted and restored. No public release.
+- Actual disposable pytest failure with parameter ID `alpha beta` reproduced
+  truncation to `[alpha` before correction (1 failed in 0.57s). Attribution
+  and owned retry now retain bracketed spaces and reason delimiters within IDs.
+  Unbalanced IDs yield unknown; old truncated retry history does not prove
+  progress or reset retry counters. Other baseline-waiver readers are not
+  silently migrated by this increment.
+- 9 focused parser/literal-selector/actual focused at-base checks passed in
+  1.17s with private HOME/data and explicit installed Python userbase. The
+  first grouped run omitted that nested-process userbase and produced two
+  fixture failures; the corrected environment passed. A mistyped additional
+  test filename produced no tests, and is not verification evidence.
+- Next: check owned worker callers and committed native production entry,
+  then implement remaining recovery/adapters against their measured failures.
