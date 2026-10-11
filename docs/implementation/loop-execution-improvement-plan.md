@@ -524,3 +524,13 @@ No completion/ship/proof markers are inferred from this human tracker.
   reach a gate because its existing parser uses whole seconds; corrected to
   two seconds, a test judgment for that granularity plus sampled subsecond
   index/gate startup. A slower valid host would falsify the fixture bound.
+
+- C4 park writer migration: park status/reason/time/hold/yield (and owner-of
+  pre-park status) now change in one journaled CAS instead of sequential file
+  rewrites. Explicit unpark metadata and registered strike resets also use
+  CAS; existing release-hold refusal is preserved. No real plan was parked,
+  unparked or amended. Park/hold/CAS checks: 45 passed in 2.08s; actual owning-
+  master violation caller plus atomic journal regression: 37 passed in 7.88s.
+  Explicit unpark retains the previous privileged operator-release semantics;
+  ordinary driver advancement still cannot lift a hold. Projection writers,
+  integrity restores, quarantine and PowerShell state writes remain open.

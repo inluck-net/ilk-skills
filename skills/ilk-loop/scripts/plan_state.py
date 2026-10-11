@@ -87,7 +87,7 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
         if master: allowed.add(Path(master).resolve())
         if path not in allowed: raise TransitionError('plan is outside frozen registry')
         if not set(guards)<=allowed:raise TransitionError('guard is outside frozen registry')
-    allowed_fields={'status','current_step','parked_at','parked_reason','pre_park_status','yield','last_updated'}
+    allowed_fields={'status','current_step','parked_at','parked_reason','pre_park_status','yield','hold','auto_block_fails','last_updated'}
     if not set(to)<=allowed_fields or not set(from_)<=allowed_fields:
         raise TransitionError('transition cannot edit plan contract fields')
     for value in to.values():

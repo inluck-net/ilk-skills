@@ -76,6 +76,14 @@ class TestPark:
         assert fm["parked_reason"] == "duplicate of PR #4622"
         assert fm["parked_at"]
 
+    def test_status_reason_and_hold_share_one_journaled_transaction(self, plans: Path) -> None:
+        _run(plans,"--reason","human boundary")
+        rows=[json.loads(line) for line in (plans/'state-transitions.jsonl').read_text().splitlines()]
+        assert len(rows)==2 and rows[0]['id']==rows[1]['id']
+        assert rows[0]['phase']=='intent' and rows[1]['phase']=='applied'
+        assert rows[0]['to']['status']=='blocked' and rows[0]['to']['hold']=='human'
+        assert 'parked_at' in rows[0]['to'] and 'parked_reason' in rows[0]['to']
+
     def test_parked_master_is_not_runnable(self, plans: Path) -> None:
         """AC-2: this is the property the scheduler actually consumes."""
         _run(plans, "--reason", "x")

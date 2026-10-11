@@ -56,7 +56,6 @@ from plan_status import (  # noqa: E402
     normalize_master_status,
     parse_frontmatter,
 )
-from promote_next_master import write_status  # noqa: E402
 
 PARKED = "blocked"
 # Statuses a park can act on. `shipped` is done, not parked; `draft` is
@@ -112,33 +111,31 @@ def _stamp(
     hold: an auto-park landing on a master a human already holds must not
     release it.
     """
-    drop = _STAMP_KEYS + (_HOLD_KEYS if (reason is None or hold) else ())
-    text = path.read_text(encoding="utf-8-sig")
-    lines = text.splitlines(keepends=True)
-    out, in_fm, done = [], False, False
-    for line in lines:
-        if line.rstrip("\n") == "---":
-            if not in_fm:
-                in_fm = True
-            elif not done:
-                if reason is not None:
-                    out.append(f"parked_at: {when}\n")
-                    out.append(f"parked_reason: {_yaml_scalar(reason)}\n")
-                    if hold:
-                        out.append("hold: human\n")
-                        if yield_:
-                            out.append("yield: true\n")
-                done = True
-            out.append(line)
-            continue
-        # Drop any previous stamp so re-parking does not accumulate them.
-        if in_fm and not done and line.startswith(drop):
-            continue
-        out.append(line)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text("".join(out), encoding="utf-8")
-    import os
-    os.replace(tmp, path)
+    from plan_state import transition
+    state=parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+    changes={"parked_at":when if reason is not None else None,
+             "parked_reason":_yaml_scalar(reason) if reason is not None else None}
+    if reason is None or hold:
+        changes.update(hold="human" if reason is not None and hold else None,
+                       **{"yield":"true" if reason is not None and hold and yield_ else None})
+    transition(path,{key:state.get(key) for key in changes},changes,
+               actor="human",reason="explicit park_master stamp update")
+
+
+def _change_park(path, *, status, reason, when, hold=False, yield_=False,
+                 unpark=False, save_previous=False):
+    """One CAS for status and its ownership metadata; no partial park stamp."""
+    from plan_state import transition
+    state=parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+    changes={"status":status,"parked_at":None if unpark else when,
+             "parked_reason":None if unpark else _yaml_scalar(reason)}
+    if unpark or hold:
+        changes.update(hold=None if unpark else "human",
+                       **{"yield":None if unpark or not yield_ else "true"})
+    if save_previous:changes['pre_park_status']=normalize_master_status(state.get('status') or '')
+    transition(path,{key:state.get(key) for key in changes},changes,
+               actor="human" if unpark or hold else "driver",
+               reason="explicit park_master unpark" if unpark else "park_master park")
 
 
 def _masters(plans_dir: Path) -> list[tuple[Path, dict]]:
@@ -278,34 +275,8 @@ def main(argv: list[str]) -> int:
                 }
                 if not a.dry_run:
                     try:
-                        # Save the original status before parking so
-                        # reconcile_master_status can distinguish a
-                        # shipped→blocked (should unblock) from an
-                        # active→blocked (should stay blocked).
-                        _pre_park = normalize_master_status(fm.get("status") or "")
-                        write_status(target, PARKED)
-                        _stamp(target, reason, when,
-                               hold=not a.auto, yield_=a.yield_)
-                        # Write pre_park_status after stamp so it's not dropped.
-                        _text = target.read_text(encoding="utf-8-sig")
-                        _lines = _text.splitlines(keepends=True)
-                        _out, _in_fm, _done = [], False, False
-                        for _line in _lines:
-                            if _line.rstrip("\n") == "---":
-                                if not _in_fm:
-                                    _in_fm = True
-                                elif not _done:
-                                    _out.append(f"pre_park_status: {_pre_park}\n")
-                                    _done = True
-                                _out.append(_line)
-                                continue
-                            if _in_fm and not _done and _line.startswith("pre_park_status:"):
-                                continue
-                            _out.append(_line)
-                        _tmp = target.with_suffix(target.suffix + ".tmp")
-                        _tmp.write_text("".join(_out), encoding="utf-8")
-                        import os as _os
-                        _os.replace(_tmp, target)
+                        _change_park(target,status=PARKED,reason=reason,when=when,
+                                     hold=not a.auto,yield_=a.yield_,save_previous=True)
                     except Exception as e:  # noqa: BLE001
                         plan["error"] = f"{type(e).__name__}: {e}"
                         exit_code = 2
@@ -377,14 +348,8 @@ def main(argv: list[str]) -> int:
         plan["released_hold"] = True
     if not a.dry_run:
         try:
-            # Unpark must pass allow_from_held=True: the master is held
-            # (status=blocked, parked_at present) and we are lifting it.
-            write_status(target, new_status,
-                         allow_from_held=a.unpark)
-            # Unpark strips the stamp rather than rewriting it: a `queued`
-            # master carrying parked_at reads as still parked.
-            _stamp(target, None if a.unpark else reason, when,
-                   hold=not a.unpark and not a.auto, yield_=a.yield_)
+            _change_park(target,status=new_status,reason=reason,when=when,
+                         hold=not a.unpark and not a.auto,yield_=a.yield_,unpark=a.unpark)
         except Exception as e:  # noqa: BLE001
             plan["error"] = f"{type(e).__name__}: {e}"
             print(json.dumps(plan, indent=2))
@@ -394,21 +359,18 @@ def main(argv: list[str]) -> int:
         # carries the key.  Without this, the strike counter re-blocks on
         # the next failure even though the operator cleared the park.
         if a.unpark:
-            import re as _re
-
-            _FAILS_RE = _re.compile(
-                r"^(\s*)auto_block_fails\s*:\s*\d+", _re.MULTILINE
-            )
+            from plan_state import transition
             body = target.read_text(encoding="utf-8-sig")
             resets = 0
             for fname in extract_subplan_files(body):
                 sp_path = plans_dir / fname
                 if not sp_path.is_file():
                     continue
-                sp_text = sp_path.read_text(encoding="utf-8-sig")
-                if _FAILS_RE.search(sp_text):
-                    sp_text = _FAILS_RE.sub(r"\1auto_block_fails: 0", sp_text)
-                    sp_path.write_text(sp_text, encoding="utf-8")
+                state=parse_frontmatter(sp_path.read_text(encoding="utf-8-sig"))
+                previous=state.get('auto_block_fails')
+                if previous is not None and str(previous).isdigit():
+                    transition(sp_path,{'auto_block_fails':previous},{'auto_block_fails':0},
+                               actor='human',reason='explicit park_master unpark resets strike count')
                     resets += 1
             if resets:
                 plan["auto_block_fails_resets"] = resets
