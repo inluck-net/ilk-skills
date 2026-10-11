@@ -152,8 +152,14 @@ suite. Compared with the earlier corrected-policy sample's 229.799s fixture
 and 218.98511s worker intervals, these are about 13.3% and 13.9% lower.
 This is one unrandomized before/after observation: input checks and the brief
 changed together, host concurrency was uncontrolled, and shell pairing remains
-open. No causal or general batch speed claim follows. Detailed stream cost
-parsing remains open; thinking completion time is unknown. The original
+open. No causal or general batch speed claim follows. Parser-v5 records 16 unique root assistant messages, 30 root tool calls,
+11 bootstrap path indicators (25 raw), 146.443s before the first observed native
+edit, two diagnostic test calls with 4.868s union tool intervals, CLI result
+187.071s, and 179.761s overlapping API duration. The earlier sample had 21 root
+messages, 30 tools, three bootstrap indicators, 87.640s before its first edit
+and 46.607s diagnostic intervals. Discovery grew while test intervals fell;
+these overlapping clocks cannot be added or subtracted to explain the total.
+Thinking completion time is unknown; compaction and explicit retries were zero. The original
 240s/300s experimental bounds and their judgment basis apply unchanged.
 Evidence: external `controlled-focused-diagnostics-native-20261011/summary.json`.
 Current production installation remains `2ed78097`; this candidate was isolated.

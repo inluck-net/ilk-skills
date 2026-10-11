@@ -162,6 +162,19 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- Candidate 2ccbd2a8 provider provenance: configured scheme/host/port only,
+  explicit actual-provider-unobserved label; private worker URL remains intact.
+  Six sanitizer/preparation checks passed 0.12s; archived real normal runner
+  plus sanitizer checks passed 6 in 7.53s. Both open and close records verified
+  free of a planted userinfo/path/query secret. Helper protected by kernel list.
+  Candidate only; running batch and installed inputs untouched.
+- Focused-diagnostics parser-v5: 16 root messages/30 tools, 11 adjusted bootstrap
+  indicators, 146.443s pre-first-edit, two diagnostic calls/4.868s union interval,
+  CLI result 187.071s/API overlapping 179.761s. Earlier 21 messages/30 tools,
+  three bootstraps/87.640s pre-edit/46.607s diagnostics. Lower tests but higher
+  discovery; no clock subtraction or causal generalization. CSV and raw external
+  cost-report-v5.json retain these separate denominators and unknown thinking.
+
 - Chad's live-batch warning: keep candidate work isolated; no activation,
   scheduler changes, pause writes, plan changes or worker interruption while it
   is progressing. Owner worktree remains independent of installed 2ed78097.
@@ -1524,3 +1537,25 @@ No completion/ship/proof markers are inferred from this human tracker.
   checks 22 passed in 21.04s, before private directory correction; corrected
   adapter checks passed separately. Bash syntax/diff checks passed. Pending
   local checkpoint and actual archived provider-entry/recovery evidence.
+
+## Running batch overlap: read-only ownership map
+
+Chad reports the batch is progressing. These are source observations in the
+owner candidate, not completion judgments or requests to alter its plans. Keep
+the live batch's already-dispatched steps, gates and findings untouched. At a
+future safe boundary compare its final commits with these candidates before
+integrating; do not blindly cherry-pick overlapping changes.
+
+| Existing subplan | Owner source / checked evidence | Remaining reconciliation |
+|---|---|---|
+| Workers/drivers same gates | run_local_checks.py:1205 declared argument coverage; :1338 basename partitions; :1375 canonical mention inventory. Driver uses gate_contract at driver_step.py:99. New contexts retain existing cap, omissions explicit. | Worker-after-commit legacy contract differs from code-only driver ownership. Preserve the batch's intended legacy fix and verify lint/import strategy from its delivered evidence. |
+| Complete gate output | run_local_checks.py:629 result artifact fields; driver durable attempts, raw outputs, deadline and journal checks in prior worklog. | Verify batch's >40-failure, interruption and artifact-write-failure evidence; owner evidence is not a replacement for its specific acceptance criteria. |
+| Postmortem measured run | collect.py:3716 accepts exact launch run_id; old/no-identity metadata remains a separate compatibility requirement. | Batch owns historical matching, terminal-red narrative, quiet stdout and recommendation behavior. No new collector edits by owner while it is active. |
+| Known worker context | iteration_context.py:136 exact frozen roots/selection; real archived detached consumer acceptance, phase_observation.py:20 close intervals. | Cleanup/status vocabulary and all-reader parity are not proved by close intervals. Compare batch's implementation and hermetic sampling evidence after completion. |
+| Available engines | Isolated 11e31e47: functional Bash/portable PowerShell preflight and advertised packaged paths, 7 checks passed. Existing host engine defaults unchanged. | Batch owns detached routing/red-gate acceptance; compare its result before landing the owner candidate. Portable PowerShell is not Windows hosted evidence. |
+| Launch/postmortem identity | Bash launch.sh:851 persists run_id/toolkit_sha; prepared native caller proves fresh run identity and preserved limits at relaunch. | PowerShell metadata identity and conservative historical metadata matching remain batch work. No inferred shipment from this table. |
+
+Installed toolkit remains 2ed78097. Owner candidate additions are uninstalled.
+No live plans, phase files, launch metadata, scheduler, pause state or workers
+were changed while building this map. References are owner-working-tree line
+anchors at the time of inspection and can move as integration changes code.
