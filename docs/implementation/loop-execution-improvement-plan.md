@@ -433,3 +433,13 @@ No completion/ship/proof markers are inferred from this human tracker.
   admission including environment shedding: 12 passed in 0.39s. Production
   remains observe-only/unregistered; need bound per-context private settings
   plus actual CLI under the parent profile before C2 enforcement rollout.
+
+- Important boundary falsifier: applying a shell sandbox from an already
+  sandboxed parent returns exit 71, `sandbox_apply: Operation not permitted`.
+  Earlier independent profile checks remain valid but cannot prove composition.
+  Bind-context activation now explicitly refuses `macos-two-layer`; the base
+  private settings remain unchanged. Next mechanism: driver-owned shell broker
+  outside the CLI sandbox, immutable wrapper inside requesting only scoped
+  shell execution; identity/deadline/cleanup remain driver-owned. No no-sandbox
+  exemption or silent unsandboxed fallback. This finding changes the design
+  before activation, as Chad required measurement over assumptions.

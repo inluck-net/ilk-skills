@@ -15,6 +15,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import tempfile
 import tarfile
 
 
@@ -110,6 +111,67 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
         return manifest
     except BaseException:
         shutil.rmtree(destination);raise
+
+
+def bind_context(destination: Path, context_path: Path) -> Path:
+    """Create immutable per-context enforcement settings before worker launch.
+
+    The prepared base home is untouched, so old worker settings never switch
+    during an active session. This API is still a candidate launcher dependency.
+    """
+    if os.environ.get('ILK_WORKER_SESSION','').strip():
+        raise InputPinError('workers cannot bind authority settings')
+    from iteration_context import read_context
+    from worker_sandbox import profile
+    destination=destination.resolve();context_path=context_path.resolve(strict=True)
+    manifest_path=destination/'inputs.json';manifest=json.loads(manifest_path.read_text())
+    context=read_context(context_path)
+    if Path(context['code_root']).resolve()!=Path(manifest['code_root']).resolve():
+        raise InputPinError('context code differs from prepared snapshot')
+    if context.get('worker_sandbox_adapter')=='macos-two-layer':
+        raise InputPinError('nested Mac sandbox is unavailable; brokered shell required')
+    if context.get('worker_sandbox_adapter')!='macos-brokered-shell':
+        raise InputPinError('explicit brokered OS boundary required')
+    broker_path=context.get('shell_broker_path')
+    if not isinstance(broker_path,str) or not Path(broker_path).is_socket():
+        raise InputPinError('owned shell broker is not ready')
+    if context_path.stat().st_mode & 0o222:
+        raise InputPinError('context must be frozen read-only')
+    temporary=Path(context['worker_tmp_dir']).resolve(strict=True)
+    diagnostic=context_path.parent/f"write-scope-{context['iteration']}.jsonl"
+    profile(context,temporary=temporary,private_home=Path(manifest['worker_home']),diagnostic_log=diagnostic)
+    source=Path(manifest['worker_home'])/'settings.json'
+    settings=json.loads(source.read_text());observer=Path(context['code_root'])/'hooks/worker-write-scope.py'
+    wrapper=Path(context['code_root'])/'skills/ilk-loop/scripts/worker_shell.py'
+    if not observer.is_file() or not wrapper.is_file():
+        raise InputPinError('pinned scope/shell adapters absent')
+    pre=settings.setdefault('hooks',{}).setdefault('PreToolUse',[])
+    kept=[]
+    for entry in pre:
+        remaining=[]
+        for hook in entry.get('hooks',[]):
+            tokens=shlex.split(hook.get('command',''))
+            if any(Path(token).name.endswith('worker-write-scope.py') for token in tokens): continue
+            remaining.append(hook)
+        if remaining: kept.append(dict(entry,hooks=remaining))
+    kept.append({'matcher':'*','hooks':[{'type':'command','command':shlex.join([
+        context['worker_shell_python'],str(observer),'--mode','enforce','--context',str(context_path)])}]})
+    settings['hooks']['PreToolUse']=kept
+    fingerprint=digest(context_path);directory=destination/'settings';directory.mkdir(mode=0o700,exist_ok=True)
+    output=directory/(fingerprint+'.json')
+    with output.open('x',encoding='utf-8') as stream:
+        json.dump(settings,stream,indent=2);stream.write('\n');stream.flush();os.fsync(stream.fileno())
+    output.chmod(0o400)
+    safe={key:value for key,value in settings.items() if key!='env'}
+    row={'context_sha256':fingerprint,'context_path':str(context_path),'settings_path':str(output),
+         'settings_non_env_sha256':hashlib.sha256(json.dumps(safe,sort_keys=True).encode()).hexdigest(),
+         'scope_mode':'enforce','shell_adapter':'macos-brokered-shell'}
+    manifest.setdefault('context_bindings',[]).append(row)
+    with tempfile.NamedTemporaryFile(mode='w',dir=destination,delete=False) as stream:
+        temporary_manifest=Path(stream.name);json.dump(manifest,stream,indent=2);stream.write('\n');stream.flush();os.fsync(stream.fileno())
+    try:temporary_manifest.chmod(0o600);os.replace(temporary_manifest,manifest_path)
+    finally:temporary_manifest.unlink(missing_ok=True)
+    return output
 
 
 def main():

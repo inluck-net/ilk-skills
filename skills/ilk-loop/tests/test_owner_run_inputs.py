@@ -11,6 +11,8 @@ def fixture(tmp_path):
     (repo/'skills').mkdir();(repo/'commands').mkdir()
     (repo/'skills/keep').write_text('pinned')
     (repo/'hooks').mkdir();(repo/'hooks/worker-write-scope.py').write_text('# observed')
+    wrapper=repo/'skills/ilk-loop/scripts';wrapper.mkdir(parents=True)
+    (wrapper/'worker_shell.py').write_text('# pinned wrapper')
     subprocess.run(['git','-C',str(repo),'add','.'],check=True)
     subprocess.run(['git','-C',str(repo),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','snapshot'],check=True)
     home=tmp_path/'active';home.mkdir();(home/'hooks').mkdir()
@@ -56,3 +58,21 @@ def test_explicit_interpreter_hook_is_copied_and_rewritten(tmp_path):
     command=settings['hooks']['PreToolUse'][0]['hooks'][0]['command']
     assert str(hook) not in command
     assert manifest['hooks'][0]['pinned_script'] in command
+
+
+def test_known_nested_sandbox_failure_cannot_activate_enforcement(tmp_path):
+    import sys
+    from run_inputs import bind_context
+    from iteration_context import write_context
+    repo,home,_=fixture(tmp_path);destination=tmp_path/'run';manifest=prepare(repo,home,destination,observe_scope=True)
+    base=destination/'worker-home/settings.json';before=base.read_bytes()
+    work=tmp_path/'consumer';work.mkdir();temporary=tmp_path/'private-tmp';temporary.mkdir()
+    context=dict(schema_version=1,run_id='test',iteration=1,clone=str(work),exec_tree=str(work),
+                 code_root=manifest['code_root'],plans_dir=str(tmp_path/'plans'),runtime_dir=str(tmp_path/'runtime'),
+                 data_root=str(tmp_path/'data'),mode='none',worker_tmp_dir=str(temporary),
+                 worker_shell_python=sys.executable,worker_sandbox_adapter='macos-two-layer')
+    path=tmp_path/'ctx.json';write_context(path,context)
+    with pytest.raises(InputPinError,match='nested Mac sandbox'):
+        bind_context(destination,path)
+    assert base.read_bytes()==before
+    assert 'context_bindings' not in json.loads((destination/'inputs.json').read_text())

@@ -250,3 +250,15 @@ two turns each). No outside-scope native write was observed. This validates
 that narrow continuation path, not interrupted resume, Bash enforcement, the
 full driver controller or batch performance. Evidence and remaining work are
 in the [durable owner tracker](../implementation/loop-execution-improvement-plan.md).
+
+
+**Measurement correction:** a nested sandbox-exec invocation under the parent
+profile fails `sandbox_apply: Operation not permitted` (exit 71). The independent
+profile checks do not prove that two-layer composition works. That activation
+is refused in `run_inputs.bind_context`. The next candidate mechanism is a
+driver-owned shell broker outside the CLI sandbox: the fixed wrapper requests
+execution, and the driver starts a separately sandboxed shell with scoped writes
+and no network. The broker may execute only that operation; it never exposes
+commit, state or proof mutation. Its identity/deadline/cleanup must be owned by
+the driver and recorded in frozen context/lifecycle evidence. This mechanism
+is new and unbuilt at this point; no sandbox escape exemption is proposed.
