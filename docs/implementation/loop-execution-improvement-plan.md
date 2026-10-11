@@ -2296,3 +2296,36 @@ anchors at the time of inspection and can move as integration changes code.
   retained-red two-launch plus native/default-final-skip checks: 2 passed/14
   deselected in 22.53s. Design extension notes now distinguish these delivered
   mechanisms from historical absent APIs and unsupported adapters.
+
+
+### Per-node owners and actual clean base samples
+
+- Measured reader defect: two known node owners collapsed to one row owner
+  (negative failed in 0.04s). The shared strike reader now consumes each valid
+  node owner and never falls back from malformed/missing node ownership.
+- Actual two-test Git fixture initially returned no owners. A diagnostic
+  measurement proved candidate source `a=0,b=2` / `a=0,b=0` while subprocess
+  imports still read `a=1,b=2` from the same disposable path, and tests reported
+  green. Stale untracked bytecode crossed bisect checkouts. External evidence:
+  attribution-stale-bytecode-measurement-20261012.json. No historical batch
+  timing/cause is inferred from this fixture; no agent model was dispatched.
+- New red_owner._prepare_sample restores and cleans only the helper-created
+  disposable worktree before each candidate/node. It disables bytecode writes
+  for measured commands and checks return codes. New _sample_unchanged checks
+  HEAD and tracked state after execution; mutation becomes unmeasured. The
+  live source tree is untouched. A mutating green-command negative reproduced
+  `passed` before the guard (1 failed in 0.18s).
+- Owned node attribution measures each owner independently. Batch-base green
+  evidence is now required for owned strikes too; different bases are measured
+  under the shared existing budget. The exact same commit playing both roles
+  was already measured in this call, not cached across iterations/steps.
+- This does not reinstate 07m R1/R2's partial outcome/count carry-forward:
+  opened 2026-10-07m-a-reverify-carries-only-what-it-can-count.md, lines 42-59.
+  No importer-selected green result or aggregate count is carried. The current
+  authored HEAD gate still runs; attribution only identifies blocking work.
+- After clean samples: 21 owner/budget/literal-selector checks passed in 3.90s.
+  After mutation guard: 22 actual multi-owner/budget/parser/portable caller
+  checks passed in 8.46s. Historical ownership/unknown-baseline regression
+  contracts: 30 passed/1 deselected in 18.99s. Whole-repository/full-suite
+  verification was not run. All cleanup/reset operations targeted temporary
+  attribution worktrees, not the running controller or its execution tree.

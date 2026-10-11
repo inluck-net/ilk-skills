@@ -106,10 +106,18 @@ def strike_targets(path: Path) -> list[str]:
         if attribution.get('batch_base_green') is not True:continue
         if not all(isinstance(attribution.get(key),str) and
                    re.fullmatch(r'[0-9a-f]{40,64}',attribution[key])
-                   for key in ('owner_sha','iteration_base','batch_base')):continue
-        owner=attribution.get('owner_slug')
-        if isinstance(owner,str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*',owner):
-            targets.add(owner)
+                   for key in ('iteration_base','batch_base')):continue
+        nodes=attribution.get('nodes')
+        if nodes is not None and not isinstance(nodes,list):continue
+        if attribution.get('node_ids') and not nodes:continue
+        candidates=nodes if nodes else [attribution]
+        if not isinstance(candidates,list) or any(not isinstance(node,dict) for node in candidates):continue
+        for candidate in candidates:
+            if candidate.get('verdict') not in {'owned','inherited'}:continue
+            if not re.fullmatch(r'[0-9a-f]{40,64}',str(candidate.get('owner_sha',''))):continue
+            owner=candidate.get('owner_slug')
+            if isinstance(owner,str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*',owner):
+                targets.add(owner)
     return sorted(targets)
 
 

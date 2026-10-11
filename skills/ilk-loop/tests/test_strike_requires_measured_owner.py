@@ -45,3 +45,23 @@ def test_portable_powershell_reader_requires_measured_attribution(tmp_path):
     result=subprocess.run([pwsh,'-NoProfile','-File',str(probe),str(skills),sys.executable],capture_output=True,text=True,timeout=10)
     assert result.returncode==0,result.stdout+result.stderr
     assert 'measured strikes: PASS' in result.stdout
+
+
+def test_each_measured_node_owner_receives_its_own_strike(tmp_path):
+    rows=tmp_path/'checks'
+    attribution=dict(verdict='owned',owner_slug='first-owner',owner_sha='a'*40,
+        iteration_base='b'*40,batch_base='c'*40,batch_base_green=True,
+        nodes=[dict(node_id='test_one',verdict='owned',owner_slug='first-owner',owner_sha='a'*40),
+               dict(node_id='test_two',verdict='owned',owner_slug='second-owner',owner_sha='d'*40)])
+    rows.write_text(json.dumps(dict(slug='victim',step=0,outcome='fail',verdict='red',attribution=attribution))+'\n')
+    from blocking_checks import strike_targets
+    assert strike_targets(rows)==['first-owner','second-owner']
+
+
+@pytest.mark.parametrize('nodes',[{},'',0])
+def test_malformed_node_ownership_cannot_fall_back_to_row_owner(tmp_path,nodes):
+    rows=tmp_path/'checks'
+    attr=dict(verdict='owned',owner_slug='victim',owner_sha='a'*40,iteration_base='b'*40,batch_base='c'*40,batch_base_green=True,nodes=nodes)
+    rows.write_text(json.dumps(dict(slug='victim',step=0,outcome='fail',verdict='red',attribution=attr))+'\n')
+    from blocking_checks import strike_targets
+    assert strike_targets(rows)==[]

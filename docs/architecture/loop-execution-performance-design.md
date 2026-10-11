@@ -753,3 +753,17 @@ clone-argument caller cases plus adjacent capture/target checks passed (22 in
 5.46s); five CLI identity cases passed in 1.11s. No agent model is dispatched
 by these measurements. Final verification stays opt-in and gate-outcome reuse
 stays removed. The tracker holds checkpoint-specific installed evidence.
+
+
+Attribution continuation also verifies clean disposable samples before and
+after each measurement (`red_owner._prepare_sample/_sample_unchanged`). A real
+Python fixture exposed cached baseline bytecode surviving candidate source
+changes; the new helper removes generated files between samples and rejects
+tracked/HEAD mutation. Valid per-node owners are kept separate for strikes.
+A batch and iteration base that are the same exact commit share the one
+measurement just performed in this call; different commits are measured.
+This is classification of a currently red gate, not §3 outcome reuse. Plan
+07m R1/R2 (`a-reverify-carries-only-what-it-can-count`, 2026-10-07m, lines 42-59)
+prohibits carrying importer-selected outcomes and merging aggregate buckets.
+Those paths remain removed: every current HEAD gate runs, no prior green or
+count is merged, and attribution itself cannot advance a step.
