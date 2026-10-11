@@ -14,7 +14,7 @@ ROOT=Path(__file__).resolve().parents[3]
 
 
 @pytest.mark.timeout(90)
-@pytest.mark.parametrize('case',['normal','selfmod','work-tree','native-tools','native-tools-batch-optin','hold','pending-advance','pending-selfmod','pending-work-tree','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain','upgrade-drain-work-tree','measured-red','measured-red-selfmod'])
+@pytest.mark.parametrize('case',['normal','global-imports','selfmod','work-tree','native-tools','native-tools-batch-optin','hold','pending-advance','pending-selfmod','pending-work-tree','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain','upgrade-drain-work-tree','measured-red','measured-red-selfmod'])
 def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,monkeypatch,case):
     measured_red=case.startswith('measured-red')
     human_hold_during_gate=case=='hold'
@@ -84,6 +84,10 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
     home=tmp_path/'source-home';home.mkdir()
     (home/'CLAUDE.md').write_text('fixture global instruction')
     (home/'rules').mkdir();(home/'rules/entry.md').write_text('fixture global rule')
+    if case=='global-imports':
+        (home/'CLAUDE.md').write_text('fixture global instruction\n@guide.md\n')
+        (home/'guide.md').write_text('fixture global imported instruction\n@nested/policy.md\n')
+        (home/'nested').mkdir();(home/'nested/policy.md').write_text('fixture global nested instruction\n@../guide.md\n')
     (home/'settings.json').write_text(json.dumps({'env':{'ANTHROPIC_BASE_URL':'https://example.invalid','ANTHROPIC_MODEL':'fixture-model','ANTHROPIC_AUTH_TOKEN':'fixture-token'}}))
     original=(home/'settings.json').read_bytes()
     cli=world['bin']/'claude'
@@ -94,7 +98,7 @@ from worker_shell import canonical_command
 assert sys.argv[sys.argv.index('--setting-sources')+1]==''
 path=Path(os.environ['ILK_ITER_CONTEXT']);ctx=read_context(path)
 globals=ctx['global_instruction_inventory']
-assert len(globals)==2
+assert len(globals)==(4 if ctx.get("global_instruction_inventory_protocol")==2 else 2)
 prompt=sys.argv[sys.argv.index('--append-system-prompt')+1]
 for row in globals:
  assert row['path'] in prompt

@@ -79,6 +79,7 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
                  iteration_deadline_monotonic=deadline,scratch_disposable=True)
     from instruction_inputs import inventory
     context['global_instruction_inventory']=manifest.get('global_instruction_inputs',[])
+    context['global_instruction_inventory_protocol']=manifest.get('global_instruction_inventory_protocol')
     context['instruction_input_inventory']=inventory(context)
     from instruction_inputs import bootstrap_inventory
     context['root_instruction_inventory']=bootstrap_inventory(context)

@@ -254,7 +254,7 @@ def test_global_instructions_are_private_frozen_inputs_not_live_home_links(tmp_p
 
 def test_global_imports_require_rebasing_adapter_before_preparation(tmp_path):
     repo,home,_=fixture(tmp_path)
-    (home/'CLAUDE.md').write_text('@guide.md\n')
+    (home/'CLAUDE.md').write_text('@'+str(home/'guide.md')+'\n')
     (home/'guide.md').write_text('source-home instructions')
     destination=tmp_path/'run'
     with pytest.raises(InputPinError,match='import.*adapter'):prepare(repo,home,destination)

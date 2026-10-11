@@ -873,3 +873,15 @@ of the current manifest. Worker binding and acceptance compare the stable launch
 descriptor to it; additive per-context bindings can grow without rebinding launch
 inputs. Historical contexts without this fingerprint remain historical. No new
 gate outcome reuse, threshold or automatic final verifier is introduced.
+
+
+### Relative global import adapter (2026-10-12 owner candidate)
+
+New `run_inputs.py:_copy_global_instructions` supports protocol-2 relative
+Markdown imports wholly within the source worker home. It mirrors paths and
+bytes, follows the full bounded-by-unique-roles graph, and preserves cycles.
+`verify_launch_resources` checks the complete private graph; dispatcher and
+sandbox consume the declared protocol with read-only copied files. Absolute,
+external, missing, protected and imported-symlink roles still refuse. This is a
+bounded adapter, not general source-home rebasing or managed-policy pinning.
+Focused evidence and pending archived launch/installation are in the tracker.

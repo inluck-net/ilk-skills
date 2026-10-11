@@ -90,6 +90,8 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
                 except ValueError:raise ContextError('global instruction escapes private home')
                 permitted=str(relative) in {'CLAUDE.md','CLAUDE.local.md'} or (
                     relative.parts[0]=='rules' and len(relative.parts)>1 and relative.suffix=='.md')
+                if context.get('global_instruction_inventory_protocol')==2 and row.get('relative_import') is True:
+                    permitted=(path.suffix=='.md' and relative.parts[0] not in {'settings.json','hooks','skills','commands','settings'})
                 if not permitted or path.resolve(strict=True)!=path or not path.is_file():
                     raise ContextError('global instruction adapter unavailable')
                 import hashlib

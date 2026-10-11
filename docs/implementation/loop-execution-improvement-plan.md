@@ -24,7 +24,7 @@ required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: finish declared-worktree settings/dependency root validation,
 then reconcile the remaining accepted design requirements against the implementation
-and evidence map. Toolkit preview ee4aaab4
+and evidence map. Toolkit preview c8add919
 and consumer compatibility 3987a299 are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -3630,3 +3630,43 @@ compound shell wrappers, arbitrary test runners, or native Windows isolation.
 It does not alter generic metadata gates or grant proof from historical tests.
 Archived measured-red caller validation and safe local installation remain
 pending. No live batch plans or dispatched inputs changed.
+
+
+### Direct pytest delivery
+
+Archived normal and opt-in measured-red real entry checks passed **2 in 23.53s**
+(16 unrelated cases deselected). Preview `c8add919` installed locally, including
+triage findings CAS and authority registration. Protected controller 94556 and
+all 1,891 hashes remained unchanged; idle services restored. Evidence:
+`toolkit-delivery-preview-20261012x/installed.json`. No full suite, live plan
+edit, profile-default change or worker interruption occurred.
+
+### Relative global instruction imports (candidate)
+
+The known global-import preparation refusal reproduced on a source-home
+relative Markdown graph: **1 failed in 0.13s**. New protocol 2 mirrors relative
+Markdown files inside the source worker home into the private home, preserving
+bytes, relative paths and cycles. Named global roots/rules remain protocol 1
+when they contain no imports. Imports crossing the source-home boundary,
+absolute/tilde imports, non-Markdown imported files, imported symlinks, protected
+worker settings/hooks/skills/commands and missing files refuse preparation with
+no private-home residue. No arbitrary global import rebasing is claimed.
+
+Prepared verification re-inventories the whole private reference graph and
+checks containment, exact files and hashes. The owned dispatcher records the
+protocol; sandbox allows only declared read-only Markdown copies and explicit
+parent metadata. Bootstrap lists every copied input. Gate fingerprint normalizes
+only verified protocol-2 copied identities, so relative parent aliases/cycles do
+not create different identities solely from a fresh private-home directory.
+Source path/hash identity stays present; repository references retain their
+existing role and identity.
+
+Checks: **13 passed, 26 deselected in 1.01s**, covering complete copies and cycles,
+fresh-home fingerprint equality, later source edits not following the run,
+private tampering/added inventory, and five unsupported reference roles. Old
+snapshots without protocol 2 refuse that new descriptor; they do not inherit its
+capability. No new numeric threshold/default was introduced. Archived real
+worker consumption and safe installation are pending. Managed policy, external
+library coordination and absolute/external global reference adapters remain
+open. This implements the named pinning gap; it does not add those unknown
+adapters to scope or mark the whole D2 item complete.

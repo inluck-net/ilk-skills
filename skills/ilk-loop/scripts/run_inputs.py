@@ -145,6 +145,40 @@ def verify_code_snapshot(destination,*,expected=None,deadline=None):
     return fingerprint
 
 
+def _copy_global_instructions(source_home,private_home):
+    """Mirror bounded relative Markdown imports; unsupported reference roles refuse."""
+    from instruction_inputs import referenced_inventory,import_paths
+    roots=_global_instruction_paths(source_home)
+    inventory=referenced_inventory(roots)
+    root_names={str(path) for path in roots};copied={};has_imports=False
+    for row in inventory:
+        if row.get('present') is False:
+            raise InputPinError('global instruction import missing; unsupported adapter input')
+        source=Path(os.path.normpath(row['path']))
+        try:relative=source.relative_to(source_home)
+        except ValueError:raise InputPinError('global instruction import outside source home; adapter unavailable')
+        is_root=str(source) in root_names
+        if not is_root and (source.suffix!='.md' or source.resolve()!=source):
+            raise InputPinError('global instruction import requires Markdown without symlinks; adapter unavailable')
+        if relative.parts[0] in {'settings.json','hooks','skills','commands','settings'}:
+            raise InputPinError('global instruction import overlaps protected worker inputs; adapter unavailable')
+        payload=source.read_bytes()
+        if hashlib.sha256(payload).hexdigest()!=row['sha256']:
+            raise InputPinError('global instruction changed during preparation')
+        imports=list(import_paths(payload.decode('utf-8-sig',errors='replace'),Path('.')))
+        has_imports=has_imports or bool(imports)
+        if any(path.is_absolute() for path in imports):
+            raise InputPinError('absolute global instruction imports require a rebasing adapter')
+        target=private_home/relative
+        target.parent.mkdir(parents=True,exist_ok=True)
+        if source in copied:continue
+        target.write_bytes(payload);target.chmod(0o400)
+        if digest(source)!=digest(target):raise InputPinError('global instruction changed during preparation')
+        copied[source]=dict(source_path=str(source),path=str(target),sha256=digest(target))
+        if not is_root:copied[source]['relative_import']=True
+    return [copied[path] for path in sorted(copied)],2 if has_imports else 1
+
+
 def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD', observe_scope=False, project=None, worker_thinking='default', worker_tools='shell', measured_red_progress=False):
     repo=repo.resolve();worker_home=worker_home.resolve();destination=destination.resolve()
     source_root=repo
@@ -229,17 +263,7 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
                                  'pinned_script':str(observer),'pinned_sha256':digest(observer)})
         pinned.setdefault('env',{})['ILK_SKILL_HOME']=str(code/'skills')
         pinned['env']['ILK_CODE_ROOT']=str(code)
-        global_instructions=[]
-        for source_instruction in _global_instruction_paths(worker_home):
-            payload=source_instruction.read_bytes()
-            from instruction_inputs import import_paths
-            if list(import_paths(payload.decode('utf-8-sig',errors='replace'),source_instruction.parent)):
-                raise InputPinError('global instruction imports require an explicit rebasing adapter')
-            target=home/source_instruction.relative_to(worker_home)
-            target.parent.mkdir(parents=True,exist_ok=True)
-            target.write_bytes(payload);target.chmod(0o400)
-            if digest(source_instruction)!=digest(target):raise InputPinError('global instruction changed during preparation')
-            global_instructions.append(dict(source_path=str(source_instruction),path=str(target),sha256=digest(target)))
+        global_instructions,global_protocol=_copy_global_instructions(worker_home,home)
         code_inventory=_code_inventory(code)
         settings=home/'settings.json';settings.write_text(json.dumps(pinned,indent=2)+'\n');settings.chmod(0o600)
         # Exclude credentials and arbitrary env values from public provenance.
@@ -259,7 +283,7 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
                   'settings_sources':settings_sources,'cli_setting_sources':'',
                   'worker_thinking':worker_thinking,'worker_tools':worker_tools,
                   'measured_red_progress_protocol':1 if measured_red_progress else None,
-                  'global_instruction_inputs':global_instructions,'global_instruction_inventory_protocol':1,'code_inventory':code_inventory,
+                  'global_instruction_inputs':global_instructions,'global_instruction_inventory_protocol':global_protocol,'code_inventory':code_inventory,
                   'code_inventory_sha256':_inventory_digest(code_inventory),
                   'python_cache_pinning':'generated __pycache__ excluded; source files pinned, external cache tamper requires explicit adapter',
                   'managed_settings':'remain enforced by Claude; not overridden or claimed pinned',
@@ -317,13 +341,24 @@ def verify_launch_resources(destination, *, expected=None):
         if Path(manifest[key]).resolve()!=destination/name:
             raise InputPinError('private run input root contradicts prepared manifest')
     protocol=manifest.get('global_instruction_inventory_protocol')
-    if protocol is not None and (type(protocol) is not int or protocol!=1):
+    if protocol is not None and (type(protocol) is not int or protocol not in {1,2}):
         raise InputPinError('unknown global instruction inventory protocol')
-    if protocol==1:
-        if any(Path(row['path']).is_symlink() for row in manifest.get('global_instruction_inputs',[])):
+    if protocol in {1,2}:
+        globals=manifest.get('global_instruction_inputs',[])
+        home=Path(manifest['worker_home'])
+        if any(not Path(row['path']).is_relative_to(home) for row in globals):
+            raise InputPinError('private global instruction escapes prepared home')
+        if any(Path(row['path']).resolve()!=Path(row['path']) or Path(row['path']).is_symlink() for row in globals):
             raise InputPinError('private global instruction link changed')
-        actual=[str(path) for path in _global_instruction_paths(Path(manifest['worker_home']))]
-        expected=sorted(row['path'] for row in manifest.get('global_instruction_inputs',[]))
+        actual=_global_instruction_paths(Path(manifest['worker_home']))
+        if protocol==2:
+            from instruction_inputs import referenced_inventory
+            inventory=referenced_inventory(actual)
+            if any(row.get('present') is False for row in inventory):
+                raise InputPinError('private global instruction import missing')
+            actual={str(Path(row['path']).resolve()) for row in inventory}
+        else:actual={str(path) for path in actual}
+        expected={row['path'] for row in globals}
         if actual!=expected:raise InputPinError('private global instruction inventory changed')
     paths=list(manifest.get('executables',[]))+[manifest['mcp']]+manifest.get('global_instruction_inputs',[])
     paths.append({'path':str(Path(manifest['worker_home'])/'settings.json'),'sha256':manifest['settings_sha256']})

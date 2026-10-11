@@ -238,7 +238,9 @@ def gate_input_fingerprint(context,selected):
         # source path/hash below preserves semantic identity across relaunches;
         # arbitrary references into private home retain their full identity.
         inputs['instruction_input_inventory']=[row for row in inputs.get('instruction_input_inventory') or []
-            if (row.get('path'),row.get('sha256')) not in globals or row.get('resolved_path')!=row.get('path')]
+            if not ((row.get('path'),row.get('sha256')) in globals and row.get('resolved_path')==row.get('path')
+                or manifest.get('global_instruction_inventory_protocol')==2
+                and (row.get('resolved_path'),row.get('sha256')) in globals)]
         inputs['settings_sources']=manifest.get('settings_sources')
         inputs['hooks']=[{key:row.get(key) for key in ('phase','source_name','source_sha256','pinned_sha256')}
                          for row in manifest.get('hooks',[])]
