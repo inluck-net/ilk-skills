@@ -17,12 +17,13 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: wire and verify D1 registry lifecycle/readers, then C3
-code-only runner acceptance/recovery and the remaining checklist. E2 display-tail
-false green is fixed; actual-base provenance still open. C4 now audits frozen
-owned state against the journal; legacy worker writes are observed, code-only
-writes enforced. Candidate APIs remain unactivated. Continue here per Chad:
-“no more handover, until the whole thing done”. Overall estimate 35% is a
+Current next action: exercise the new opt-in code-only path through the real
+Bash runner entry; then actual provider/hook and consumer checks, remaining
+state/lifecycle adapters and activation. D1 POSIX callers and D2 private launch
+inputs now have production-entry candidate evidence. C3 preparation/acceptance/
+repair is wired but remains disabled by default. Actual-base provenance and
+Windows/member/dirty-entry adapters remain open. Continue here per Chad:
+“no more handover, until the whole thing done”. Overall estimate 37% is a
 judgment against delivered/installed/measured scope, not a checkbox count.
 
 Old run `20261011-102057` timed out by itself. Old run `20261011-130246`
@@ -644,3 +645,30 @@ No completion/ship/proof markers are inferred from this human tracker.
   Terminal-state reader map: 25 passed in 0.10s. Next: C3 code-only dispatch
   preparation and acceptance callers, bounded actual-provider repair; keep
   mode disabled until production-entry evidence and consumer compatibility.
+
+- 2026-10-11 C3 caller candidate: added pinned `worker_dispatch.py` and
+  `worker_iteration.py`. Preparation starts an exact-owned broker, freezes one
+  context before snapshots, registers broker/CLI/shell groups, binds private
+  enforcement settings and uses the existing iteration deadline. Bash opt-in
+  `ILK_WORKER_MODE=code-only` now delegates code editing/driver acceptance and
+  same-session red repair; default remains legacy until entry/provider checks.
+  Red attempts and durable retry count/IDs survive, missing IDs do not prove
+  progress. Driver imports quoted diagnostic findings after acceptance.
+  Hook-red committed-tree repair remains explicitly refused; clean single-repo
+  Mac entry is the supported candidate, not Windows/member/dirty entry parity.
+- Focused C3 checks: 31 passed in 8.02s. Disposable owned session exercised the
+  CLI helper under the real Mac sandbox with a provider stub: red then green,
+  same session, 2 gate attempts, 1 commit, 1 CAS advancement, 5 recorded child
+  identities; source settings unchanged. Stub output is not real-provider proof.
+  Complete close projection now refuses unknown stop reasons; code-only proof
+  additionally requires positive acceptance, exact final tree, integrity and
+  journal-explained state. Gate history and ledger append now fsync.
+  Bash/Python syntax checks passed. No install, live worker change or full suite.
+- Additional C3 refusal checks: positive code-only close needs acceptance,
+  integrity, journal explanation and exact execution tree; unknown terminal
+  failures cannot project green. 25 focused dispatch/projection checks passed
+  in the latest run. The first assertions incorrectly expected diagnostic
+  failed-close rows to disappear; corrected to assert integrity=false and
+  rejection by the actual ship-audit reader. No production bypass was added.
+  Executable and MCP arguments now must match the private launch manifest.
+  Entry admission refuses unsupported gate contracts before a provider call.

@@ -76,11 +76,11 @@ def validate(context):
     return selected,path,root,state
 
 
-def gate(context,root,path,selected,*,default_timeout):
+def gate_contract(root,path,selected):
     from run_local_checks import (split_frontmatter,parse_local_checks_block,extract_step_local_checks,
         count_local_checks_items,count_step_local_checks_items,step_gate_fence,
-        build_mention_gate_inventory,run_one,_read_declared_reds)
-    tree=working_tree(root);fm,body=split_frontmatter(path.read_text())
+        _read_declared_reds)
+    fm,body=split_frontmatter(path.read_text())
     sub=parse_local_checks_block(fm);step=extract_step_local_checks(body,selected['step'])
     if count_local_checks_items(fm)>len(sub) or count_step_local_checks_items(body,selected['step'])>len(step):
         raise ContextError('malformed declared gate')
@@ -88,6 +88,12 @@ def gate(context,root,path,selected,*,default_timeout):
         raise ContextError('unreadable step gate')
     if not sub and not step:raise ContextError('a runnable declared gate is required')
     if _read_declared_reds(root):raise ContextError('baseline-red attribution adapter not built')
+    return sub,step
+
+
+def gate(context,root,path,selected,*,default_timeout):
+    from run_local_checks import build_mention_gate_inventory,run_one
+    tree=working_tree(root);sub,step=gate_contract(root,path,selected)
     changed=git(root,'diff','--name-only',context['base_commit'],tree).splitlines()
     commands={item.get('command','') for item in sub+step}
     mention=build_mention_gate_inventory(root,changed,commands)
@@ -172,3 +178,49 @@ def _accept_step(context,*,default_timeout):
     return dict(accepted=True,commits=commits,attempts=attempts,head_commit=git(root,'rev-parse','HEAD'),
                 tree=committed_tree,commit_started_monotonic=commit_started,commit_ended_monotonic=commit_ended,
                 proof_provisional=True) # Integrity, landing and close-record projection remain caller-owned.
+
+
+def project_result(result,context):
+    """Adapt this transaction to existing gate readers without rerunning gates."""
+    from emit_jsonl_record import build_record,extract_failing_check
+    selected=read_dispatch(context)
+    if result.get('run_id')!=context['run_id'] or result.get('iteration')!=context['iteration']:
+        raise ContextError('driver result belongs to another iteration')
+    attempts=result.get('attempts') or []
+    accepted=result.get('accepted') is True
+    if accepted:
+        if not attempts or not attempts[-1].get('all_passed') or not attempts[-1].get('gate_tree_unchanged'):
+            raise ContextError('accepted result lacks an exact green gate')
+        root=Path(context['exec_tree'])
+        if (result.get('head_commit')!=git(root,'rev-parse','HEAD') or result.get('tree')!=git(root,'rev-parse','HEAD^{tree}')
+                or result['tree']!=attempts[-1]['working_tree'] or working_tree(root)!=result['tree']):
+            raise ContextError('accepted tree changed before projection')
+    checks=attempts[-1]['check_observations'] if attempts else []
+    data=dict(results=checks,head_sha=result.get('head_commit') if accepted else None)
+    record=build_record(selected['slug'],selected['step'],'pass' if accepted else 'error',
+                        0 if accepted else 1,extract_failing_check(data),data)
+    record.update(driver_owned=True,driver_attempts=attempts,accepted_tree=result.get('tree') if accepted else None,
+                  run_id=context['run_id'],iteration=context['iteration'],
+                  reason=None if accepted else result.get('stop_reason','code_only_acceptance_failed'))
+    return record
+
+
+def main():
+    import argparse
+    from iteration_context import read_context
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--project-result',type=Path,required=True)
+    parser.add_argument('--context',type=Path,required=True)
+    parser.add_argument('--out',type=Path,required=True)
+    args=parser.parse_args();context=read_context(args.context)
+    result=json.loads(args.project_result.read_text());record=project_result(result,context)
+    with args.out.open('x') as stream:
+        stream.write(json.dumps(record)+'\n');stream.flush();os.fsync(stream.fileno())
+    from emit_jsonl_record import append_gate_history
+    from datetime import datetime,timezone
+    stamp=datetime.now(timezone.utc).isoformat()
+    append_gate_history(Path(context['runtime_dir'])/'launcher/gate-history.jsonl',record,
+                        context['run_id'],context['iteration'],stamp)
+
+
+if __name__=='__main__':main()

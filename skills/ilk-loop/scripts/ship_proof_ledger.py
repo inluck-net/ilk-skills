@@ -52,6 +52,7 @@ def append_record(path: Path, record: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, separators=(",", ":")) + "\n")
+        f.flush();os.fsync(f.fileno())
 
 
 def read_raw_records(path: Path) -> list[dict[str, Any]]:

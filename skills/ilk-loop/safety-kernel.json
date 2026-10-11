@@ -26,6 +26,16 @@
       "may_be_absent": true
     },
     {
+      "path": "skills/ilk-loop/scripts/worker_iteration.py",
+      "guard": "owner",
+      "why": "code-only worker dispatch, bounded repair and driver acceptance caller"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/worker_dispatch.py",
+      "guard": "owner",
+      "why": "immutable code-only dispatch, settings binding and broker lifecycle authority"
+    },
+    {
       "path": "skills/ilk-loop/scripts/worker_broker.py",
       "guard": "owner",
       "why": "driver-owned scoped shell execution and cleanup authority"

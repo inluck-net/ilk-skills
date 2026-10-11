@@ -4768,6 +4768,16 @@ invoke_claude_iteration() {
 
   claude_args+=("$prompt_text")
 
+  local worker_command=("${ILK_CLAUDE_BIN:-claude}" "${claude_args[@]}")
+  local worker_session_flag=1
+  if [[ "${ILK_WORKER_MODE:-}" == "code-only" ]]; then
+    worker_session_flag=""
+    worker_command=(python3 "${_ILK_SCRIPT_DIR}/worker_iteration.py" --context "$ILK_ITER_CONTEXT"
+      --prompt "$prompt_text" --claude "${ILK_CLAUDE_BIN:-claude}" --model "$model_override"
+      --budget "$budget_usd" --gate-timeout "$LOCAL_CHECKS_TIMEOUT_SEC")
+    [[ -n "$MCP_CONFIG_PATH" ]] && worker_command+=(--mcp "$MCP_CONFIG_PATH")
+  fi
+
   # Run claude with the worker home's settings env applied EXPLICITLY.
   # Measured 2026-09-20: stripping the ambient ANTHROPIC_* vars and trusting
   # the CLI to apply settings.json's env block left every scheduler-driven
@@ -4807,7 +4817,7 @@ for k, v in sorted(d.get("env", {}).items()):
   set -m
   (cd "$cwd" && { [[ -z "$PATH_PRELUDE" ]] || eval "$PATH_PRELUDE"; } \
       && eval "$settings_env_exports" \
-      && ILK_WORKER_SESSION=1 exec gtimeout "${timeout_sec}s" "${ILK_CLAUDE_BIN:-claude}" "${claude_args[@]}") \
+      && ILK_WORKER_SESSION="$worker_session_flag" exec gtimeout "${timeout_sec}s" "${worker_command[@]}") \
     | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" &
   local _pipeline_pid=$!
   set +m
@@ -6214,6 +6224,10 @@ print(fm.get('result_file', ''))
     fi
 
     # Freeze resolved identities before any HEAD/dirty/gate snapshot.
+    if [[ "${ILK_WORKER_MODE:-}" == "code-only" && "$RUN_LOCAL_CHECKS" != true ]]; then
+      stop_reason="gates-off"
+      break
+    fi
     if [[ -n "${ILK_RUN_INPUTS:-}" ]]; then
       if ! python3 -c 'import sys;from pathlib import Path;sys.path.insert(0,sys.argv[1]);from run_inputs import verify_launch_resources;verify_launch_resources(Path(sys.argv[2]))' "${_ILK_SCRIPT_DIR}" "$ILK_RUN_INPUTS"; then
         stop_reason="run_inputs_changed"
@@ -6238,6 +6252,9 @@ print(fm.get('result_file', ''))
       _context_observed+=("$_context_repo" "$(selfmod_effective_repo "$_context_repo")")
     done
     ILK_ITER_CONTEXT="${RUN_LOG_DIR}/ctx-${i}.json"
+    local timeout_sec
+    timeout_sec=$(resolve_iteration_timeout_sec)
+    export _ILK_CONTEXT_TIMEOUT="$timeout_sec" _ILK_CONTEXT_OWNER="$$" _ILK_CONTEXT_REGISTRY="${_RUN_REGISTRY_DIR:-}"
     if ! _DISPATCH_IDENTITY_JSON="$_dispatch_identity_json" _DISPATCH_STEP="${PRE_ITER_TARGET#* }" \
       python3 -c '
 import json,sys
@@ -6252,7 +6269,15 @@ a=sys.argv
 context=resolve_context(clone=a[2],exec_tree=a[3],plans_dir=a[4],runtime_dir=a[5],
  code_root=Path(a[1]).parent,data_root=ilk_data_root(),mode=a[6],run_id=a[7],
  iteration=int(a[8]),dispatch=identity,observe_tree=dict(zip(a[10::2],a[11::2])))
-write_context(Path(a[9]),context)
+if os.environ.get("ILK_WORKER_MODE")=="code-only":
+ from worker_dispatch import prepare
+ import time
+ if not os.environ.get("ILK_RUN_INPUTS") or not os.environ.get("_ILK_CONTEXT_REGISTRY"):
+  raise ValueError("code-only dispatch requires private inputs and verified registry")
+ prepare(context,Path(a[9]),inputs=Path(os.environ["ILK_RUN_INPUTS"]),
+  deadline=time.monotonic()+int(os.environ["_ILK_CONTEXT_TIMEOUT"]),
+  registry=Path(os.environ["_ILK_CONTEXT_REGISTRY"]),owner_pid=int(os.environ["_ILK_CONTEXT_OWNER"]))
+else:write_context(Path(a[9]),context)
 ' "$_SKILL_ROOT" "$_context_clone" "$_context_exec" "$_dispatch_plans_dir" \
       "$_context_runtime" "$_context_mode" "$RUN_ID" "$i" "$ILK_ITER_CONTEXT" "${_context_observed[@]}"; then
       stop_reason="iteration_context_invalid"
@@ -6461,9 +6486,6 @@ if cmds:
     local iter_log
     iter_log="${RUN_LOG_DIR}/iter-$(printf '%02d' $i).log"
 
-    local timeout_sec
-    timeout_sec=$(resolve_iteration_timeout_sec)
-
     # -- Prior suite result carry-forward (AC-5) --------------------------
     # If a previous iteration ran a broad suite, inject its result so this
     # iteration starts informed instead of re-running from scratch.
@@ -6589,6 +6611,14 @@ ${iter_prompt}"
 
 ${iter_prompt}"
       echo "[worker-gate] injected gate-running instructions into prompt"
+    fi
+    if [[ "${ILK_WORKER_MODE:-}" == "code-only" ]]; then
+      # The enforced worker contract replaces legacy commit/pointer/gate
+      # instructions. The helper adds exact frozen roles as a system prompt.
+      iter_prompt="Implement only the frozen selected step. Read its plan and repository instructions; leave a code diff for the driver."
+      [[ -n "$STEER_INTERJECTION_TEXT" ]] && iter_prompt="${iter_prompt}
+Operator interjections:
+${STEER_INTERJECTION_TEXT}"
     fi
 
     # ── Pre-iteration record ──────────────────────────────────────────
@@ -6798,6 +6828,22 @@ print(json.dumps(d))
       ITER_QUOTA_EXHAUSTED=0
     fi
 
+    local _driver_acceptance_file="" _driver_accepted=0 _driver_stop_reason="" _driver_gate_results=""
+    if [[ "${ILK_WORKER_MODE:-}" == "code-only" ]]; then
+      _driver_acceptance_file="${RUN_LOG_DIR}/ctx-${i}-acceptance.json"
+      if [[ -f "$_driver_acceptance_file" ]]; then
+        _driver_accepted=$(jq -r 'if .accepted == true then 1 else 0 end' "$_driver_acceptance_file")
+        _driver_stop_reason=$(jq -r '.stop_reason // empty' "$_driver_acceptance_file")
+        [[ "$_driver_accepted" -eq 1 ]] && ITER_COMPLETED=1
+        _driver_gate_results="${RUN_LOG_DIR}/ctx-${i}-driver-gates.jsonl"
+        python3 "${_ILK_SCRIPT_DIR}/driver_step.py" --project-result "$_driver_acceptance_file" \
+          --context "$ILK_ITER_CONTEXT" --out "$_driver_gate_results" || _driver_stop_reason="code_only_acceptance_failed"
+      else
+        _driver_stop_reason="code_only_acceptance_failed"
+      fi
+      python3 "${_ILK_SCRIPT_DIR}/worker_dispatch.py" close --context "$ILK_ITER_CONTEXT" || _driver_stop_reason="code_only_acceptance_failed"
+    fi
+
     if [[ -n "$_master_snap_file" ]]; then
       local _ms_out _ms_rc=0
       _ms_out=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/master_snapshot.py" restore \
@@ -6970,6 +7016,13 @@ print(json.dumps(d))
     local iter_stop_reason=""
     iter_stop_reason=$(_decide_iter_stop_reason \
       "$ITER_COMPLETED" "$total_new" "$ITER_BUDGET_EXHAUSTED" "$no_progress_streak" "$ITER_QUOTA_EXHAUSTED")
+    if [[ "${ILK_WORKER_MODE:-}" == "code-only" ]]; then
+      if [[ "$_driver_accepted" -eq 1 ]]; then
+        iter_stop_reason=""; no_progress_streak=0
+      else
+        iter_stop_reason="${_driver_stop_reason:-code_only_acceptance_failed}"
+      fi
+    fi
 
     # Amendment override: an interrupted iteration with 0 commits that was
     # killed by the amendment watcher should continue the run, not stop as
@@ -6999,7 +7052,9 @@ print(json.dumps(d))
     fi
 
     # Update no-progress streak
-    if [[ "$total_new" -eq 0 ]]; then
+    if [[ "$_driver_accepted" -eq 1 ]]; then
+      no_progress_streak=0
+    elif [[ "$total_new" -eq 0 ]]; then
       no_progress_streak=$((no_progress_streak + 1))
       if [[ "$iter_stop_reason" == "" && "$ITER_EXIT_CODE" -ne 0 ]]; then
         echo "  ! agent exited $ITER_EXIT_CODE (likely transient upstream API error). Streak: $no_progress_streak/3. Continuing." >&2
@@ -7021,7 +7076,10 @@ print(json.dumps(d))
     #
     # Skip the gate when the iteration was interrupted with 0 commits.  A gate
     # on a tree the step never got to change says nothing about the step.
-    if [[ "$(_should_gate_iteration "$ITER_COMPLETED" "$total_new")" -eq 1 ]]; then
+    if [[ "${ILK_WORKER_MODE:-}" == "code-only" ]]; then
+      local_checks_results="$_driver_gate_results"
+      _GATE_RESOLUTION="pre_iter"
+    elif [[ "$(_should_gate_iteration "$ITER_COMPLETED" "$total_new")" -eq 1 ]]; then
       local _gate_skip_reason="plan-amended"
       [[ "$_amend_detected" -eq 0 ]] && _gate_skip_reason="timeout"
       echo "  [local_checks] skipped: iteration interrupted (${_gate_skip_reason}) with 0 commits — a gate on the unchanged tree says nothing about the step"
@@ -7757,10 +7815,13 @@ append_revert_row(
     # watchdog park the project.
     # (sub-plan an-unrunnable-derived-check-stops-once, AC-2)
     local _si_stderr=""
+    local _ship_integrity_passed=0
     if [[ "$iter_stop_reason" == "local_checks_environment_fault" ]]; then
       echo "  [ship-integrity] skipped — environment fault (derived check could not run)" >&2
     else
-    _si_stderr=$(test_ship_integrity "$(get_plans_dir)" "$local_checks_results" "$heads_before_file" "$heads_after_file" 2>&1 1>/dev/null) || {
+    if _si_stderr=$(test_ship_integrity "$(get_plans_dir)" "$local_checks_results" "$heads_before_file" "$heads_after_file" 2>&1 1>/dev/null); then
+      _ship_integrity_passed=1
+    else
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"
       # Print the violation details to the runner's stderr so they are
@@ -7809,7 +7870,7 @@ append_revert_row(
       else
         echo "[unattended] park skipped under profile; violations recorded in result file" >&2
       fi
-    }
+    fi
     fi
     # Print ship-integrity diagnostics even on success (e.g. inconclusive
     # revert messages). The subshell captured them; surface them now.
@@ -7828,6 +7889,7 @@ append_revert_row(
     # after the agent returned) is the same class of violation.  No park:
     # the restore already put the fields back as they were.
     if [[ "$_master_tampered" -eq 1 || "$_gates_tampered" -eq 1 ]]; then
+      _ship_integrity_passed=0
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"
     fi
@@ -8006,6 +8068,8 @@ if last:
     MAX_BUDGET_USD="$MAX_BUDGET_USD" \
     _WORKER_COST_JSON="$_worker_cost_json" \
     _STATE_AUDIT_JSON="$_state_audit_json" \
+    _DRIVER_ACCEPTANCE_FILE="$_driver_acceptance_file" \
+    _SHIP_INTEGRITY_PASSED="$_ship_integrity_passed" \
     _DISPATCH_IDENTITY_JSON="${_dispatch_identity_json:-}" \
     _DISPATCH_STEP="${PRE_ITER_TARGET#* }" \
     RUN_ID="$RUN_ID" \
@@ -8043,6 +8107,7 @@ d = {
   'merge_outcome': os.environ['_MERGE_OUTCOME'],
   'execution': json.loads(os.environ.get('_EXECUTION_CAPTURE_JSON') or '{}'),
   'state_audit': json.loads(os.environ.get('_STATE_AUDIT_JSON') or '{}'),
+  'driver_integrity_passed': os.environ['_SHIP_INTEGRITY_PASSED'] == '1',
   'exit_code': int(os.environ['_EXIT']),
   'new_commits_total': int(os.environ['_NEW_TOTAL']),
 }
@@ -8054,6 +8119,12 @@ except (ValueError, TypeError, IndexError):
   pass
 with open(os.environ['ILK_ITER_CONTEXT']) as context_file:
   d['context'] = json.load(context_file)
+if d['context'].get('worker_sandbox_adapter') == 'macos-brokered-shell':
+  try:
+    with open(os.environ['_DRIVER_ACCEPTANCE_FILE']) as acceptance_file:
+      d['driver_acceptance'] = json.load(acceptance_file)
+  except (OSError, ValueError):
+    d['driver_acceptance'] = {'accepted': False}
 try:
   identity = json.loads(os.environ.get('_DISPATCH_IDENTITY_JSON', '') or '{}')
   if identity:

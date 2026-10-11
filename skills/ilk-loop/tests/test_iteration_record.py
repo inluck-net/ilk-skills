@@ -44,6 +44,28 @@ def test_provisional_evidence_is_driver_only_then_finalized_once(tmp_path,monkey
     assert len(read_raw_records(ledger))==2
 
 
+@pytest.mark.parametrize('missing',['driver_acceptance','driver_integrity_passed','state_audit','execution'])
+def test_code_only_close_requires_each_positive_boundary(tmp_path,monkeypatch,missing):
+    ctx,ledger,close=setup(tmp_path,monkeypatch)
+    close['context']=dict(ctx,worker_sandbox_adapter='macos-brokered-shell')
+    close.update(driver_acceptance={'accepted':True,'run_id':'test','iteration':1,'tree':'exact-tree'},
+                 driver_integrity_passed=True,state_audit={'explained':True},execution={'head_tree':'exact-tree'})
+    close.pop(missing)
+    project_close_record(close)
+    records=read_records(ledger)
+    assert records[0]['integrity_passed'] is False
+    assert not ledger_record_is_reachable(records[0],Path(ctx['clone']))
+
+
+def test_unknown_terminal_failure_never_projects_green(tmp_path,monkeypatch):
+    ctx,ledger,close=setup(tmp_path,monkeypatch)
+    close['stop_reason']='unrecognized-new-failure'
+    project_close_record(close)
+    records=read_records(ledger)
+    assert records[0]['integrity_passed'] is False
+    assert not ledger_record_is_reachable(records[0],Path(ctx['clone']))
+
+
 @pytest.mark.parametrize('change',[{'stop_reason':'ship_integrity_violation'},{'merge_outcome':'deferred'},{'merge_outcome':'failed'}])
 def test_red_or_unlanded_close_never_becomes_external_proof(tmp_path,monkeypatch,change):
     ctx,ledger,close=setup(tmp_path,monkeypatch)

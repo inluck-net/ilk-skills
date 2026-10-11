@@ -15,6 +15,7 @@ a blank but never override it (see main()).
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -151,6 +152,7 @@ def append_gate_history(
     history_path.parent.mkdir(parents=True, exist_ok=True)
     with open(history_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(enriched, ensure_ascii=False, separators=(",", ":")) + "\n")
+        f.flush();os.fsync(f.fileno())
 
 
 def main() -> int:

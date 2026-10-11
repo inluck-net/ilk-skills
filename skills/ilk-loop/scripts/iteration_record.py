@@ -24,7 +24,17 @@ def project_close_record(close: dict) -> int:
         if row.get('run_id')!=close['run_id'] or row.get('iteration')!=close['iteration']: continue
         if row['proof_id'] in finalized: continue
         outcome=close.get('merge_outcome')
-        integrity_ok=close.get('stop_reason') not in {'ship_integrity_violation','selfmod_state_invalid','selfmod_live_clone_touched'}
+        # Unknown/new terminal failures cannot become proof by omission from
+        # a blacklist. Historical empty-success closes remain readable.
+        integrity_ok=not close.get('stop_reason')
+        if context.get('worker_sandbox_adapter')=='macos-brokered-shell':
+            accepted=close.get('driver_acceptance') or {}
+            execution=close.get('execution') or {}
+            integrity_ok=(integrity_ok and close.get('driver_integrity_passed') is True
+                and close.get('state_audit',{}).get('explained') is True
+                and accepted.get('accepted') is True and accepted.get('run_id')==close['run_id']
+                and accepted.get('iteration')==close['iteration'] and bool(accepted.get('tree'))
+                and accepted['tree']==execution.get('head_tree') and not execution.get('capture_error'))
         landed=context['mode']!='selfmod' or outcome=='merged'
         projected=dict(row,record_phase='close',close_record_id=close_id,
                        integrity_passed=integrity_ok,landed=landed,merge_outcome=outcome,

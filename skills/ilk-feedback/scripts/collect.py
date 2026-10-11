@@ -1668,6 +1668,11 @@ def classify(
     _SENTINEL_FAILURE_MAP: dict[str, str] = {
         "budget_exhausted": "budget-exhausted",
         "run_inputs_changed": "self-hosting-drift",
+        "code_only_acceptance_failed": "self-hosting-drift",
+        "code_only_worker_incomplete": "interrupted",
+        "code_only_resume_unavailable": "self-hosting-drift",
+        "code_only_budget_unknown": "self-hosting-drift",
+        "code_only_commit_hook_red": "local-checks-stuck",
         "dispatch_identity_invalid": "self-hosting-drift",
         "iteration_record_projection_failed": "self-hosting-drift",
         "recovery_history_invalid": "self-hosting-drift",

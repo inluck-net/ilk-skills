@@ -21,11 +21,11 @@ from worker_sandbox import profile
 
 
 class ShellBroker:
-    def __init__(self,context: dict,*,deadline: float):
+    def __init__(self,context: dict,*,deadline: float,path=None,nonce=None):
         self.context=dict(context);self.deadline=deadline
-        self._directory=tempfile.TemporaryDirectory(prefix='ilk-ipc-')
-        self.path=Path(self._directory.name).resolve()/'shell.sock'
-        self.nonce=uuid.uuid4().hex
+        self._directory=tempfile.TemporaryDirectory(prefix='ilk-ipc-') if path is None else None
+        self.path=Path(path) if path is not None else Path(self._directory.name).resolve()/'shell.sock'
+        self.nonce=nonce or uuid.uuid4().hex
         self._listener=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
         self._listener.bind(str(self.path));self.path.chmod(0o600);self._listener.listen()
         self._closed=threading.Event();self._active=None;self._connection=None;self._guard=threading.Lock()
@@ -57,7 +57,8 @@ class ShellBroker:
                 with self._guard:self._connection=None
         except Exception as exc:
             if not self._closed.is_set():self.error=type(exc).__name__
-        finally:self._listener.close()
+        finally:
+            self._closed.set();self._listener.close()
 
     def _execute(self,command):
         remaining=self.deadline-time.monotonic()
@@ -80,6 +81,19 @@ class ShellBroker:
                 process=subprocess.Popen(['/usr/bin/sandbox-exec','-p',policy,'/bin/bash','-c',command],
                     cwd=context['exec_tree'],env=env,stdout=stdout,stderr=stderr,start_new_session=True)
                 self._active=process
+            # A separate shell session must remain discoverable even if the
+            # broker itself dies. Register it under the same verified runner.
+            if context.get('run_registry_dir'):
+                from run_registry import register_child
+                try:
+                    register_child(Path(context['run_registry_dir']),context['run_id'],
+                                   pid=process.pid,owner_pid=context['runner_owner_pid'])
+                except Exception:
+                    try:os.killpg(process.pid,signal.SIGKILL)
+                    except ProcessLookupError:pass
+                    process.wait()
+                    with self._guard:self._active=None
+                    raise
             self.command_started.set()
             try:code=process.wait(timeout=max(self.deadline-time.monotonic(),0))
             except subprocess.TimeoutExpired:
@@ -99,7 +113,8 @@ class ShellBroker:
         record.update(attempt_id=attempt,run_id=context['run_id'],iteration=context['iteration'],
             command_sha256=hashlib.sha256(command.encode()).hexdigest(),started_monotonic=started,
             ended_monotonic=time.monotonic(),diagnostic_only=True,iteration_deadline_reached=timed_out)
-        with (directory/'attempts.jsonl').open('a') as stream:stream.write(json.dumps(record)+'\n')
+        with (directory/'attempts.jsonl').open('a') as stream:
+            stream.write(json.dumps(record)+'\n');stream.flush();os.fsync(stream.fileno())
         return result
 
     def close(self):
@@ -117,7 +132,45 @@ class ShellBroker:
         except OSError:pass
         if self._thread.is_alive():self._thread.join()
         self._listener.close()
-        self._directory.cleanup()
+        self.path.unlink(missing_ok=True)
+        if self._directory:self._directory.cleanup()
 
     def __enter__(self):return self.start()
     def __exit__(self,*_):self.close()
+
+
+def main():
+    """Owned broker process waits for the parent's immutable context."""
+    import argparse
+    from iteration_context import read_context,ContextError
+    from run_registry import process_identity
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--context',type=Path,required=True)
+    parser.add_argument('--deadline',type=float,required=True)
+    parser.add_argument('--owner',required=True,help='exact JSON process identity')
+    args=parser.parse_args();owner=json.loads(args.owner);stopped=threading.Event()
+    for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stopped.set())
+    def owned():return process_identity(owner['pid'])==owner
+    # This is readiness polling, bounded by the caller's existing iteration
+    # deadline. 20ms is a responsiveness judgment, not a new stall timeout;
+    # excessive idle CPU or startup lag would warrant adjusting it.
+    while not args.context.exists() and not stopped.wait(.02):
+        if time.monotonic()>=args.deadline or not owned():return 1
+    if stopped.is_set() or not owned():return 1
+    context=read_context(args.context)
+    if context.get('shell_broker_owner_pid')!=os.getpid() or context.get('runner_owner_pid')!=owner['pid']:
+        raise ContextError('broker context identity mismatch')
+    try:
+        with ShellBroker(context,deadline=args.deadline,path=context['shell_broker_path'],
+                         nonce=context['shell_broker_nonce']) as broker:
+            while not stopped.wait(.02):
+                if broker._closed.is_set() or time.monotonic()>=args.deadline or not owned():break
+    finally:
+        if context.get('scratch_disposable'):
+            import shutil
+            shutil.rmtree(context['worker_tmp_dir'],ignore_errors=True)
+            Path(context['shell_broker_path']).parent.rmdir()
+    return 0 if broker.error is None else 1
+
+
+if __name__=='__main__':raise SystemExit(main())
