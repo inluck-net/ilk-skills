@@ -479,7 +479,7 @@ def _gate_process_set(project_path: Path) -> GateResult:
 
     Uses the shared ilk_project_runners helper from _ilk_pid.sh.
     """
-    artifact = f"ps -eo pid,command | ilk_project_runners {project_path}"
+    artifact = f"run registry + identity for {project_path}"
 
     # Source the shared helper and call ilk_project_runners.
     pid_script = str(_SKILL_ROOT / "ilk-loop" / "scripts" / "_ilk_pid.sh")
@@ -507,6 +507,8 @@ def _gate_process_set(project_path: Path) -> GateResult:
             artifact=artifact,
         )
 
+    if result.returncode not in (0,1):
+        return GateResult(name="process-set",status="unknown",evidence="registry ownership unavailable",artifact=artifact)
     pids = [p.strip() for p in result.stdout.strip().splitlines() if p.strip()]
 
     if not pids:

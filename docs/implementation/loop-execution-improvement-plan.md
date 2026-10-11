@@ -602,3 +602,22 @@ No completion/ship/proof markers are inferred from this human tracker.
   fsyncs directory; Windows directory durability remains an explicit adapter
   limitation. State/context/snapshot checks: 32 passed in 5.08s; Bash and
   portable PowerShell syntax PASS. No production activation or I3 completion.
+
+- D1 POSIX production wiring candidate: launcher writes exclusive launch
+  reservation before spawn (120s default is a judgment reusing existing
+  scheduler gap window; valid startup beyond expiry falsifies it), runner
+  binds exact PID/start/owned group after lock, records worker child groups,
+  and finalizes registry on exit. Direct lock helper creates an owned session,
+  never registering its caller group. Launcher/scheduler/watchdog, Python
+  relaunch/status/feedback, shared process-set helper, merge/migration and
+  bounce readers use registry plus fresh identity. Unknown old locks/PIDs
+  stay busy and cannot be signaled automatically. Stop now signals verified
+  child groups before runner, refuses unknown groups, and terminalizes only
+  matching run/PID after confirmed exit. Old orphan-argv scanner is no longer
+  called. last-launch.json gains run_id and toolkit_sha with argument-based
+  serialization; terminal sentinels gain toolkit_sha. Focused registry + actual
+  pre-loop runner entry: 19 passed in 2.97s; actual owned fixture through
+  stop.sh: 1 passed in 1.42s; production merge/migration no-argv check passed.
+  Windows native lifecycle adapter/readers, private-input pin activation,
+  broker child registration and consumer drain still open. No live daemon
+  or runner was changed; no installed I4 claim.

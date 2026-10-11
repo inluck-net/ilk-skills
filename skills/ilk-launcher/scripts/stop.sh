@@ -343,104 +343,51 @@ stop_watchdog_for_project() {
 stop_project() {
   local path="$1"
   local name="$2"
-  local pid_file
-
-  # Stop watchdog first — it must not try to restart the loop after we kill it.
+  local launcher_dir state rc=0
+  launcher_dir=$(get_external_launcher_dir "$path") || return 1
+  local registry="${_SKILL_ROOT}/ilk-loop/scripts/run_registry.py"
+  state=$(python3 "$registry" status --runtime "$launcher_dir" --project "$path") || rc=$?
+  if [[ "$rc" -eq 1 ]]; then echo "[$name] no live registered run" >&2; return 0; fi
+  [[ "$rc" -eq 0 ]] || { echo "[$name] registry unreadable; no processes signaled" >&2; return 1; }
+  local ids
+  ids=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); rows=d["runs"]; assert rows and all(r["liveness"]=="running" or any(c["liveness"]=="running" for c in r["children_liveness"]) for r in rows), "legacy or launching ownership unavailable"; print("\n".join(r["run_id"] for r in rows))' "$state") || {
+    echo "[$name] legacy/launching run lacks verified ownership; no processes signaled" >&2
+    return 1
+  }
   stop_watchdog_for_project "$path" "$name"
-
-  pid_file=$(get_pid_file_path "$path")
-
-  if [[ ! -f "$pid_file" ]]; then
-    echo "[$name] no running ilk for this project" >&2
-    return 0
-  fi
-
-  local target_pid
-  target_pid=$(cat "$pid_file" | tr -d '[:space:]')
-  if [[ -z "$target_pid" ]]; then
-    echo "[$name] PID file empty. Cleaning up." >&2
-    rm -f "$pid_file"
-    return 0
-  fi
-
-  if ! kill -0 "$target_pid" 2>/dev/null; then
-    echo "[$name] PID $target_pid no longer alive. Cleaning stale PID file." >&2
-    mark_sentinel_interrupted "$path" "$target_pid"
-    rm -f "$pid_file"
-    return 0
-  fi
-
-  echo "[$name] killing process group $target_pid..." >&2
-  # Try the process group first (kills the whole tree if the launcher
-  # spawned it as a pgrp leader), then the PID directly (recovers
-  # orphans from older launches that weren't pgrp leaders).
-  kill -- -"$target_pid" 2>/dev/null || true
-  kill -- "$target_pid" 2>/dev/null || true
-
-  # Wait up to 5s for the process group to exit
+  local run_id
+  while IFS= read -r run_id; do
+    python3 "$registry" stop --runtime "$launcher_dir" --run-id "$run_id" >/dev/null || return 1
+  done <<< "$ids"
   local waited=0
-  while kill -0 "$target_pid" 2>/dev/null && [[ "$waited" -lt 5 ]]; do
-    sleep 1
-    waited=$((waited + 1))
+  while [[ "$waited" -lt 5 ]]; do
+    rc=0
+    python3 "$registry" status --runtime "$launcher_dir" --project "$path" >/dev/null || rc=$?
+    [[ "$rc" -eq 1 ]] && break
+    [[ "$rc" -eq 0 ]] || return 1
+    sleep 1; waited=$((waited+1))
   done
-
-  if kill -0 "$target_pid" 2>/dev/null; then
-    echo "[$name] PID $target_pid still alive after SIGTERM. Sending SIGKILL..." >&2
-    kill -9 -- -"$target_pid" 2>/dev/null || true
-    kill -9 -- "$target_pid" 2>/dev/null || true
+  if [[ "$rc" -eq 0 ]]; then
+    while IFS= read -r run_id; do
+      # KILL revalidates PID/start/group; it never falls back to a bare PID.
+      python3 "$registry" stop --runtime "$launcher_dir" --run-id "$run_id" --signal KILL >/dev/null || return 1
+    done <<< "$ids"
     sleep 1
+    rc=0
+    python3 "$registry" status --runtime "$launcher_dir" --project "$path" >/dev/null || rc=$?
   fi
-
-  if kill -0 "$target_pid" 2>/dev/null; then
-    echo "[$name] PID $target_pid still alive after SIGKILL. Investigate manually." >&2
-    return 1
-  fi
-
-  echo "[$name] stopped." >&2
-
-  # Scan for orphaned worker processes BEFORE writing the sentinel.
-  # The sentinel must not be written while descendants survive (#4 defect 2).
-  local launcher_dir
-  launcher_dir=$(get_external_launcher_dir "$path")
-  if [[ -n "$launcher_dir" ]]; then
-    kill_orphans "$path" "$target_pid" "$launcher_dir" "$name"
-  fi
-
-  # Verify the tree is actually gone before writing the sentinel (AC-2 / AC-3).
-  # Two independent checks: ilk_project_runners (process table) and lsof on
-  # run.lock (file-descriptor holders).  Both must be empty.
-  local survivors=""
-  local runner_pids
-  runner_pids=$(ilk_project_runners "$path" 2>/dev/null) || true
-  if [[ -n "$runner_pids" ]]; then
-    survivors="runner processes: $runner_pids"
-  fi
-
-  local run_lock="${launcher_dir}/run.lock"
-  if [[ -f "$run_lock" ]]; then
-    local lock_holders
-    lock_holders=$(lsof -t "$run_lock" 2>/dev/null) || true
-    if [[ -n "$lock_holders" ]]; then
-      survivors="${survivors:+$survivors, }run.lock holders: $lock_holders"
-    fi
-  fi
-
-  if [[ -n "$survivors" ]]; then
-    echo "[$name] FAILED — survivors detected after stop: $survivors" >&2
-    # Print each survivor's command line for diagnosis
-    for spid in $runner_pids $lock_holders; do
-      local scmd
-      scmd=$(ps -p "$spid" -o command= 2>/dev/null) || scmd="(unknown)"
-      echo "[$name]   PID $spid: ${scmd:0:120}" >&2
-    done
-    return 1
-  fi
-
-  # All processes verified gone — now safe to write the sentinel and
-  # clean up the PID file.  Writing before verification would record
-  # "interrupted" while descendants still live (#4 defect 2).
-  mark_sentinel_interrupted "$path" "$target_pid"
-  rm -f "$pid_file"
+  [[ "$rc" -eq 1 ]] || { echo "[$name] run ownership or lock remains; stop unverified" >&2; return 1; }
+  python3 -c 'import json,sys; from pathlib import Path; from datetime import datetime,timezone
+runtime=Path(sys.argv[1]); stopped=json.loads(sys.argv[2])["runs"]; sentinel=runtime/"last-exit.json"
+if sentinel.exists():
+ d=json.loads(sentinel.read_text())
+ if d.get("state")=="running" and any(d.get("run_id")==r["run_id"] and d.get("pid")==r["pid"] for r in stopped):
+  d.update(state="interrupted",stopped_by="ilk-stop",ended_at=datetime.now(timezone.utc).isoformat())
+  temporary=sentinel.with_suffix(".tmp");temporary.write_text(json.dumps(d));temporary.replace(sentinel)
+pidfile=runtime/"running.pid"
+if pidfile.exists() and any(pidfile.read_text().strip()==str(r["pid"]) for r in stopped):pidfile.unlink()
+' "$launcher_dir" "$state" || return 1
+  echo "[$name] stopped verified registered run" >&2
 
   # Report dirty tree state (read-only, does not mutate)
   echo "[$name] repo state:" >&2

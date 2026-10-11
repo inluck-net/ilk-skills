@@ -359,51 +359,12 @@ test_running_pid() {
   # Returns 0 if busy, 1 if free.
   local project_data_path="$1"
   local project_repo_path="${2:-$project_data_path}"
-  # Process-table check: a live runner makes the project busy even when
-  # running.pid is absent or names a different PID.  running.pid tracked 1 of
-  # 10 live runners on 2026-08-12.  Use the repo path (not data path) because
-  # the runner's --project-path flag contains the repo path.
-  # stdout suppressed: ilk_project_runners PRINTS the pids it finds, and all
-  # three callers here use it as a boolean, so without this the pids leak into
-  # the scheduler's stdout and interleave with its decision lines.
-  if ilk_project_runners "$project_repo_path" >/dev/null 2>&1; then
-    return 0  # busy — live runner in the process table
-  fi
-  local pid_file="${project_data_path}/runtime/launcher/running.pid"
-  if [[ ! -f "$pid_file" ]]; then
-    return 1  # free
-  fi
-  local raw
-  raw=$(tr -d '[:space:]' < "$pid_file" 2>/dev/null) || true
-  if [[ -z "$raw" ]]; then
-    rm -f "$pid_file"
-    return 1  # free
-  fi
-  if ! [[ "$raw" =~ ^[0-9]+$ ]]; then
-    return 1  # free
-  fi
-  # Command-verified, not bare `kill -0`: a recycled PID makes this return
-  # "busy" on every poll forever, and the cross-check below cannot rescue it
-  # because a sentinel abandoned mid-run still reads state="running".
-  if ! ilk_pid_alive "$raw"; then
-    return 1  # dead pid (or not an ilk process) — free
-  fi
-
-  # Stale-sentinel cross-check: even if the pid is alive, a terminal
-  # last-exit.json means the loop already finished.  The lingering
-  # -NoExit shell keeps the pid alive past the loop's real exit.
-  local sentinel_file
-  sentinel_file="$(sentinel_path_for_data_dir "$project_data_path")"
-  if [[ -f "$sentinel_file" ]]; then
-    local state
-    # Parse "state" value — grep+sed fallback (no jq dependency).
-    state=$(grep -o '"state"[[:space:]]*:[[:space:]]*"[^"]*"' "$sentinel_file" 2>/dev/null \
-            | head -1 | sed 's/.*"state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
-    if [[ -n "$state" && "$state" != "running" ]]; then
-      return 1  # terminal state — project is free
-    fi
-  fi
-  return 0  # busy
+  local rc=0
+  python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_registry.py" status \
+    --runtime "${project_data_path}/runtime/launcher" --project "$project_repo_path" >/dev/null || rc=$?
+  [[ "$rc" -eq 1 ]] && return 1
+  # Unknown registry/legacy ownership is busy, never permission to dispatch.
+  return 0
 }
 
 blacklist_epoch_for_key() {

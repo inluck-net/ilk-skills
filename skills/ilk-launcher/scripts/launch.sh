@@ -578,36 +578,12 @@ get_launch_meta_path() {
 
 test_running_pid() {
   local project_path="$1"
-  # Process-table check: a live runner makes the project busy even when
-  # running.pid is absent or names a different PID.  running.pid tracked 1 of
-  # 10 live runners on 2026-08-12.
-  local live_pids
-  live_pids="$(ilk_project_runners "$project_path" || true)"
-  if [[ -n "$live_pids" ]]; then
-    echo "$(echo "$live_pids" | head -1)"
-    return
-  fi
-  local pid_file
-  pid_file=$(get_pid_file_path "$project_path")
-  if [[ ! -f "$pid_file" ]]; then
-    echo ""
-    return
-  fi
-  local raw_pid
-  raw_pid=$(cat "$pid_file" | tr -d '[:space:]')
-  if [[ -z "$raw_pid" ]]; then
-    rm -f "$pid_file"
-    echo ""
-    return
-  fi
-  # Command-verified: a recycled PID would report this project as perpetually
-  # running and block every relaunch. Same guard as the scheduler's sentinel.
-  if ilk_pid_alive "$raw_pid"; then
-    echo "$raw_pid"
-  else
-    rm -f "$pid_file"
-    echo ""
-  fi
+  local launcher_dir state rc=0
+  launcher_dir=$(get_external_launcher_dir "$project_path") || { echo "registry-unverified"; return; }
+  state=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_registry.py" status --runtime "$launcher_dir" --project "$project_path") || rc=$?
+  [[ "$rc" -eq 1 ]] && return 0
+  if [[ "$rc" -ne 0 ]]; then echo "registry-unverified"; return 0; fi
+  python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(next((str(r["pid"]) for r in d["runs"] if r["liveness"]=="running"),"registry-busy"))' "$state"
 }
 
 start_ilk_window() {
@@ -760,6 +736,13 @@ start_ilk_window() {
     echo "[ilk] tip: a worker home is bootstrapped but this run uses the planner (official) provider. Set ILK_DEFAULT_ENGINE=claude-worker (or worker_engine in .ilk-launch.json) to use the cheaper worker." >&2
   fi
 
+  # Judgment: reuse scheduler's 120s launch-gap window; slow valid startup
+  # reaching expiry falsifies this default. Operator can set an explicit TTL.
+  local launch_ttl="${ILK_LAUNCH_TTL_SEC:-120}" launcher_dir code_sha
+  launcher_dir=$(get_external_launcher_dir "$project_path") || return 1
+  code_sha=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_registry.py" code-sha --code-root "${_SKILL_ROOT}/..") || return 1
+  python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_registry.py" reserve --runtime "$launcher_dir" \
+    --run-id "$run_id" --project "$project_path" --key "$project_key" --toolkit-sha "$code_sha" --ttl "$launch_ttl" >/dev/null || return 1
   # Spawn the runner in its own session (new process group + no controlling
   # terminal) so a parent-group SIGTERM from launchd/scheduler teardown
   # cannot reach it.  stop.sh can still `kill -- -$pid` to reap the tree.
@@ -769,26 +752,16 @@ start_ilk_window() {
   # Write last-launch.json
   local meta_path
   meta_path=$(get_launch_meta_path "$project_path")
-  python3 -c "
-import json
-d = {
-    'project_path': '$project_path',
-    'project_name': '$project_name',
-    'pid': $leader_pid,
-    'started_at': '$(date +%Y-%m-%dT%H:%M:%S%z)',
-    'max_iterations': $max_iterations,
-    'iteration_timeout_min': $timeout_min,
-    'worker_engine': '$engine',
-    'run_local_checks': '$run_local_checks' == 'true',
-    'loop_script': '$loop_script',
-    'mcp_config_path': '$mcp_config_path',
-    'log_file': '$log_file',
-    'log_dir': '$per_run_dir',
-    'jsonl_log': '$jsonl_log',
-    'legacy_log_dir': '$legacy_log_dir',
-}
-print(json.dumps(d, indent=2))
-" > "$meta_path"
+  python3 -c 'import json,sys
+from datetime import datetime,timezone
+keys=["project_path","project_name","pid","max_iterations","iteration_timeout_min","worker_engine","run_local_checks","loop_script","mcp_config_path","log_file","log_dir","jsonl_log","legacy_log_dir","run_id","toolkit_sha"]
+d=dict(zip(keys,sys.argv[1:]));d["started_at"]=datetime.now(timezone.utc).isoformat()
+for key in ("pid","max_iterations","iteration_timeout_min"):d[key]=int(d[key])
+d["run_local_checks"]=d["run_local_checks"]=="true"
+print(json.dumps(d,indent=2))
+' "$project_path" "$project_name" "$leader_pid" "$max_iterations" "$timeout_min" "$engine" \
+  "$run_local_checks" "$loop_script" "$mcp_config_path" "$log_file" "$per_run_dir" "$jsonl_log" \
+  "$legacy_log_dir" "$run_id" "$code_sha" > "$meta_path"
 
   echo "[$project_name] launched. PID $leader_pid."
   echo "[$project_name] PID file: $pid_file"

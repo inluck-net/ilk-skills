@@ -145,7 +145,7 @@ def ilk_pid_alive(pid: int) -> bool:
     return any(pat in low for pat in ILK_PROCESS_PATTERNS)
 
 
-def detect_stale_running(state: object, pid: object) -> tuple[bool, str, str | None]:
+def detect_stale_running(state: object, pid: object, *, runtime=None) -> tuple[bool, str, str | None]:
     """Shared stale-running detection for ``last-exit.json`` sentinels.
 
     Returns ``(stale, reported_state, raw_state)``.
@@ -173,6 +173,13 @@ def detect_stale_running(state: object, pid: object) -> tuple[bool, str, str | N
     direction ``ilk_pid_alive`` takes for an unreadable command line.
     """
     sentinel_state = state or ""
+    if sentinel_state=="running" and runtime is not None:
+        from run_registry import project_status,RegistryError
+        try:busy=project_status(runtime)['busy']
+        except (RegistryError,OSError,ValueError):
+            # Unknown ownership never proves a run ended or permits relaunch.
+            return False,"running",None
+        return (False,"running",None) if busy else (True,"unknown","running")
     probeable = isinstance(pid, int) and not isinstance(pid, bool)
     stale = False
     if sentinel_state == "running" and probeable:

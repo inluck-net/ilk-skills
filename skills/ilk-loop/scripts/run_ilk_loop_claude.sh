@@ -2261,6 +2261,7 @@ _write_terminal_sentinel() {
     'iterations': 0,
     'project_path': '$PROJECT_PATH',
     'master': '${_UNATTENDED_MASTER_SLUG:-}',
+    'toolkit_sha': '${ILK_TOOLKIT_SHA:-}',
     'cli': 'claude'
   }
 if os.environ.get('_HELD_BY'):
@@ -2391,7 +2392,14 @@ _write_unattended_result() {
   fi
 }
 
+_finish_run_registry() {
+  [[ -n "${_RUN_REGISTRY_DIR:-}" ]] || return 0
+  python3 "${_ILK_SCRIPT_DIR}/run_registry.py" finish --runtime "$_RUN_REGISTRY_DIR" --run-id "$RUN_ID" --pid "$$" >/dev/null || return 1
+  _RUN_REGISTRY_DIR=""
+}
+
 finalize_sentinel() {
+  _finish_run_registry || echo "[registry] terminal identity could not be removed; readers must verify liveness" >&2
   # On EXIT (signal, error, or normal), if the sentinel is still state=running,
   # rewrite it to a terminal state so stale-running sentinels never survive.
   # Safe to call multiple times — idempotent (no-op when state != running).
@@ -2426,6 +2434,7 @@ d = {
     'ended_at': '$ended_at',
     'project_path': '$PROJECT_PATH',
     'master': _prev.get('master', ''),
+    'toolkit_sha': '${ILK_TOOLKIT_SHA:-}',
     'cli': 'claude',
     'stopped_reason': os.environ['ILK_STOPPED_REASON']
 }
@@ -4803,6 +4812,19 @@ for k, v in sorted(d.get("env", {}).items()):
   # the whole group.  For a multi-process pipeline (A | B | C &),
   # $! is the PID of C but the PGID is the PID of A — resolve it.
   _ILK_AGENT_PGID=$(ps -o pgid= -p "$_pipeline_pid" 2>/dev/null | tr -d ' ') || _ILK_AGENT_PGID="$_pipeline_pid"
+  if [[ -n "${_RUN_REGISTRY_DIR:-}" ]]; then
+    if ! python3 "${_ILK_SCRIPT_DIR}/run_registry.py" child --runtime "$_RUN_REGISTRY_DIR" --run-id "$RUN_ID" \
+       --owner-pid "$$" --pid "$_ILK_AGENT_PGID" >/dev/null; then
+      # A already-exited pipeline needs no ownership entry. A live unrecorded
+      # group cannot be accepted; close this group created by this invocation.
+      if kill -0 "-$_ILK_AGENT_PGID" 2>/dev/null; then
+        kill -TERM "-$_ILK_AGENT_PGID" 2>/dev/null || true
+        wait "$_pipeline_pid" || true
+        ITER_COMPLETED=0; ITER_EXIT_CODE=1; ITER_BUDGET_EXHAUSTED=0; ITER_QUOTA_EXHAUSTED=0
+        return 1
+      fi
+    fi
+  fi
   # Write PGID to file so the amendment watcher can read it.
   if [[ -n "${_amend_pgid_file:-}" ]]; then
     echo "$_ILK_AGENT_PGID" > "$_amend_pgid_file" 2>/dev/null || true
@@ -5565,6 +5587,7 @@ _terminal_sentinel_json() {
     'ended_at': sys.argv[4],
     'iterations': $iter_counter,
     'project_path': '$PROJECT_PATH',
+    'toolkit_sha': '${ILK_TOOLKIT_SHA:-}',
     'cli': 'claude',
     'jsonl_log': '$JSONL_LOG'
   }; md=json.loads(sys.argv[1]); d['merge_deferred']=md if md else None
@@ -5771,7 +5794,8 @@ main() {
             'started_at': '$_lock_ts',
             'ended_at': '$_lock_ts',
             'project_path': '$PROJECT_PATH',
-            'cli': 'claude'
+            'toolkit_sha': '${ILK_TOOLKIT_SHA:-}',
+    'cli': 'claude'
           }))" > "${_lock_rd}/last-refusal.json.tmp" && mv -f "${_lock_rd}/last-refusal.json.tmp" "${_lock_rd}/last-refusal.json" || true
         fi
         if [[ -n "${ILK_MASTER:-}" ]]; then
@@ -5874,7 +5898,8 @@ print(fm.get('result_file', ''))
       'started_at': '$loop_started_at',
       'project_path': '$PROJECT_PATH',
       'master': '${_UNATTENDED_MASTER_SLUG:-}',
-      'cli': 'claude'
+      'toolkit_sha': '${ILK_TOOLKIT_SHA:-}',
+    'cli': 'claude'
     }))" > "${runtime_dir}/last-exit.json.tmp" && mv -f "${runtime_dir}/last-exit.json.tmp" "${runtime_dir}/last-exit.json"
     echo "Sentinel: ${runtime_dir}/last-exit.json (state=running)"
     # Store in a global so finalize_sentinel survives after main returns.
@@ -5899,6 +5924,19 @@ print(fm.get('result_file', ''))
     trap '_ILK_STOP_SIGNAL=TERM; _ilk_kill_children; finalize_sentinel; exec true' TERM
   else
     echo "Sentinel: skipped (no runtime dir resolved)"
+  fi
+
+  if [[ -n "$runtime_dir" ]]; then
+    ILK_TOOLKIT_SHA=$(python3 "${_ILK_SCRIPT_DIR}/run_registry.py" code-sha --code-root "${_SKILL_ROOT}/..") || return 1
+    export ILK_TOOLKIT_SHA
+    local _registry_key
+    _registry_key=$(basename "$(dirname "$(dirname "$runtime_dir")")")
+    if ! python3 "${_ILK_SCRIPT_DIR}/run_registry.py" attach --runtime "$runtime_dir" --run-id "$RUN_ID" \
+      --project "$PROJECT_PATH" --key "$_registry_key" --toolkit-sha "$ILK_TOOLKIT_SHA" --pid "$$" --ttl "${ILK_LAUNCH_TTL_SEC:-120}" >/dev/null; then
+      echo "[registry] runner identity could not be bound; refusing dispatch" >&2
+      return 1
+    fi
+    _RUN_REGISTRY_DIR="$runtime_dir"
   fi
 
   # Initial check: classify the loop status into runnable / all-shipped / blocked.
@@ -6580,7 +6618,8 @@ ${iter_prompt}"
 import json, os
 d = {
   'run_id': os.environ['RUN_ID'],
-  'cli': 'claude',
+  'toolkit_sha': '${ILK_TOOLKIT_SHA:-}',
+    'cli': 'claude',
   'iteration': int(os.environ['_ITER']),
   'timestamp': os.environ['_TS'],
   'project': os.environ['PROJECT_PATH'],
@@ -7980,7 +8019,8 @@ if last:
 import json, os
 d = {
   'run_id': os.environ['RUN_ID'],
-  'cli': 'claude',
+  'toolkit_sha': '${ILK_TOOLKIT_SHA:-}',
+    'cli': 'claude',
   'iteration': int(os.environ['_ITER']),
   'timestamp': os.environ['_TS'],
   'project': os.environ['PROJECT_PATH'],
@@ -8120,7 +8160,8 @@ print(json.dumps(d))
 import json, sys
 d = {
   'run_id': sys.argv[1],
-  'cli': 'claude',
+  'toolkit_sha': '${ILK_TOOLKIT_SHA:-}',
+    'cli': 'claude',
   'iteration': 999999,
   'timestamp': sys.argv[2],
   'project': sys.argv[3],

@@ -92,8 +92,15 @@ def main():
         os.close(fd)
         sys.exit(3)
 
+    # A direct foreground launch must not register its caller's process group.
+    # The lock child gets its own session; launcher-created leaders stay owned.
+    if os.getpgrp()!=os.getpid():os.setsid()
     # Lock acquired — write holder metadata.
+    from run_registry import process_identity
+    identity=process_identity(os.getpid())
+    if not identity:raise RuntimeError("lock winner identity unavailable")
     metadata = json.dumps({
+        **identity,
         "pid": os.getpid(),
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     })

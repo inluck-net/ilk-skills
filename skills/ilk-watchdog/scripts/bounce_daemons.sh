@@ -223,79 +223,16 @@ echo "tree_state: ${_tree_state}"
 # The process table is authoritative (running.pid named 1 of 10 live runners
 # on 2026-08-12, per _ilk_pid.sh); the pidfile is not. See issue #29.
 if [[ "$CHECK_ONLY" -eq 0 && "${ILK_BOUNCE_ALLOW_DURING_RUN:-0}" != "1" ]]; then
-  # LIVENESS-CHECKED, not a bare pattern match.  `pgrep -f` answers "does some
-  # process have this string in its command line", which is not the question.
-  # Every candidate is re-checked with ilk_pid_alive, the shared predicate
-  # whose header invites exactly this ("source from any ilk-* bash script that
-  # reads a pidfile") and which was hardened for the PID-recycling wedge that
-  # made the scheduler skip a project as busy for 20 days.  Three false
-  # positives it removes, each of which blocks /ilk-upgrade and ship Phase 4
-  # indefinitely because the stray outlives the run that made it:
-  #   - a pid that exited between the pgrep and this check (TOCTOU),
-  #   - a RECYCLED pid now owned by an unrelated process,
-  #   - a grep/editor/pager that merely NAMES the driver.
-  # It deliberately still counts a pytest fixture loop: the fixture is a real
-  # bash process running a real driver filename, tests/test_bounce_daemons.py
-  # relies on that to exercise the guard at all, and a guard that trusted a
-  # path prefix could be walked past by putting a run under the same prefix.
-  # Test isolation is the tests' job (they set ILK_BOUNCE_ALLOW_DURING_RUN),
-  # not something to buy by weakening the production predicate.
-  _ilk_pid_lib="${BASH_SOURCE[0]%/*}/../../ilk-loop/scripts/_ilk_pid.sh"
-  if [[ -r "$_ilk_pid_lib" ]]; then
-    # shellcheck source=/dev/null
-    source "$_ilk_pid_lib"
-  fi
-
-  _running_loops=""
-  while IFS= read -r _cand_pid; do
-    [[ -n "$_cand_pid" ]] || continue
-    [[ "$_cand_pid" == "$$" || "$_cand_pid" == "${PPID:-}" ]] && continue
-    # Fail OPEN only if the helper is missing: an unreadable library must not
-    # silently disable the guard, so fall back to the old count-everything
-    # behaviour rather than to counting nothing.
-    if declare -f ilk_pid_alive >/dev/null 2>&1; then
-      ilk_pid_alive "$_cand_pid" || continue
-    fi
-    _cand_cmd="$(ps -p "$_cand_pid" -o command= 2>/dev/null || true)"
-    case "$_cand_cmd" in
-      *grep*) continue ;;
-    esac
-    _running_loops="${_running_loops}${_cand_pid}
-"
-  done < <(pgrep -f 'run_ilk_loop_claude\.(sh|ps1)' 2>/dev/null || true)
-
-  # ── Drop pinned loops (release-pinned runners are safe to bounce through) ──
-  _pinned_loops_filter="${BASH_SOURCE[0]%/*}/pinned_loops.py"
-  if [[ -n "$_running_loops" && -r "$_pinned_loops_filter" ]]; then
-    _filter_input=""
-    while IFS= read -r _fpid; do
-      [[ -n "$_fpid" ]] || continue
-      _fcmd="$(ps -p "$_fpid" -o command= 2>/dev/null || true)"
-      _filter_input="${_filter_input}${_fpid}	${_fcmd}
-"
-    done <<< "$_running_loops"
-    _filtered_pids="$(printf '%s' "$_filter_input" | python3 "$_pinned_loops_filter" filter 2>/dev/null)" || true
-    if [[ -n "$_filtered_pids" ]]; then
-      _pinned_count=$(( $(printf '%s\n' "$_running_loops" | grep -c . || true) - $(printf '%s\n' "$_filtered_pids" | grep -c . || true) ))
-      if [[ "$_pinned_count" -gt 0 ]]; then
-        echo "bouncing despite ${_pinned_count} pinned loop(s): pids $(printf '%s\n' "$_running_loops" | grep -vF -f <(printf '%s\n' "$_filtered_pids") | tr '\n' ' ')" >&2
-      fi
-      _running_loops="$_filtered_pids"
-    else
-      # Filter returned nothing (all pinned) or failed — if all pinned, clear;
-      # if the filter failed (empty _filtered_pids with non-empty input), fail closed.
-      if [[ -n "$_running_loops" ]]; then
-        # Check if filter succeeded (exit 0 with empty output = all pinned)
-        _filter_test="$(printf '%s' "$_filter_input" | python3 "$_pinned_loops_filter" filter 2>/dev/null; echo "rc=$?")"
-        if [[ "$_filter_test" == "rc=0" ]]; then
-          _pinned_count=$(printf '%s\n' "$_running_loops" | grep -c . || true)
-          echo "bouncing despite ${_pinned_count} pinned loop(s): all pinned" >&2
-          _running_loops=""
-        fi
-        # else: filter failed → fail closed, keep _running_loops as-is
-      fi
-    fi
-  fi
+  _registry_scripts="$(cd -P "${BASH_SOURCE[0]%/*}/../../ilk-loop/scripts" && pwd -P)"
+  _running_loops=$(python3 -c 'import sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from run_registry import host_blockers
+print("\n".join(str(pid) for pid in host_blockers(clone=Path(sys.argv[1]).parents[2])))
+' "$_registry_scripts") || {
+    echo "unreachable: scheduler (run registry cannot verify liveness)" >&2
+    exit 2
+  }
 
   _running_count=0
   if [[ -n "$_running_loops" ]]; then

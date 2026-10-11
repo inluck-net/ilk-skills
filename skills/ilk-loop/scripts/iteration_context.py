@@ -176,7 +176,7 @@ def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
                 registry_path=None, # D4 has no canonical registry yet.
                 recovery_dir=str(runtime/'launcher/recovery'/recovery_key),
                 data_root=str(Path(data_root).resolve()),code_root=code_root,
-                toolkit_sha=git_value(Path(code_root),'HEAD'),
+                toolkit_sha=git_value(Path(code_root),'HEAD') or os.environ.get('ILK_TOOLKIT_SHA'),
                 base_commit=git_value(Path(exec_tree),'HEAD'),
                 base_tree=git_value(Path(exec_tree),'HEAD^{tree}'),
                 entry_dirty=bool(subprocess.check_output(['git','-C',exec_tree,'status','--porcelain'],text=True)) if git_value(Path(exec_tree),'HEAD') else None,

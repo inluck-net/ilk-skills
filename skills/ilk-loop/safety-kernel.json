@@ -279,6 +279,10 @@
       "path": "skills/ilk-loop/scripts/plan_fingerprint.py",
       "guard": "owner",
       "why": "canonical driver plan contract and retry identity"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/ilk_run_lock.py",
+      "group": "ownership"
     }
   ],
   "kernel_basenames": [

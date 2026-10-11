@@ -15,16 +15,29 @@ import signal
 import subprocess
 import tempfile
 import time
-from plan_state import _lock
+from plan_state import _lock,_sync_parent
 
 
 class RegistryError(RuntimeError):pass
 
 
+def code_sha(root):
+    root=Path(root).resolve()
+    marker=root/'.ilk-release.json'
+    if marker.exists():
+        try:value=json.loads(marker.read_text())['sha']
+        except (OSError,ValueError,KeyError):raise RegistryError('release identity unavailable')
+    else:
+        cp=subprocess.run(['git','-C',str(root),'rev-parse','HEAD'],capture_output=True,text=True)
+        value=cp.stdout.strip() if cp.returncode==0 else None
+    if not isinstance(value,str) or not re.fullmatch('[0-9a-f]{40,64}',value):raise RegistryError('toolkit commit identity unavailable')
+    return value
+
+
 def process_identity(pid):
     if os.name=='nt':raise RegistryError('Windows process identity adapter not built')
     if isinstance(pid,bool) or not isinstance(pid,int) or pid<=0:raise RegistryError('invalid process PID')
-    cp=subprocess.run(['ps','-p',str(pid),'-o','pid=','-o','pgid=','-o','lstart='],capture_output=True,text=True)
+    cp=subprocess.run(['ps','-p',str(pid),'-o','pid=','-o','pgid=','-o','lstart='],capture_output=True,text=True,env=dict(os.environ,LC_ALL='C'))
     if cp.returncode:return None
     fields=cp.stdout.strip().split(None,2)
     if len(fields)!=3:return None
@@ -44,7 +57,7 @@ def _owner():
 def _write(path,row):
     with tempfile.NamedTemporaryFile(mode='w',dir=path.parent,delete=False) as stream:
         temporary=Path(stream.name);json.dump(row,stream);stream.write('\n');stream.flush();os.fsync(stream.fileno())
-    try:temporary.chmod(0o600);os.replace(temporary,path)
+    try:temporary.chmod(0o600);os.replace(temporary,path);_sync_parent(path)
     finally:temporary.unlink(missing_ok=True)
 
 
@@ -52,7 +65,7 @@ def read(path):
     try:row=json.loads(Path(path).read_text())
     except (OSError,ValueError) as exc:raise RegistryError('unreadable run registry') from exc
     required={'run_id','project_key','state','clone','exec_tree','toolkit_sha','pid','pgid','lstart'}
-    if row.get('schema')!=1 or not required<=row.keys() or row['state'] not in {'launching','running'}:
+    if not isinstance(row,dict) or row.get('schema')!=1 or not required<=row.keys() or row['state'] not in {'launching','running'}:
         raise RegistryError('unknown registry schema/state')
     if row['state']=='launching':
         expiry=row.get('expires_at')
@@ -64,6 +77,12 @@ def read(path):
         if not isinstance(row['lstart'],str) or not row['lstart']:raise RegistryError('process start required')
     if _path(Path(path).parent.parent,row['run_id'])!=Path(path).resolve():
         raise RegistryError('registry filename contradicts run identity')
+    children=row.get('children',[])
+    if not isinstance(children,list):raise RegistryError('invalid child registry')
+    for child in children:
+        if (not isinstance(child,dict) or any(isinstance(child.get(key),bool) or not isinstance(child.get(key),int) or child[key]<=0 for key in ('pid','pgid'))
+                or child['pid']!=child['pgid'] or not isinstance(child.get('lstart'),str) or not child['lstart']):
+            raise RegistryError('invalid child identity')
     return row
 
 
@@ -77,6 +96,8 @@ def reserve(runtime,*,run_id,project_key,clone,exec_tree,toolkit_sha,expires_at,
              pid=None,pgid=None,lstart=None,expires_at=expires_at,created_at=now)
     with _lock(path.parent/'.registry.lock'):
         if path.exists():raise RegistryError('run identity already reserved')
+        if any(item['liveness'] in {'launching','running'} for item in scan(runtime,now=now)):
+            raise RegistryError('project already has an active registry identity')
         _write(path,row)
     return row
 
@@ -84,7 +105,8 @@ def reserve(runtime,*,run_id,project_key,clone,exec_tree,toolkit_sha,expires_at,
 def bind_running(runtime,run_id,*,pid,probe=process_identity,now=None):
     _owner();path=_path(runtime,run_id);now=time.time() if now is None else now
     identity=probe(pid)
-    if not identity or identity.get('pid')!=pid:raise RegistryError('runner identity unavailable')
+    if not identity or identity.get('pid')!=pid or identity.get('pgid')!=pid:
+        raise RegistryError('runner must own its process group')
     with _lock(path.parent/'.registry.lock'):
         row=read(path)
         if row['state']!='launching' or row['expires_at']<=now:raise RegistryError('launch reservation expired or already bound')
@@ -104,7 +126,15 @@ def liveness(row,*,probe=process_identity,now=None):
 def scan(runtime,*,probe=process_identity,now=None):
     result=[]
     for path in sorted((Path(runtime)/'runs').glob('*.json')):
-        row=read(path);result.append(dict(row,liveness=liveness(row,probe=probe,now=now)))
+        row=read(path)
+        children=[]
+        for child in row.get('children',[]):
+            state=liveness(dict(child,state='running'),probe=probe,now=now)
+            # A vanished leader with a still-live group is unknown ownership,
+            # not evidence that all worker descendants have exited.
+            if state=='dead' and group_exists(child['pgid']):state='unverified-group'
+            children.append(dict(child,liveness=state))
+        result.append(dict(row,liveness=liveness(row,probe=probe,now=now),children_liveness=children))
     return result
 
 
@@ -114,13 +144,160 @@ def finish(runtime,run_id,*,identity):
         row=read(path)
         if row['state']!='running' or any(row[key]!=identity.get(key) for key in ('pid','pgid','lstart')):
             raise RegistryError('finish identity mismatch')
+        for child in row.get('children',[]):
+            observed=process_identity(child['pid'])
+            if observed=={key:child[key] for key in ('pid','pgid','lstart')} or (observed is None and group_exists(child['pgid'])):
+                raise RegistryError('owned child or unverified group still live')
         path.unlink()
+        _sync_parent(path)
 
 
-def signal_run(runtime,run_id,*,probe=process_identity,send=os.killpg):
+def project_status(runtime, *, project=None, probe=process_identity, now=None, locked=None):
+    """Fail busy for unowned legacy state; never discover ownership via argv."""
+    runtime=Path(runtime);rows=scan(runtime,probe=probe,now=now)
+    if project and any(row['clone']!=str(Path(project).resolve()) for row in rows):
+        raise RegistryError('registry belongs to another project')
+    active=[row for row in rows if row['liveness'] in {'launching','running'} or any(
+        child['liveness'] in {'running','unverified-group'} for child in row['children_liveness'])]
+    if active:return {'busy':True,'source':'registry','runs':active}
+    if locked is None:
+        locked=False
+        lockfile=runtime/'run.lock'
+        if lockfile.exists():
+            if os.name=='nt':raise RegistryError('Windows lock observation adapter unavailable')
+            import fcntl
+            with lockfile.open('rb') as stream:
+                try:fcntl.flock(stream.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+                except BlockingIOError:locked=True
+                else:fcntl.flock(stream.fileno(),fcntl.LOCK_UN)
+    if locked:return {'busy':True,'source':'unowned-lock','runs':[]}
+    legacy=runtime/'running.pid'
+    if legacy.exists():
+        raw=legacy.read_text().strip()
+        if not raw.isdigit() or int(raw)<=0:raise RegistryError('legacy PID is invalid')
+        if probe(int(raw)) is not None:return {'busy':True,'source':'unowned-legacy-pid','runs':[]}
+    return {'busy':False,'source':'registry','runs':[]}
+
+
+def host_blockers(*, projects=None, clone=None, exclude_group=None, data_root=None):
+    """Migration/merge readers share registry truth, including legacy unknowns.
+
+    Until complete input pinning is recorded, every active host run can depend
+    on the mutable toolkit. No argv guess relaxes a merge guard.
+    """
+    from ilk_paths import ilk_data_root
+    root=Path(data_root) if data_root else ilk_data_root()
+    wanted={str(Path(path).resolve()) for path in projects} if projects else None
+    result=[]
+    for runtime in sorted((root/'projects').glob('*/runtime/launcher')):
+        status=project_status(runtime)
+        if not status['busy']:continue
+        if not status['runs']:
+            # Unknown old ownership cannot be scoped by guessing argv.
+            result.append(-1);continue
+        for row in status['runs']:
+            if wanted and row['clone'] not in wanted:continue
+            if row['liveness']=='running' and row['pgid']==exclude_group:continue
+            if clone and row.get('inputs_pinned') is True and row.get('code_root') and not Path(row['code_root']).resolve().is_relative_to(Path(clone).resolve()):continue
+            result.append(row['pid'] if row['liveness']=='running' else -1)
+    return sorted(set(result))
+
+
+def attach(runtime,run_id,*,pid,project,key,toolkit_sha,ttl,probe=process_identity):
+    """Lock winner binds a launch reservation or creates its direct-run record."""
+    _owner();runtime=Path(runtime);path=_path(runtime,run_id)
+    identity=probe(pid)
+    if not identity:raise RegistryError('runner process identity unavailable')
+    if not path.exists():
+        # Direct launch must prove this PID owns the legacy single-instance lock.
+        try:holder=json.loads((runtime/'run.lock').read_text())
+        except (OSError,ValueError):raise RegistryError('direct runner lock identity absent')
+        if any(holder.get(name)!=identity[name] for name in ('pid','pgid','lstart')):
+            raise RegistryError('direct runner does not own the recorded lock')
+        reserve(runtime,run_id=run_id,project_key=key,clone=project,exec_tree=project,
+                toolkit_sha=toolkit_sha,expires_at=time.time()+ttl)
+    row=read(path)
+    if row['clone']!=str(Path(project).resolve()) or row['toolkit_sha']!=toolkit_sha:
+        raise RegistryError('launch reservation contradicts runner inputs')
+    return bind_running(runtime,run_id,pid=pid,probe=probe)
+
+
+def main():
+    import argparse
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action',choices=['status','reserve','attach','finish','stop','code-sha','child'])
+    parser.add_argument('--runtime',type=Path)
+    parser.add_argument('--code-root',type=Path)
+    parser.add_argument('--run-id');parser.add_argument('--project',type=Path)
+    parser.add_argument('--key');parser.add_argument('--toolkit-sha')
+    parser.add_argument('--pid',type=int);parser.add_argument('--ttl',type=float)
+    parser.add_argument('--signal',choices=['TERM','KILL'],default='TERM')
+    parser.add_argument('--owner-pid',type=int)
+    args=parser.parse_args()
+    try:
+        if args.action=='code-sha':print(code_sha(args.code_root));return 0
+        if not args.runtime:raise RegistryError('runtime required')
+        if args.action=='status':
+            result=project_status(args.runtime,project=args.project);print(json.dumps(result))
+            return 0 if result['busy'] else 1
+        if args.action=='reserve':
+            if not args.ttl or not math.isfinite(args.ttl) or args.ttl<=0:raise RegistryError('explicit positive launch TTL required')
+            if project_status(args.runtime,project=args.project)['busy']:raise RegistryError('project is busy')
+            result=reserve(args.runtime,run_id=args.run_id,project_key=args.key,clone=args.project,exec_tree=args.project,
+                toolkit_sha=args.toolkit_sha,expires_at=time.time()+args.ttl)
+        elif args.action=='attach':
+            if not args.ttl or not math.isfinite(args.ttl) or args.ttl<=0:raise RegistryError('explicit positive launch TTL required')
+            result=attach(args.runtime,args.run_id,pid=args.pid,project=args.project,key=args.key,toolkit_sha=args.toolkit_sha,ttl=args.ttl)
+        elif args.action=='child':result=register_child(args.runtime,args.run_id,pid=args.pid,owner_pid=args.owner_pid)
+        elif args.action=='finish':
+            identity=process_identity(args.pid)
+            if not identity:raise RegistryError('finishing process identity unavailable')
+            finish(args.runtime,args.run_id,identity=identity);result={'finished':True}
+        else:result=signal_run(args.runtime,args.run_id,signum=getattr(signal,'SIG'+args.signal))
+        print(json.dumps(result));return 0
+    except (RegistryError,OSError,ValueError,TypeError,KeyError) as exc:
+        import sys
+        print(str(exc),file=sys.stderr);return 2
+
+
+def signal_run(runtime,run_id,*,probe=process_identity,send=os.killpg,signum=signal.SIGTERM):
     """Signal only a freshly verified recorded group. Caller controls waiting."""
     _owner();row=read(_path(runtime,run_id))
-    if liveness(row,probe=probe)!='running':raise RegistryError('recorded process identity is no longer live')
+    parent_state=liveness(row,probe=probe)
+    if parent_state!='running' and not any(liveness(dict(child,state='running'),probe=probe)=='running' for child in row.get('children',[])):
+        raise RegistryError('recorded process identity is no longer live')
     if row['pgid']==os.getpgrp():raise RegistryError('refusing caller process group')
-    send(row['pgid'],signal.SIGTERM)
+    if signum not in {signal.SIGTERM,signal.SIGKILL}:raise RegistryError('unsupported stop signal')
+    for child in row.get('children',[]):
+        state=liveness(dict(child,state='running'),probe=probe)
+        if state=='running':
+            if child['pgid']==os.getpgrp():raise RegistryError('refusing caller child process group')
+            send(child['pgid'],signum)
+        elif state=='dead' and group_exists(child['pgid']):
+            raise RegistryError('child group ownership unavailable; no unverified signal')
+    if parent_state=='running':send(row['pgid'],signum)
     return row
+
+
+def group_exists(pgid):
+    if os.name=='nt':raise RegistryError('Windows group observation adapter unavailable')
+    try:os.killpg(pgid,0);return True
+    except ProcessLookupError:return False
+    except PermissionError:return True
+
+
+def register_child(runtime,run_id,*,pid,owner_pid,probe=process_identity):
+    _owner();path=_path(runtime,run_id)
+    child=probe(pid)
+    if not child or child.get('pid')!=pid or child.get('pgid')!=pid:
+        raise RegistryError('owned child group leader unavailable')
+    with _lock(path.parent/'.registry.lock'):
+        row=read(path)
+        if owner_pid!=row['pid'] or liveness(row,probe=probe)!='running':raise RegistryError('child owner identity unavailable')
+        existing=row.setdefault('children',[])
+        if child not in existing:existing.append(child)
+        _write(path,row)
+    return child
+
+
+if __name__=='__main__':raise SystemExit(main())

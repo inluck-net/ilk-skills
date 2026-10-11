@@ -223,6 +223,7 @@ get_ilk_watchdog_dir() {
 # ----- Sentinel / PID helpers ------------------------------------------------
 
 test_process_alive() {
+  [[ "${1:-}" == "registry-busy" ]] && return 0
   local pid="$1"
   if [[ -z "$pid" || "$pid" -le 0 ]]; then
     return 1
@@ -252,19 +253,11 @@ read_ilk_pid() {
     echo ""
     return
   fi
-  local f="${launcher_dir}/running.pid"
-  if [[ ! -f "$f" ]]; then
-    echo ""
-    return
-  fi
-  local raw
-  raw=$(tr -d '[:space:]' < "$f")
-  if [[ -z "$raw" ]]; then
-    rm -f "$f"
-    echo ""
-    return
-  fi
-  echo "$raw"
+  local state rc=0
+  state=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_registry.py" status --runtime "$launcher_dir" --project "$project") || rc=$?
+  [[ "$rc" -eq 1 ]] && return 0
+  if [[ "$rc" -ne 0 ]]; then echo "registry-busy"; return 0; fi
+  python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(next((str(r["pid"]) for r in d["runs"] if r["liveness"]=="running"),"registry-busy"))' "$state"
 }
 
 read_last_exit_state() {

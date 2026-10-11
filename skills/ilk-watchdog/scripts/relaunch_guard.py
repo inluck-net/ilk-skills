@@ -114,24 +114,13 @@ def decide(project: Path, launcher_dir: Path, now: float | None = None) -> tuple
     now = datetime.now().timestamp() if now is None else now
     sentinel = _read_json(launcher_dir / "last-exit.json") or {}
 
-    holder = _lock_holder_alive(launcher_dir / "run.lock")
-    if holder is not None:
-        return 10, {"verdict": "alive",
-                    "reason": f"runner pid {holder} holds run.lock"}
-
-    launch = _read_json(launcher_dir / "last-launch.json")
-    if launch is not None:
-        started = _epoch(launch.get("started_at"))
-        ended = _epoch(sentinel.get("ended_at"))
-        if (started is not None and now - started < LAUNCH_WINDOW_SEC
-                and (ended is None or started > ended)
-                and _pid_alive(launch.get("pid"))):
-            return 10, {"verdict": "alive",
-                        "reason": (f"launched {int(now - started)}s ago "
-                                   f"(pid {launch.get('pid')}), not yet locked")}
+    from run_registry import project_status
+    activity=project_status(launcher_dir,project=project,now=now)
+    if activity['busy']:
+        return 10, {"verdict":"alive","reason":"registry busy: "+activity['source']}
 
     stopped_by = str(sentinel.get("stopped_by") or "")
-    if sentinel.get("state") == "interrupted" and stopped_by.startswith("signal:"):
+    if sentinel.get("state") == "interrupted" and (stopped_by.startswith("signal:") or stopped_by=="ilk-stop"):
         return 11, {"verdict": "operator-stop",
                     "reason": (f"run {sentinel.get('run_id', '?')} was stopped by "
                                f"{stopped_by} ({sentinel.get('stopped_reason', '')})")}

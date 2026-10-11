@@ -375,7 +375,7 @@ def read_sentinel(project_path: Path) -> dict | None:
         return None
     if isinstance(rec, dict) and detect_stale_running is not None:
         stale, reported_state, raw_state = detect_stale_running(
-            rec.get("state"), rec.get("pid")
+            rec.get("state"), rec.get("pid"), runtime=f.parent
         )
         rec["stale"] = stale
         rec["state"] = reported_state

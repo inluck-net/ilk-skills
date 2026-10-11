@@ -25,40 +25,13 @@ ilk_project_runners() {
   local project_path="$1"
   [[ -n "$project_path" ]] || return 1
 
-  # Normalise: strip trailing slash, resolve symlinks via cd+pwd -P so
-  # /tmp vs /private/tmp on macOS does not cause a miss.
-  local norm="${project_path%/}"
-  local resolved
-  resolved="$(cd "$norm" 2>/dev/null && pwd -P)" || resolved="$norm"
-
-  # Match both the bash -c wrapper and the run_ilk_loop_claude.sh process.
-  # LITERAL match via awk index(), never `$0 ~ pat`: `~` treats the path as
-  # a REGEX, so a project path containing `.` (e.g. `tmp.EVYaXMrl92`, or any
-  # dotted directory) would match a DIFFERENT project's runner and report a
-  # false busy — the same wedge class v0.9.55 fixed, arriving by another route.
-  # Verified 2026-08-12: with `~`, querying `/…/ilk.test` matched a live runner
-  # whose real path was `/…/ilkAtest`.
-  #
-  # ROLE-SPECIFIC (2026-09-20): the path must appear as the VALUE of
-  # --project-path, not anywhere in the line. Every runner's argv names the
-  # toolkit location as its script path, so for the toolkit's OWN repo the
-  # bare substring was present in every live runner's command — the toolkit
-  # project read busy whenever ANY project ran (measured: the scheduler
-  # skip-busied ilk-skills all day while kira ran, and ilk-run.sh refused
-  # "already running" with kira's PID). The trailing-space append makes a
-  # path at end-of-line match too.
-  ps -eo pid,command | awk -v pat="$norm" -v pat2="$resolved" '
-    index($0, "run_ilk_loop_claude") > 0 &&
-    (index($0 " ", "--project-path " pat " ") > 0 ||
-     index($0 " ", "--project-path " pat2 " ") > 0) {
-      # Skip lines containing our own grep or this function
-      if (index($0, "ilk_project_runners") > 0) next
-      if (index($0, "grep") > 0 && index($0, "run_ilk_loop") > 0) next
-      print $1
-    }
-  ' | awk 'NF' | while read -r pid; do
-    [[ "$pid" != "$$" && "$pid" != "$PPID" ]] && echo "$pid"
-  done | grep .
+  local scripts="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+  local state runtime rc=0
+  runtime=$(python3 "$scripts/ilk_paths.py" --start "$project_path" | python3 -c 'import json,sys;print(json.load(sys.stdin)["external_launcher_dir"])') || return 2
+  state=$(python3 "$scripts/run_registry.py" status --runtime "$runtime" --project "$project_path") || rc=$?
+  [[ "$rc" -eq 1 ]] && return 1
+  [[ "$rc" -eq 0 ]] || return 2
+  python3 -c 'import json,sys;d=json.loads(sys.argv[1]); rows=d["runs"]; print("\n".join(str(r["pid"]) for r in rows if r["liveness"]=="running"));sys.exit(0 if rows and all(r["liveness"]=="running" for r in rows) else 2)' "$state"
 }
 
 ilk_pid_alive() {

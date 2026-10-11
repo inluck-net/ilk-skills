@@ -156,25 +156,18 @@ def main() -> int:
 
         pid = read_pid_file(path)
         sentinel_state = read_sentinel_state(path)
-        # ilk_pid_alive, not bare liveness: running.pid outlives the run that
-        # wrote it, and a recycled PID would read as "running" forever.
-        if pid is not None and ilk_pid_alive(pid):
-            state = "running"
-            pid_disp = str(pid)
-        elif sentinel_state == "running" and pid is not None:
-            # Sentinel says running but PID is dead — stale
-            state = "stale-running"
-            pid_disp = f"{pid} (dead)"
+        from run_registry import project_status,RegistryError
+        launcher=external_launcher_dir(project_key(path))
+        try:
+            activity=project_status(launcher,project=path)
+        except (RegistryError,OSError,ValueError):
+            state="unknown-busy";pid_disp="?"
         else:
-            if pid is not None:
-                stale = _get_pid_file_path(path)
-                if stale:
-                    try:
-                        stale.unlink()
-                    except OSError:
-                        pass
-            state = "idle"
-            pid_disp = "-"
+            if activity['busy']:
+                state="running" if activity['source']=='registry' else "unknown-busy"
+                pid_disp=','.join(str(row['pid']) for row in activity['runs'] if row['pid']) or '?'
+            elif sentinel_state=="running":state="stale-running";pid_disp=str(pid or '-')
+            else:state="idle";pid_disp="-"
 
         plan_status = run_loop_status(path)
         rows.append((name, state, plan_status, pid_disp))

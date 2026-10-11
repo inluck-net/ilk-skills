@@ -358,6 +358,9 @@ def _find_any_live_ilk_pids(pattern: str = DEFAULT_PROBE_PATTERN) -> list[int]:
             error, etc.).  The caller must treat this as "unknown liveness"
             and refuse.
     """
+    if pattern==DEFAULT_PROBE_PATTERN:
+        from run_registry import host_blockers
+        return host_blockers()
     return _pgrep(pattern)
 
 
@@ -397,6 +400,10 @@ def _find_live_ilk_pids_hostwide(
             error, etc.).  The caller must treat this as "unknown liveness"
             and refuse.
     """
+    if pattern is None:
+        import os
+        from run_registry import host_blockers
+        return host_blockers(clone=clone_path,exclude_group=os.getpgrp())
     import re as _re
 
     if pattern is None:
@@ -551,6 +558,10 @@ def _find_live_ilk_pids(
             f"got {repo_path!r}"
         )
 
+    if pattern==DEFAULT_PROBE_PATTERN:
+        import os
+        from run_registry import host_blockers
+        return host_blockers(projects=roots,exclude_group=os.getpgrp())
     candidates = _pgrep(pattern)
     if not candidates:
         return []
