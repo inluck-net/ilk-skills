@@ -104,6 +104,9 @@ class ShellBroker:
                 try:os.killpg(process.pid,signal.SIGKILL)
                 except ProcessLookupError:pass
                 with self._guard:self._active=None
+            if context.get('run_registry_dir'):
+                from run_registry import retire_child
+                if not retire_child(context,process.pid):raise RuntimeError('shell group cleanup is incomplete')
         result={'exit_code':code,'stdout':stdout_path.read_text(errors='replace'),
                 'stderr':stderr_path.read_text(errors='replace'),'stdout_path':str(stdout_path),'stderr_path':str(stderr_path)}
         record={key:value for key,value in result.items() if key not in {'stdout','stderr'}}

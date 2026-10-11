@@ -82,8 +82,11 @@ cp=subprocess.run([sys.executable,str(Path(frozen['code_root'])/'skills/ilk-loop
     env=env,capture_output=True,text=True)
 assert cp.returncode==0,cp.stderr
 assert ctx.read_bytes()==original
-rows=scan(registry);assert len(rows[0]['children'])>=5
-assert all(child['pid']==child['pgid'] and child['lstart'] for child in rows[0]['children'])
+rows=scan(registry)
+events=[json.loads(line) for line in (registry/'child-events.jsonl').read_text().splitlines()]
+registered=[event for event in events if event['event']=='registered'];assert len(registered)>=5
+assert all(event['identity']['pid']==event['identity']['pgid'] and event['identity']['lstart'] for event in registered)
+assert all(child['liveness']=='running' for child in rows[0]['children_liveness'])
 accepted=json.loads((ctx.parent/(ctx.stem+'-acceptance.json')).read_text())
 assert accepted['accepted'] and len(accepted['attempts'])==2
 assert not accepted['attempts'][0]['all_passed'] and accepted['attempts'][1]['all_passed']
@@ -94,7 +97,7 @@ while scan(registry)[0]['children_liveness'][0]['liveness']=='running':
     assert monotonic()<deadline
     time.sleep(.02)
 finish(registry,context['run_id'],identity=process_identity(os.getpid()))
-result.write_text(json.dumps({'accepted':accepted['accepted'],'children':len(rows[0]['children']),'scope':binding,'frozen':original.decode()}))
+result.write_text(json.dumps({'accepted':accepted['accepted'],'children':len(registered),'scope':binding,'frozen':original.decode()}))
 '''
     env=dict(os.environ,PYTHONPATH=str(Path(manifest['code_root'])/'skills/ilk-loop/scripts'))
     for key in ('ILK_ITER_CONTEXT','ILK_WORKER_SESSION','ILK_RUN_INPUTS'):env.pop(key,None)

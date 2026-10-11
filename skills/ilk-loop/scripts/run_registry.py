@@ -360,7 +360,40 @@ def register_child(runtime,run_id,*,pid,owner_pid,probe=process_identity):
         existing=row.setdefault('children',[])
         if child not in existing:existing.append(child)
         _write(path,row)
+        _child_event(runtime,run_id,'registered',child)
     return child
+
+
+def _child_event(runtime,run_id,event,identity):
+    path=Path(runtime)/'child-events.jsonl'
+    with path.open('a') as stream:
+        stream.write(json.dumps(dict(run_id=run_id,event=event,identity=identity,
+                                     observed_at=time.time()),separators=(',',':'))+'\n')
+        stream.flush();os.fsync(stream.fileno())
+    path.chmod(0o600);_sync_parent(path)
+
+
+def retire_child(context,pid):
+    """Remove only a reaped, absent group; retain its durable identity event.
+
+    Unknown descendants stay registered. No termination, reused-PID guess or
+    elapsed-time inference is used to make the live registry smaller.
+    """
+    owner=driver_authority(context)
+    if not owner or not owner.get('run_registry_dir'):return True
+    require_driver(context);runtime=Path(owner['run_registry_dir']);path=_path(runtime,owner['run_id'])
+    with _lock(path.parent/'.registry.lock'):
+        row=read(path)
+        if row['pid']!=owner['runner_owner_pid'] or process_identity(row['pid'])!={key:row[key] for key in ('pid','pgid','lstart')}:
+            raise RegistryError('child retirement owner changed')
+        matches=[child for child in row.get('children',[]) if child['pid']==pid]
+        if len(matches)!=1:return False
+        child=matches[0]
+        if group_identity(pid) is not None or group_exists(child['pgid']):return False
+        _child_event(runtime,owner['run_id'],'closed',child)
+        row['children']=[item for item in row['children'] if item!=child]
+        _write(path,row)
+    return True
 
 
 def cleanup_children(runtime,run_id,*,owner,owner_exited=False,probe=process_identity,send=os.killpg):

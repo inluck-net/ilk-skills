@@ -153,6 +153,25 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- 2026-10-11 D1 post-change growth observation: thirty completed commands
+  retained zero live-registry child rows, with thirty private registration and
+  thirty closure events. Command elapsed 1.143s; registry scan 0.00209s versus
+  the previous 0.0557s. One pair only: extra durability work slowed trivial
+  commands while bounded live-set scans improved. No overall speed claim.
+  Broker close now waits for native exit and checks all owned groups within
+  the original deadline, rather than returning after a signal request. Unknown
+  groups cannot supply positive cleanup. Focused check result recorded next.
+
+- 2026-10-11 D1 registry-growth measurement: thirty real trivial registered
+  commands retained thirty dead child rows (0.960s command elapsed, 0.0557s
+  registry scan; single fixture observation, not a model benchmark). Candidate
+  retirement removes only absent/reaped groups and stores private fsynced
+  registration/closure events. Unknown descendants remain registered and refuse
+  positive completion. Five focused dispatch/native/retirement checks passed
+  in 5.08s. Exited-group and owner-loss checks: 29 passed in 1.85s.
+  Next: post-change growth observation and archived normal/two-plan caller,
+  then safe first-increment landing and remaining input/state adapters.
+
 - 2026-10-11 D1 exited-group measurement: a real registered command exited
   leaving a descendant; cleanup refused its unreaped leader (0.13s failing
   fixture). Added a separate exact PID/PGID/start probe allowing a zombie only

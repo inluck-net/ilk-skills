@@ -113,6 +113,8 @@ def worker_turn(context,path,prompt,*,claude,model,budget,mcp,session=None):
         for thread in threads:
             if thread.ident is not None:thread.join()
         for sig,handler in handlers.items():signal.signal(sig,handler)
+        from run_registry import retire_child
+        if not retire_child(context,process.pid):raise ContextError('worker group cleanup is incomplete')
     cli_ended=monotonic()
     roots=[row for row in events if isinstance(row,dict) and not row.get('parent_tool_use_id')]
     ids={row['session_id'] for row in roots if row.get('type')=='system' and row.get('subtype')=='init' and row.get('session_id')}

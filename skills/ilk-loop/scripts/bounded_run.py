@@ -133,6 +133,11 @@ def _run_posix(
                 pass
             stdout, stderr = proc.communicate()
         return None, stdout, stderr, True
+    finally:
+        if context and context.get('worker_sandbox_adapter')=='macos-brokered-shell':
+            from run_registry import retire_child,RegistryError
+            if not retire_child(context,proc.pid):
+                raise RegistryError('finished command group is missing or still owns descendants')
 
 
 def _communicate_with_stall_detection(

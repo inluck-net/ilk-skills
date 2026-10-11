@@ -95,13 +95,39 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
 
 
 def close(context_path):
-    """Signal only the freshly verified broker created for this context."""
+    """Close exact broker/groups within the original iteration deadline."""
     context=read_context(Path(context_path));identity=context.get('shell_broker_identity')
     if not identity:raise ContextError('owned broker identity absent')
+    from run_registry import require_driver,scan
+    require_driver(context)
     observed=process_identity(identity['pid'])
-    if observed is None:return
-    if observed!=identity:raise ContextError('broker identity changed; refusing signal')
-    os.kill(identity['pid'],signal.SIGTERM)
+    if observed is not None:
+        if observed!=identity:raise ContextError('broker identity changed; refusing signal')
+        import select
+        queue=select.kqueue()
+        try:
+            try:
+                queue.control([select.kevent(identity['pid'],filter=select.KQ_FILTER_PROC,
+                    flags=select.KQ_EV_ADD|select.KQ_EV_ONESHOT,fflags=select.KQ_NOTE_EXIT)],0,0)
+            except ProcessLookupError:pass
+            else:
+                observed=process_identity(identity['pid'])
+                if observed is not None:
+                    if observed!=identity:raise ContextError('broker identity changed before close')
+                    os.kill(identity['pid'],signal.SIGTERM)
+                    if not queue.control(None,1,max(context['iteration_deadline_monotonic']-monotonic(),0)):
+                        raise ContextError('broker cleanup reached original iteration deadline')
+        finally:queue.close()
+    # Exit notification precedes init reaping on this host. Bounded 20ms
+    # readiness retries are a responsiveness judgment, not a new timeout;
+    # sustained scan CPU or slow valid cleanup falsifies this interval.
+    while True:
+        rows=[row for row in scan(Path(context['run_registry_dir'])) if row['run_id']==context['run_id']]
+        if len(rows)!=1:raise ContextError('broker cleanup registry identity unavailable')
+        if not any(child['liveness'] in {'running','unverified-group'} for child in rows[0]['children_liveness']):return
+        if monotonic()>=context['iteration_deadline_monotonic']:
+            raise ContextError('owned group cleanup incomplete at original deadline')
+        threading.Event().wait(.02)
 
 
 def binding(context_path):
