@@ -112,7 +112,8 @@ local wip_preserved=0 iter_tool_calls=0 iter_test_invocations=0 _amend_flag=/non
 ''' + source[start:end] + '\n}\nmain\n'
     env = dict(os.environ, HOME=str(tmp_path), ILK_DATA_HOME=str(tmp_path/'data'),
                ILK_DATA_DIR=str(tmp_path/'data'), iter_log=str(log),JSONL_LOG=str(out),
-               _SKILL_ROOT=str(ROOT/'skills'), ILK_ITER_CONTEXT=str(context))
+               _SKILL_ROOT=str(ROOT/'skills'), ILK_ITER_CONTEXT=str(context),
+               PYTHONPATH=str(ROOT/'skills/ilk-loop/scripts')+os.pathsep+os.environ.get('PYTHONPATH',''))
     cp = subprocess.run(['bash','-c',script],env=env,capture_output=True,text=True,timeout=20)
     assert cp.returncode == 0, cp.stderr
     record = json.loads(out.read_text())
@@ -152,6 +153,11 @@ def test_detached_entry_delivers_brief_to_stub_cli(tmp_path, tamper_gate):
     skills = tmp_path/'skills'
     shutil.copytree(ROOT/'skills',skills)
     shutil.copytree(ROOT/'tools/loop-performance',tmp_path/'tools/loop-performance')
+    # The ordinary entry now requires a real toolkit commit identity; this
+    # copied fixture must have one rather than weakening production admission.
+    for args in [('init','-q'),('add','skills','tools'),('commit','-qm','toolkit fixture')]:
+        subprocess.run(['git','-c','user.name=fixture','-c','user.email=fixture@example.invalid',*args],
+                       cwd=tmp_path,check=True,capture_output=True)
     project = tmp_path/'project';project.mkdir()
     (project/'README.md').write_text('fixture\n')
     for args in [('init','-q'),('add','README.md'),('commit','-qm','fixture')]:

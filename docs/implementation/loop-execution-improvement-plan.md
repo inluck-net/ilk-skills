@@ -17,9 +17,9 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: complete drain request/emitter and relaunch reader wiring,
-after the checked consumer claim/cleanup protection; then selfmod recovery and remaining
-state/lifecycle adapters and activation. D1 POSIX callers and D2 private launch
+Current next action: finish representative consumer acceptance after measured discovery
+timeout, then selfmod recovery and remaining state/lifecycle adapters. Prepared-pin
+drain/relaunch has archived native caller evidence; production activation is still open. D1 POSIX callers and D2 private launch
 inputs now have production-entry candidate evidence. C3 preparation/acceptance/
 repair is wired but remains disabled by default. Actual-base provenance and
 Windows/member/dirty-entry adapters remain open. Continue here per Chad:
@@ -152,6 +152,32 @@ output/context work; verify current state at the actual landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- Implementation-root prompt clarification plus focused caller checks: 10 passed
+  in 16.18s. The first run found two stale copied-fixture assumptions (missing
+  script import path and no toolkit Git identity) and a real early-exit unset
+  unattended flag. Fixtures now provide required identity/imports rather than
+  weakening admission; early cleanup defaults an uninitialized flag to off.
+  First result 3 failed / 7 passed in 8.63s is retained here. Actual provider
+  rerun will use a fresh isolated clone and unchanged 120s iteration cap.
+
+- `f2a79cb1` ordinary launcher activation plus normal entry: 2 passed in
+  31.35s. `357ddc1c` added live-old-PID, human-hold and changed-request
+  refusal checks before actual relaunch: 1 passed in 25.92s. New run consumes
+  the prepared next pin, restores original 1-minute/1-iteration bounds despite
+  99/99 caller overrides, closes/ships the remaining plan and archives the old
+  request after binding. Source shared checkout and installed inputs unchanged.
+- Actual isolated gh-resolve provider sample at `357ddc1c` FAILED acceptance:
+  123.071s wall, original 120s iteration limit, 14 Bash calls, no edit/gate/
+  commit/advance/ship; positive integrity/audit and registry idle. Baseline
+  regression was independently red. Evidence `consumer-provider-upgrade-invalid/`.
+  The exact execution root and selected plan were correct. Commands read
+  consumer implementation/tests, expanded into toolkit terminal contracts and
+  more consumer tests, then timed out. This is discovery cost, not evidence
+  of model thinking latency or a kernel cwd defect. No cap/default change.
+  Next candidate makes relative implementation-root roles explicit and asks
+  for independent implementation/test reads together; next actual run will
+  test this hypothesis rather than repeat an unchanged fixture.
 
 - `b8f094c4` exact archived normal / accepted-step drain callers passed 2 in
   13.83s: first plan shipped with closed proof, second remained pending at 0,

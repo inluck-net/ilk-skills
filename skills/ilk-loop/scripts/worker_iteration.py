@@ -48,6 +48,9 @@ def instructions(context,path):
     return '\n'.join([
         'ILK CODE-ONLY DISPATCH: the driver owns gates, commits, pointers and shipping.',
         f"Execution worktree: {context['exec_tree']}",
+        'All relative implementation paths in the selected step refer to this execution worktree.',
+        'The pinned wrapper and toolkit root are driver infrastructure, not the implementation target.',
+        'Read the named implementation files and relevant tests together where independent; then make the scoped change.',
         f"Read this exact subplan: {selected['subplan_path']}",
         ('Root instruction files were inventoried by the driver: '+json.dumps([row['path'] for row in inventory])
          if inventory is not None else 'Root instruction inventory is unknown; read repository instructions.'),

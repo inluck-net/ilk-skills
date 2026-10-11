@@ -2357,7 +2357,7 @@ print(fm.get('result_file', ''))
 # exit path both call this; the first writer wins).
 _RESULT_FILE_WRITTEN=0
 _write_unattended_result() {
-  [[ "$_UNATTENDED_PROFILE" -eq 1 ]] || return 0
+  [[ "${_UNATTENDED_PROFILE:-0}" -eq 1 ]] || return 0
   [[ -n "$_UNATTENDED_RESULT_FILE" ]] || return 0
   [[ "$_RESULT_FILE_WRITTEN" -eq 0 ]] || return 0
 
