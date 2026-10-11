@@ -22,8 +22,9 @@ Delivery target: by 2026-10-12 00:48 Asia/Shanghai (two hours from Chad’s
 request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
-Current next action: close remaining legacy reader/recovery/parity requirements
-and delivery documentation in this isolated worktree. Toolkit preview bb0e7d31
+Current next action: wire candidate measured-red progress into opt-in Mac
+worker/loop, close/result and consumer readers, then finish remaining
+legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview bb0e7d31
 and consumer compatibility 2cb713ae are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -2942,3 +2943,30 @@ plans, pause and private dispatched inputs remain unchanged.
   No model/full suite or real toolkit/source worker mutation. Diff check
   passed. Not installed. Next close/ledger/result/consumer adapters and only
   then opt-in runtime integration. Windows/member/timeout entry still open.
+
+### Exact closed progress ledger stays unproven
+
+- New progress_close.finalize consumes exactly one durable matching close in
+  the canonical summary log. It independently validates the advanced raw-red
+  projection, frozen context, positive progress-only integrity/state, absent
+  registered child liveness and physical selfmod landing. Open-only or
+  pending/changed landing cannot finalize. Append is locked/idempotent.
+- Closed progress retains gate_outcome=fail, integrity_passed=false, raw check
+  failures and accepted=false/green_accepted=false. Additive
+  progress_integrity_passed/driver_progress_accepted and pre_existing_red
+  carry code progress with a named unproven reason; no green proof.
+- Actual close fixture exposed audit filtering the typed row before reading
+  its reason (1 failed in 15.34s). New closed_progress_is_observable validates
+  exact plan/master fingerprints, reachable actual commit/tree, typed closed
+  progress and non-green fields. It admits diagnostic reasons only; existing
+  ledger_record_is_reachable remains green-proof-only, and neither step union
+  nor scoped gate proof receives these diagnostic rows.
+- Corrected actual finalization/audit: 1 passed in 15.51s. Final selection
+  additionally refuses wrong tree, foreign plan and green-conflated metadata,
+  verifies no green reachability, and idempotent finalization: 1 passed in
+  15.54s. Adjacent ship audit/frozen identity/status: 31 passed in 4.25s.
+  No model, full suite, actual worker/plan mutation or installation change.
+- Next opt-in worker/loop integration must stop retrying a positively
+  validated pre-existing-red progress step, retain raw fail, land/close it
+  before selecting the next step, and tell terminal consumers unproven rather
+  than green/completed claim. Final verification stays opt-in.

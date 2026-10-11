@@ -336,6 +336,11 @@ def ledger_record_is_reachable(record: dict, cwd: Path | None = None) -> bool:
     """
     if record.get('record_phase')=='close' and (record.get('integrity_passed') is not True or record.get('landed') is not True or record.get('gate_outcome')!='pass'):
         return False
+    return ledger_record_range_is_reachable(record,cwd)
+
+
+def ledger_record_range_is_reachable(record: dict, cwd: Path | None = None) -> bool:
+    """Commit reachability only; this function grants no gate/step proof."""
     commits=record.get('commits')
     head=record.get('head') or record.get('head_sha')
     if commits is None and not head:
@@ -349,6 +354,31 @@ def ledger_record_is_reachable(record: dict, cwd: Path | None = None) -> bool:
         cp=subprocess.run(['git','merge-base','--is-ancestor',sha,'HEAD'],cwd=cwd,capture_output=True)
         if cp.returncode: return False
     return True
+
+
+
+def closed_progress_is_observable(record,cwd,subplan_path,master_path):
+    """Retain a typed closed unproven reason, never add green/step proof."""
+    if (record.get('record_phase')!='close' or record.get('progress_protocol')!='measured-red-progress-v1'
+            or record.get('driver_progress_accepted') is not True or record.get('progress_integrity_passed') is not True
+            or record.get('integrity_passed') is not False or record.get('landed') is not True
+            or record.get('gate_outcome')!='fail' or record.get('accepted') is not False
+            or record.get('green_accepted') is not False or record.get('accepted_tree') is not None
+            or not cwd or not subplan_path or not master_path):return False
+    from plan_fingerprint import fingerprint
+    try:
+        plan=Path(subplan_path).resolve(strict=True);master=Path(master_path).resolve(strict=True)
+        if (record.get('context_plan_path')!=str(plan) or record.get('master_path')!=str(master)
+                or record.get('context_plan_fingerprint')!=fingerprint(plan)
+                or record.get('context_master_fingerprint')!=fingerprint(master)):return False
+        head=record.get('progress_head');tree=record.get('progress_tree')
+        if (not isinstance(head,str) or not re.fullmatch('[a-f0-9]{40}|[a-f0-9]{64}',head)
+                or not isinstance(tree,str) or not re.fullmatch('[a-f0-9]{40}|[a-f0-9]{64}',tree)
+                or record.get('head')!=head or record.get('after_sha')!=head):return False
+        if not ledger_record_range_is_reachable(record,cwd):return False
+        observed=subprocess.run(['git','rev-parse',head+'^{tree}'],cwd=cwd,capture_output=True,text=True)
+        return observed.returncode==0 and observed.stdout.strip()==tree
+    except (OSError,ValueError):return False
 
 
 def check_step_commits(
@@ -982,6 +1012,9 @@ def audit_ship(
         }
 
     cwd=audit_execution_root(cwd,subplan_path,master_path)
+    # Closed raw-red progress is diagnostic evidence, never green proof.
+    progress_reasons=[record for record in (ledger_records or []) if isinstance(record,dict)
+                      and closed_progress_is_observable(record,cwd,subplan_path,master_path)]
     if ledger_records is not None:
         ledger_records = [rec for rec in ledger_records
                           if isinstance(rec, dict) and ledger_record_is_reachable(rec, cwd)]
@@ -1280,8 +1313,9 @@ def audit_ship(
     # Check for pre_existing_red in ledger records.
     # A step that advanced past an excused red is UNPROVEN with a named reason.
     _has_pre_existing_red = False
-    if ledger_records:
-        for rec in ledger_records:
+    reason_records=(ledger_records or [])+progress_reasons
+    if reason_records:
+        for rec in reason_records:
             if not isinstance(rec, dict):
                 continue
             if rec.get("slug") != slug:

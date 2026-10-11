@@ -441,3 +441,13 @@ base, reporting green_accepted=false/accepted_tree=null. Existing land stays
 green-only. Actual fixture landing, idempotence, strict-green refusal and
 existing green/changed-source callers are checked on Mac. These APIs still
 need close/ledger/result/consumer and opt-in runtime caller integration.
+
+New candidate progress_close.finalize projects one exact durable close after
+positive progress-only integrity/state, absent registered children and actual
+landing. Closed progress keeps gate_outcome=fail/integrity_passed=false and
+adds progress_integrity_passed/driver_progress_accepted. ship_audit now retains
+validated typed closed progress as a named unproven diagnostic reason while
+its gate/step proof readers still reject it. Open-only, pending landing, wrong
+tree/scope and green-conflated fields are refused in actual Mac fixture checks.
+These APIs remain unwired into loop and consumer lifecycle; final verification
+stays opt-in and no running worker or dispatched input is changed.

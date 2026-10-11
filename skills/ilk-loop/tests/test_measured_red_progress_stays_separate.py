@@ -18,13 +18,13 @@ def run_case(tmp_path,case,transaction='none'):
     git(root,'commit','--allow-empty','-qm','iteration fixture')
     context.update(base_commit=git(root,'rev-parse','HEAD'),base_tree=git(root,'rev-parse','HEAD^{tree}'))
     context['dispatch']['batch_base_sha']=batch
-    if transaction in {'projection','landing'}:
+    if transaction in {'projection','landing','close'}:
         from iteration_context import plan_snapshot
         master=plan.parent/'MASTER-progress.md'
         master.write_text('---\nmaster_plan: progress\nstatus: active\n---\n[plan](./'+plan.name+')\n')
         context['dispatch']['master_path']=str(master)
         context['master_snapshot']=plan_snapshot(master)
-    if transaction=='landing':
+    if transaction in {'landing','close'}:
         clone=Path(context['clone']);git(clone,'merge','--ff-only',context['base_commit'])
         context.update(clone_base_commit=git(clone,'rev-parse','HEAD'),clone_entry_dirty=False)
     (root/'counter.py').write_text('def f(value): return value + 2\n')
@@ -87,7 +87,7 @@ if sys.argv[3]!='none':
         assert original_git(Path(ctx['exec_tree']),'rev-list','--count',ctx['base_commit']+'..HEAD')=='1'
         again=tx.recover(ctx,deadline=ctx['iteration_deadline_monotonic'])
         assert again['head_commit']==row['head_commit'] and again['accepted'] is False
-        if mode=='landing':
+        if mode in {'landing','close'}:
             from selfmod_landing import land,land_progress
             from iteration_context import ContextError
             try:land(ctx,row,deadline=ctx['iteration_deadline_monotonic'])
@@ -98,7 +98,7 @@ if sys.argv[3]!='none':
             assert original_git(Path(ctx['clone']),'rev-parse','HEAD')==row['head_commit']
             assert land_progress(ctx,row,deadline=ctx['iteration_deadline_monotonic'])['head_after']==row['head_commit']
             assert Path(ctx['exec_tree']).is_dir()
-        if mode=='projection':
+        if mode in {'projection','close'}:
             from progress_projection import project
             from iteration_context import ContextError
             projected=project(ctx,row,deadline=ctx['iteration_deadline_monotonic'])
@@ -115,6 +115,41 @@ if sys.argv[3]!='none':
                 [{'command':projected['command']}],'false',selected['slug'],
                 cwd=Path(ctx['exec_tree']),ledger_records=[projected],subplan_path=Path(selected['subplan_path']),master_path=Path(selected['master_path']))
             assert audit['proven'] is False and any('pre-existing red' in reason for reason in audit['reasons']),audit
+        if mode=='close':
+            from progress_close import finalize
+            from plan_state import audit_context
+            from ship_proof_ledger import read_raw_records
+            log=Path(ctx['runtime_dir']).parent/'logs/.ilk-loop.log';log.parent.mkdir(parents=True)
+            log.write_text(json.dumps(dict(record_phase='open',run_id=ctx['run_id'],iteration=ctx['iteration']))+'\n')
+            try:finalize(ctx,log,deadline=ctx['iteration_deadline_monotonic'])
+            except ContextError:pass
+            else:raise AssertionError('open-only progress became close proof')
+            close=dict(record_phase='close',run_id=ctx['run_id'],iteration=ctx['iteration'],context=ctx,
+                driver_acceptance=row,driver_progress_integrity_passed=True,driver_integrity_passed=False,
+                state_audit=audit_context(ctx),merge_outcome='merged',selfmod_landing=landed,stop_reason=None)
+            log.write_text(json.dumps(dict(close,merge_outcome='pending'))+'\n')
+            try:finalize(ctx,log,deadline=ctx['iteration_deadline_monotonic'])
+            except ContextError:pass
+            else:raise AssertionError('pending progress landing became close proof')
+            assert not Path(ctx['ledger_path']).exists()
+            log.write_text(json.dumps(close)+'\n')
+            assert finalize(ctx,log,deadline=ctx['iteration_deadline_monotonic'])==1
+            assert finalize(ctx,log,deadline=ctx['iteration_deadline_monotonic'])==0
+            records=read_raw_records(Path(ctx['ledger_path']))
+            assert len(records)==1 and records[0]['integrity_passed'] is False and records[0]['progress_integrity_passed'] is True
+            assert records[0]['gate_outcome']=='fail' and records[0]['accepted'] is False
+            from ship_audit import ledger_record_is_reachable,closed_progress_is_observable
+            assert ledger_record_is_reachable(records[0],Path(ctx['exec_tree'])) is False
+            assert closed_progress_is_observable(records[0],Path(ctx['exec_tree']),Path(selected['subplan_path']),Path(selected['master_path'])) is True
+            assert closed_progress_is_observable(dict(records[0],progress_tree='a'*40),Path(ctx['exec_tree']),Path(selected['subplan_path']),Path(selected['master_path'])) is False
+            assert closed_progress_is_observable(dict(records[0],context_plan_path='/foreign/plan.md'),Path(ctx['exec_tree']),Path(selected['subplan_path']),Path(selected['master_path'])) is False
+            assert closed_progress_is_observable(dict(records[0],accepted=True,green_accepted=True),Path(ctx['exec_tree']),Path(selected['subplan_path']),Path(selected['master_path'])) is False
+
+            audit=audit_ship('shipped',Path(selected['subplan_path']).read_text(),
+                [{'command':projected['command']}],'false',selected['slug'],cwd=Path(ctx['exec_tree']),
+                ledger_records=records,subplan_path=Path(selected['subplan_path']),master_path=Path(selected['master_path']))
+            assert audit['proven'] is False and any('pre-existing red' in reason for reason in audit['reasons']),audit
+
 
 finish(registry,ctx['run_id'],identity=process_identity(os.getpid()))
 print(json.dumps(row))
@@ -138,6 +173,6 @@ def test_real_gate_and_bases_keep_distinct_decisions(tmp_path,case):
     run_case(tmp_path,case)
 
 
-@pytest.mark.parametrize('phase',['normal','commit-intent','committed','prepared','advanced','changed-output','hook-changed','hook-committed','forged-observation','projection','landing'])
+@pytest.mark.parametrize('phase',['normal','commit-intent','committed','prepared','advanced','changed-output','hook-changed','hook-committed','forged-observation','projection','landing','close'])
 def test_progress_transaction_recovers_without_green_or_duplicate_commit(tmp_path,phase):
     run_case(tmp_path,'pre-existing',phase)
