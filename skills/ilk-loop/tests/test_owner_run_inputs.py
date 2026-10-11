@@ -48,6 +48,37 @@ def test_unknown_hook_wrapper_is_refused_without_prepared_home(tmp_path):
     assert not destination.exists()
 
 
+def test_project_sources_preserve_hooks_restrictions_and_do_not_follow_edits(tmp_path):
+    repo,home,_=fixture(tmp_path)
+    directory=repo/'.claude';directory.mkdir()
+    (repo/'guard.py').write_text('# team guard')
+    shared=directory/'settings.json';local=directory/'settings.local.json'
+    shared.write_text(json.dumps({'hooks':{'PreToolUse':[{'matcher':'Bash','hooks':[
+        {'type':'command','command':'python3 guard.py'}]}]},
+        'permissions':{'deny':['Read(secret)']},'env':{'TEAM':'shared'},'model':'team-model'}))
+    local.write_text(json.dumps({'permissions':{'deny':['Write(proof)']},'env':{'TEAM':'local'}}))
+    destination=tmp_path/'run';manifest=prepare(repo,home,destination,project=repo)
+    settings=json.loads((destination/'worker-home/settings.json').read_text())
+    assert settings['permissions']['deny']==['Read(secret)','Write(proof)']
+    assert settings['env']['TEAM']=='local' and settings['model']=='team-model'
+    assert len(settings['hooks']['PreToolUse'])==2
+    assert manifest['cli_setting_sources']==''
+    shared.write_text('{}');local.write_text('{}');(repo/'guard.py').write_text('# later')
+    assert json.loads((destination/'worker-home/settings.json').read_text())==settings
+    assert all(digest(Path(row['pinned_script']))==row['pinned_sha256'] for row in manifest['hooks'])
+    assert 'private-token' not in (destination/'inputs.json').read_text()
+
+
+@pytest.mark.parametrize('setting',[{'permissions':{'defaultMode':'bypassPermissions'}},
+                                   {'modelSettings':{}},{'env':{'OTEL_ENDPOINT':'private'}}])
+def test_unsupported_project_semantics_refuse_before_creating_home(tmp_path,setting):
+    repo,home,_=fixture(tmp_path);directory=repo/'.claude';directory.mkdir()
+    (directory/'settings.json').write_text(json.dumps(setting))
+    destination=tmp_path/'run'
+    with pytest.raises(InputPinError,match='adapter'):prepare(repo,home,destination,project=repo)
+    assert not destination.exists()
+
+
 def test_explicit_interpreter_hook_is_copied_and_rewritten(tmp_path):
     import sys
     repo,home,hook=fixture(tmp_path)

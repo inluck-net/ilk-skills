@@ -73,6 +73,7 @@ def worker_turn(context,path,prompt,*,claude,model,budget,mcp,session=None):
         raise ContextError('worker MCP configuration contradicts frozen launch inputs')
     args=[claude,'-p','--dangerously-skip-permissions','--output-format','stream-json',
           '--verbose','--include-partial-messages','--tools','Bash','--settings',bound['settings_path'],
+          '--setting-sources','',
           '--append-system-prompt',instructions(context,path)]
     if model:args+=['--model',model]
     if budget:args+=['--max-budget-usd',str(budget)]

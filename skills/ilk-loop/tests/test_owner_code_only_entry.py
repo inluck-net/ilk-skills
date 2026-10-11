@@ -54,6 +54,7 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
 from pathlib import Path
 from iteration_context import read_context
 from worker_shell import canonical_command
+assert sys.argv[sys.argv.index('--setting-sources')+1]==''
 path=Path(os.environ['ILK_ITER_CONTEXT']);ctx=read_context(path)
 command="printf 'accepted' > later.txt" if ctx['dispatch']['slug']=='later' else "printf 'def f(value): return value + 2\\n' > counter.py"
 cp=subprocess.run(['/bin/bash','-c',canonical_command(ctx,path,command)],capture_output=True,text=True)

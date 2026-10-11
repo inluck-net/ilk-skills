@@ -28,13 +28,15 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _command_script(command):
+def _command_script(command, *, root=None):
     tokens=shlex.split(command)
     if not tokens or any(token in {';','&&','||','|','>'} for token in tokens):
         raise InputPinError('unsupported shell hook wrapper')
     candidates=[]
     for index,token in enumerate(tokens):
         expanded=Path(os.path.expanduser(os.path.expandvars(token)))
+        if root is not None and not expanded.is_absolute():
+            expanded=Path(root)/expanded
         if index==0 and expanded.name in {'python','python3','bash','sh','pwsh','powershell','python.exe','powershell.exe'}:
             continue
         if expanded.is_file() and (index==0 or expanded.suffix in {'.py','.sh','.ps1'}):
@@ -44,7 +46,63 @@ def _command_script(command):
     return tokens,*candidates[0]
 
 
-def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD', observe_scope=False):
+def _merge_settings(lower, higher):
+    """Supported non-managed settings: recursive objects, additive lists."""
+    result=dict(lower)
+    for key,value in higher.items():
+        previous=result.get(key)
+        if isinstance(previous,dict) and isinstance(value,dict):
+            result[key]=_merge_settings(previous,value)
+        elif isinstance(previous,list) and isinstance(value,list):
+            result[key]=previous+[item for item in value if item not in previous]
+        else:result[key]=value
+    return result
+
+
+def _settings_sources(worker_home, project):
+    sources=[('user',worker_home/'settings.json',Path(project).resolve() if project else Path.cwd())]
+    if project is not None:
+        project=Path(project).resolve(strict=True)
+        sources.append(('project',project/'.claude/settings.json',project))
+        # Claude's local settings can live at the main checkout for worktrees.
+        common=subprocess.check_output(['git','-C',str(project),'rev-parse','--path-format=absolute','--git-common-dir'],text=True).strip()
+        main=Path(common).parent if Path(common).name=='.git' else project
+        sources.append(('local',main/'.claude/settings.local.json',main))
+        if main!=project:
+            if (main/'.claude/settings.local.json').exists() and (project/'.claude/settings.local.json').exists():
+                raise InputPinError('two local settings sources require version-specific precedence adapter')
+            sources.append(('local-worktree',project/'.claude/settings.local.json',project))
+    effective={};observations=[]
+    supported={'hooks','permissions','env','model','effortLevel','disableAllHooks'}
+    for scope,path,root in sources:
+        if not path.exists():
+            observations.append({'scope':scope,'path':str(path),'present':False});continue
+        raw=path.read_bytes();data=json.loads(raw.decode('utf-8-sig'))
+        if not isinstance(data,dict):raise InputPinError('settings source must be an object')
+        if scope!='user':
+            if set(data)-supported:
+                raise InputPinError('project setting requires explicit precedence adapter')
+            if 'defaultMode' in data.get('permissions',{}):
+                raise InputPinError('project permission mode requires scope-aware adapter')
+            if any(key.startswith(('OTEL_','CLAUDE_CODE_ENABLE_TELEMETRY')) for key in data.get('env',{})):
+                raise InputPinError('project telemetry settings require scope-aware adapter')
+        for key in ('fallbackModel','modelPicker','modelSettings'):
+            if key in data:raise InputPinError('model-specific settings require explicit precedence adapter')
+        for entries in data.get('hooks',{}).values():
+            for entry in entries:
+                for hook in entry.get('hooks',[]):
+                    if hook.get('type','command')!='command':
+                        raise InputPinError('non-command hook requires an explicit pin adapter')
+                    tokens,index,script=_command_script(hook.get('command',''),root=root)
+                    tokens[index]=str(script);hook['command']=shlex.join(tokens)
+        effective=_merge_settings(effective,data)
+        if path.read_bytes()!=raw:raise InputPinError('settings changed during preparation')
+        observations.append({'scope':scope,'path':str(path),'present':True,
+                             'sha256':hashlib.sha256(raw).hexdigest()})
+    return effective,observations
+
+
+def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD', observe_scope=False, project=None):
     repo=repo.resolve();worker_home=worker_home.resolve();destination=destination.resolve()
     source_root=repo
     marker=repo/'.ilk-release.json'
@@ -55,7 +113,7 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
     if destination.exists(): raise InputPinError('run input destination already exists')
     sha=subprocess.check_output(['git','-C',str(repo),'rev-parse',revision+'^{commit}'],text=True).strip()
     archive=subprocess.check_output(['git','-C',str(repo),'archive',sha])
-    source=json.loads((worker_home/'settings.json').read_text(encoding='utf-8-sig'))
+    source,settings_sources=_settings_sources(worker_home,project)
     pinned=json.loads(json.dumps(source));hooks=[]
     # Pre-validate all hook commands before creating any prepared home.
     for phase,entries in pinned.get('hooks',{}).items():
@@ -115,6 +173,8 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
                   'env_keys':sorted(env),'requested_model':env.get('ANTHROPIC_MODEL') or pinned.get('model'),
                   'hooks':observations,'credentials_provisioned':'private settings copy; no values in manifest',
                   'scope_observation_only':observe_scope,
+                  'settings_sources':settings_sources,'cli_setting_sources':'',
+                  'managed_settings':'remain enforced by Claude; not overridden or claimed pinned',
                   'remaining':'launcher wiring, model/effort resolution, MCP/plan-script adapters and shell enforcement'}
         (destination/'inputs.json').write_text(json.dumps(manifest,indent=2)+'\n')
         return manifest
@@ -195,6 +255,8 @@ def bind_context(destination: Path, context_path: Path) -> Path:
     profile(context,temporary=temporary,private_home=Path(manifest['worker_home']),diagnostic_log=diagnostic)
     source=Path(manifest['worker_home'])/'settings.json'
     settings=json.loads(source.read_text());observer=Path(context['code_root'])/'hooks/worker-write-scope.py'
+    if settings.get('disableAllHooks'):
+        raise InputPinError('code-only enforcement requires hooks enabled')
     wrapper=Path(context['code_root'])/'skills/ilk-loop/scripts/worker_shell.py'
     if not observer.is_file() or not wrapper.is_file():
         raise InputPinError('pinned scope/shell adapters absent')
@@ -237,7 +299,7 @@ def main():
     parser.add_argument('--project',type=Path)
     parser.add_argument('--mcp',type=Path)
     args=parser.parse_args()
-    result=prepare(args.repo,args.worker_home,args.destination,revision=args.revision,observe_scope=args.observe_scope)
+    result=prepare(args.repo,args.worker_home,args.destination,revision=args.revision,observe_scope=args.observe_scope,project=args.project)
     if args.project:result=pin_launch_resources(args.destination,project=args.project,mcp=args.mcp)
     print(json.dumps({'toolkit_sha':result['toolkit_sha'],'hook_count':len(result['hooks']),
                       'scope_observation_only':result['scope_observation_only']}))

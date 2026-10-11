@@ -17,8 +17,8 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: check archived pre-receipt commit recovery, then finish
-leaderless-child cleanup and selfmod/consumer recovery adapters; then remaining
+Current next action: finish settings-source/hook dependency pinning and check
+the exact archived caller; then selfmod/consumer recovery adapters and remaining
 state/lifecycle adapters and activation. D1 POSIX callers and D2 private launch
 inputs now have production-entry candidate evidence. C3 preparation/acceptance/
 repair is wired but remains disabled by default. Actual-base provenance and
@@ -930,3 +930,55 @@ No completion/ship/proof markers are inferred from this human tracker.
   26 focused registry/authority checks passed in 1.59s. Pending archived caller
   checks for this authority migration. Earlier commit crash recovery and prompt
   cancellation/child cleanup still need completion; installed loops untouched.
+
+- Subsequent candidate checkpoints through `4124c69b` (not installed):
+  `45887e60` closes recovery through its own empty ship marker with positive
+  integrity and exact original master; archived normal/hold/recovery: 3 passed
+  in 11.73s. `69ab8388` preserves historical scoped acceptance only through a
+  positively closed accepted-commit chain (07m R1/R2 outcomes are never reused);
+  12 focused checks in 8.32s and two-plan caller in 10.19s.
+  `ee054263` registers leaders before exec and cleans exact owned siblings on
+  owner death; 26 native/registry checks in 4.25s, archived callers 2 in 18.16s.
+  `e4e67d0a` fsyncs commit intent before staging, recovering interrupted staging
+  or commit without another provider; hook tree changes require a fresh gate.
+  15 focused checks in 8.01s, hook-tree checks 11 in 5.11s, archived interruption
+  checks 2 in 4.94s. `219c3d9a` routes gate-first through the same acceptance
+  transaction: green uses zero CLI turns; red dispatches with diagnostics.
+  Archived green/red checks 2 passed in 11.83s.
+- Lifecycle checkpoints `b1f4615f` and `5309b04e`: unreaped zombie identity may
+  establish cleanup scope, never driver authority. Completed child groups
+  retire to fsynced private event history; positive close waits for actual
+  broker exit and every owned group. 29 native/registry checks in 1.85s;
+  archived normal/two-plan checks 2 in 16.91s. Single 30-command measurement:
+  retained registry rows 30 → 0, read time 55.674ms → 2.092ms, command time
+  0.960s → 1.143s. Durability added cost; this is no batch speed claim.
+- `9bffb325`: additive driver gate, commit/hooks, integrity, landing and verified
+  cleanup intervals, plus conservative repeat candidates. Unknown complete
+  inputs prevent any claim of identical gates; no reuse implemented. Clock/
+  phase checks 4 in 0.07s, collector checks 4 in 0.04s, archived caller 1 in
+  6.33s. Intervals overlap and omit unmeasured preparation; no summed total.
+- `4124c69b`: a measured gate child forged a control-plane file, so registered
+  code-only driver gates now use a separate OS write boundary as well. Parent
+  retains capture/Git/proof ownership; scoped children can signal their own
+  descendants but cannot signal an independent peer. Native/dispatch checks
+  11 passed in 6.69s; exact archived normal and external-human-hold callers
+  2 passed in 11.48s. Hold survives, pointer stays 0, no false ship. Legacy and
+  hand-owner checks retain their existing path; scoped network/nested-sandbox
+  adapters remain unavailable. Source homes/live workers untouched.
+- Rechecked gh-resolve postmortem `20261011-104410.md` against original sentinel
+  and JSONL: 275s run wall, one 186s iteration, two bookkeeping commits, terminal
+  synthetic record 999999, zero model dispatches, 10b shipped then human-held
+  queue. Candidate collector corrections already recorded above; no restart,
+  hold removal, raw log rewriting or additional full suite.
+- D2 settings-source candidate: preserve supported user/project/local inputs
+  in one private snapshot, resolve relative hook scripts from their source
+  worktree, and use `--setting-sources ''` on code-only turns to prevent live
+  automatic reloading or duplicate hooks. Scope-sensitive/model-specific keys
+  and ambiguous dual-local sources refuse rather than change semantics.
+  Managed organization settings remain enforced by Claude and are explicitly
+  not claimed pinned. Official settings precedence consulted; launcher passes
+  the consumer project into preparation. 13 focused input checks passed in
+  12.42s with isolated HOME/data. Earlier ambient run also passed but its data
+  observer reported a touched real project; it is not isolation evidence.
+  Exact archived caller check pending local commit. Hook dependency adapters,
+  Windows parity and activation remain open.
