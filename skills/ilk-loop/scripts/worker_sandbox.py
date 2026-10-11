@@ -104,7 +104,8 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
     elif private_home:
         home=Path(private_home).resolve(strict=True)
         if _inside(home,root) or any(_inside(home,path) or _inside(path,home) for path in protected
-                                  if path not in {Path(context['data_root']).resolve(),Path(context['runtime_dir']).resolve()}):
+                                  if path not in {Path(context['data_root']).resolve(),Path(context['runtime_dir']).resolve()}
+                                  and str(path) not in {row['path'] for row in context.get('global_instruction_inventory',[])}):
             raise ContextError('private home overlaps execution/control inputs')
         rules.append(_rule('allow','file-write*',home))
         protected.extend(home/name for name in ('settings.json','hooks','skills','commands','CLAUDE.md','CLAUDE.local.md','rules'))
