@@ -730,3 +730,19 @@ No completion/ship/proof markers are inferred from this human tracker.
   from the iteration table, labels configured model, and offers no fabricated
   30/30 limits or Resume now for a held queue. 18 focused reporter checks
   passed in 0.33s. Original external postmortem/raw evidence left unchanged.
+- Second actual-provider full entry at `2255b9fe`: diagnostic hook now runs;
+  malformed escaped quote delimiters were refused by canonical admission, then
+  the model executed the literal EXAMPLE placeholder. CLI shell startup also
+  emitted denied `/dev/null` redirects. Existing 120s deadline bounded the
+  failed check at 122.748s overall; no pointer advancement, registry clear,
+  source home unchanged. Prompt now supplies concrete pwd/read-plan commands
+  and POSIX quoting guidance instead of EXAMPLE. Sandbox permits only null
+  device data writes for ordinary shell setup/redirection. Adjacent filesystem
+  writes remain denied. 9 focused dispatch/sandbox checks passed in 2.44s.
+  Next actual-provider entry must use the committed corrected prompt/policy;
+  failure is not grounds to loosen canonical admission or increase defaults.
+- Gate output and attempt records now flush/fsync files and containing
+  directories before acceptance; captures use exclusive files with mode 600.
+  A durability failure on an otherwise green command remains failed/unknown.
+  10 focused capture/driver-acceptance checks passed in 4.55s. This closes
+  capture persistence only; commit/CAS/receipt crash recovery remains open.

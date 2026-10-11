@@ -125,7 +125,12 @@ def gate(context,root,path,selected,*,default_timeout):
         check_observations=[asdict(result) for result in results],gate_tree_unchanged=unchanged,
         all_passed=bool(results) and all(result.passed for result in results) and unchanged,
         diagnostic_only=True)
-    (directory/'attempt.json').write_text(json.dumps(record,indent=2)+'\n')
+    artifact=directory/'attempt.json'
+    with artifact.open('x') as stream:
+        json.dump(record,stream,indent=2);stream.write('\n');stream.flush();os.fsync(stream.fileno())
+    artifact.chmod(0o600)
+    from plan_state import _sync_parent
+    _sync_parent(artifact);_sync_parent(directory)
     return record
 
 

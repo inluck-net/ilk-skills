@@ -45,6 +45,16 @@ def test_shell_network_is_denied_before_connecting(tmp_path):
     assert cp.returncode!=0 and 'PermissionError' in cp.stderr
 
 
+def test_cli_and_shell_can_redirect_to_null_without_broadening_scope(tmp_path):
+    ctx,temporary,home=fixture(tmp_path)
+    for policy in (profile(ctx,temporary=temporary,shell=True),
+                   profile(ctx,temporary=temporary,private_home=home)):
+        cp=run(policy,'/bin/bash','-c','printf ignored > /dev/null')
+        assert cp.returncode==0,cp.stderr
+        cp=run(policy,'/bin/bash','-c','printf forged > "$1"','fixture',str(tmp_path/'outside'))
+        assert cp.returncode!=0 and not (tmp_path/'outside').exists()
+
+
 def test_frozen_kernel_scope_denies_writes_creation_and_ancestor_rename(tmp_path):
     ctx,temporary,_=fixture(tmp_path);root=Path(ctx['exec_tree'])
     (root/'driver').mkdir();protected=root/'driver/authority.py';protected.write_text('owner')

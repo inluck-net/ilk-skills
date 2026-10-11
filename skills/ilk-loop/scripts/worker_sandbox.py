@@ -52,7 +52,10 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
     if common.returncode==0:
         raw=Path(common.stdout.strip());protected.append(raw.resolve() if raw.is_absolute() else (root/raw).resolve())
     rules=['(version 1)','(allow default)','(deny file-write*)',
-           _rule('allow','file-write*',root),_rule('allow','file-write*',temporary),'(deny signal)']
+           _rule('allow','file-write*',root),_rule('allow','file-write*',temporary),
+           # CLI shell setup and ordinary redirection need the null device;
+           # this grants no writes to filesystem/control-plane artifacts.
+           '(allow file-write-data (literal "/dev/null"))','(deny signal)']
     if shell:
         rules.append('(deny network*)')
         if context.get('private_worker_home'):

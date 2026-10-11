@@ -1667,8 +1667,12 @@ def run_one(check: dict, scope: str, project: Path,
             root.mkdir(parents=True, exist_ok=True)
             out_path = root / (r.attempt_id + '.stdout.log')
             err_path = root / (r.attempt_id + '.stderr.log')
-            out_path.write_text(stdout or '', encoding='utf-8')
-            err_path.write_text(stderr_full, encoding='utf-8')
+            for target,payload in ((out_path,stdout or ''),(err_path,stderr_full)):
+                with target.open('x',encoding='utf-8') as stream:
+                    stream.write(payload);stream.flush();os.fsync(stream.fileno())
+                target.chmod(0o600)
+            from plan_state import _sync_parent
+            _sync_parent(out_path)
             r.stdout_path, r.stderr_path = str(out_path), str(err_path)
         r.outcome, r.reason = _classify_check(r.exit_code, r.error, stderr_full)
         return r

@@ -45,6 +45,15 @@ _extract_failing_ids "$RESULTS"
     assert 'tests/early.py::test_red' in rows[1]
 
 
+def test_capture_sync_failure_cannot_be_a_green_gate(tmp_path,monkeypatch):
+    monkeypatch.setenv('ILK_GATE_OUTPUT_DIR',str(tmp_path/'output'))
+    def fail_sync(_):raise OSError('fixture durable capture failure')
+    monkeypatch.setattr(os,'fsync',fail_sync)
+    result=run_one({'command':'printf green','timeout':10},'step',tmp_path)
+    assert not result.passed and not result.output_complete
+    assert 'durable capture failure' in result.error
+
+
 def test_retry_count_reader_reads_the_saved_value(tmp_path):
     env=dict(os.environ,HOME=str(tmp_path),ILK_DOTSOURCE_ONLY='1')
     code='''source "$1"

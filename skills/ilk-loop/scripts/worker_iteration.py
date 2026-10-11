@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -47,8 +48,13 @@ def instructions(context,path):
         f"Read repository instructions and this exact subplan: {selected['subplan_path']}",
         f"Implement only step {selected['step']}; leave the code diff for driver acceptance.",
         'Do not commit, push, change plans/state/proof, or run authoritative gates.',
-        'Every Bash tool command MUST use this pinned wrapper, replacing EXAMPLE with your shell command:',
-        canonical_command(context,path,'EXAMPLE'),
+        'Every Bash tool command MUST use this pinned wrapper. Working example for pwd:',
+        canonical_command(context,path,'pwd'),
+        'Working example to read the selected plan (copy this command exactly):',
+        canonical_command(context,path,'cat '+shlex.quote(selected['subplan_path'])),
+        'Keep the interpreter, wrapper and context arguments exactly as shown.',
+        'Replace only the final --command argument with your shell command as ONE POSIX single-quoted argument.',
+        'Do not put backslashes before quote delimiters. Do not add outer shell operators or expansions.',
         'Use the wrapper for reading files and editing code. Other tools are unavailable.',
         'Do not invoke /ilk or rediscover a batch. Do not run a full test suite.',
         'Diagnostic tests are permitted when needed to implement the selected step.',
