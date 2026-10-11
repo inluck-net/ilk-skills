@@ -56,7 +56,9 @@ time.sleep(120)
             '--project-path', str(work), '--max-iterations', '1',
             '--iteration-timeout-min', '1', '--run-local-checks',
             '--mcp-config-path', str(inputs/'mcp.json')], env=env,
-            capture_output=True, text=True, timeout=95)
+            capture_output=True, text=True, timeout=95, start_new_session=True)
+        (tmp_path/'entry.stdout').write_text(result.stdout)
+        (tmp_path/'entry.stderr').write_text(result.stderr)
         terminal = json.loads((runtime/'last-exit.json').read_text())
         assert terminal['state'] == 'timeout', (terminal, result.stderr[-1600:])
         assert git('rev-parse', 'HEAD') == head
