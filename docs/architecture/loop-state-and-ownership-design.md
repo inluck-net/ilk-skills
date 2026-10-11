@@ -97,6 +97,32 @@ Consumers:
 The JSONL loop log's `started` and summary records are the closest existing
 artifact, so the record is written there first, additively.
 
+### Scoped acceptance across successive subplans (owner candidate, 2026-10-11)
+
+Measured with two real driver gate/commit/CAS transactions in a disposable Git
+worktree: the second independent accepted commit made the first ship audit
+return `stale_head`. Requiring every earlier subplan's accepted tree to remain
+the final tree prevents an ordinary multi-subplan batch from finishing.
+
+The candidate preserves **historical scoped acceptance**, not a current-tree
+suite verdict. Each later code commit must have its own positive closed driver
+acceptance, with complete passed gates, integrity, landing, exact parent/base
+and accepted tree, and unchanged selected master and plan contracts. The chain
+is single-parent; only corresponding empty ship markers may intervene. Unknown
+commits, merges, unclosed/red steps, missing identities and changed contracts
+refuse. New steps still run their authoritative gates against their actual tree.
+No test outcomes or aggregate counts are carried or merged: plan 07m R1/R2
+remains binding. A historical accepted step does not establish that every earlier
+requirement still passes at the final tree; final verification remains opt-in.
+
+New candidate fields `acceptance_base_commit` / `acceptance_base_tree` are
+projected by `iteration_record.py`; `ship_audit.py` validates the continuation.
+Historical rows without these fields can prove their exact accepted tree but
+cannot authorize a changed-tree continuation. This candidate is not installed;
+selfmod merge/member adapters remain unbuilt. Focused negative fixtures must
+keep rejecting unaccepted code and corrupted/changed contracts. A multi-subplan
+production-entry fixture is required before activation.
+
 ## 4. Plan state ownership (I3)
 
 - **API:** `plan_state.transition(path, from_, to, actor, reason)`:

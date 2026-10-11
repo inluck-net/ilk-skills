@@ -49,6 +49,7 @@ def project_close_record(close: dict) -> int:
                       and row.get('step_from')==dispatch['step'] and row.get('step_to')==dispatch['step']+1)
             projected.update(driver_owned=matching,accepted_tree=accepted.get('tree'),
                 accepted_head=accepted.get('head_commit'),
+                acceptance_base_commit=context.get('base_commit'),acceptance_base_tree=context.get('base_tree'),
                 context_plan_path=dispatch.get('subplan_path'),
                 context_plan_fingerprint=snapshots[0].get('fingerprint') if len(snapshots)==1 else None,
                 context_master_fingerprint=(context.get('master_snapshot') or {}).get('fingerprint'),

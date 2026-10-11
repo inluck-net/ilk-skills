@@ -13,7 +13,7 @@ pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='Mac production entr
 ROOT=Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize('case',['normal','hold','pending-advance'])
+@pytest.mark.parametrize('case',['normal','hold','pending-advance','two-plans'])
 def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,monkeypatch,case):
     human_hold_during_gate=case=='hold'
     spec=importlib.util.spec_from_file_location('entry_fixture',Path(__file__).with_name('test_pre_loop_exit_sentinel.py'))
@@ -25,6 +25,12 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
     plan=world['plans']/(fixtures.STEM+'.md')
     plan.write_text('---\nplan: '+fixtures.SLUG+'\nstatus: pending\ncurrent_step: 0\nestimated_steps: 1\nverification_tier: loop-verified\n---\n# Counter\n## Steps\n### Step 0: fix counter\n```yaml\nlocal_checks:\n  - command: python3 -I -c "from pathlib import Path;exec(Path(\'counter.py\').read_text());assert f(4)==6"\n```\n')
     master=world['plans']/'MASTER-2026-08-29-execution-plan.md'
+    later=world['plans']/'2026-10-11-later.md'
+    if case=='two-plans':
+        later.write_text('---\nplan: later\nstatus: pending\ncurrent_step: 0\nestimated_steps: 1\n---\n# Later\n'
+            '## Steps\n### Step 0: add file\n```yaml\nlocal_checks:\n'
+            '  - command: python3 -I -c "from pathlib import Path;assert Path(\'later.txt\').read_text()==\'accepted\'"\n```\n')
+        master.write_text(master.read_text()+'\n| '+later.name+' |\n')
     if human_hold_during_gate:
         # Driver-owned gate seam models an external coordinator's hold during
         # the turn. A worker cannot write this path under the CLI policy.
@@ -41,7 +47,8 @@ from pathlib import Path
 from iteration_context import read_context
 from worker_shell import canonical_command
 path=Path(os.environ['ILK_ITER_CONTEXT']);ctx=read_context(path)
-cp=subprocess.run(['/bin/bash','-c',canonical_command(ctx,path,"printf 'def f(value): return value + 2\\n' > counter.py")],capture_output=True,text=True)
+command="printf 'accepted' > later.txt" if ctx['dispatch']['slug']=='later' else "printf 'def f(value): return value + 2\\n' > counter.py"
+cp=subprocess.run(['/bin/bash','-c',canonical_command(ctx,path,command)],capture_output=True,text=True)
 assert cp.returncode==0,cp.stderr
 print(json.dumps({'type':'system','subtype':'init','session_id':'fixture-session','model':'fixture-model'}))
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'fixture-session'}))
@@ -76,7 +83,7 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
     for key in ('ILK_SKIP_MAIN','ILK_WORKER_SESSION','ILK_ITER_CONTEXT','ILK_ITER_RECORD_STAGE'):env.pop(key,None)
     runtime=world['data_home']/'projects'/world['key']/'runtime/launcher'
     process=subprocess.Popen(['bash',str(code/'skills/ilk-loop/scripts/run_ilk_loop_claude.sh'),
-        '--project-path',str(work),'--max-iterations','1','--iteration-timeout-min','1','--run-local-checks',
+        '--project-path',str(work),'--max-iterations','2' if case=='two-plans' else '1','--iteration-timeout-min','1','--run-local-checks',
         '--mcp-config-path',str(inputs/'mcp.json')],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
         start_new_session=True)
     try:
@@ -112,6 +119,8 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         assert terminal['state']=='all-shipped',(terminal,stdout[-4500:],stderr[-4500:])
         assert process.returncode==0,(stdout[-4500:],stderr[-4500:])
         assert 'current_step: 1' in plan.read_text() and 'status: shipped' in plan.read_text()
+        if case=='two-plans':
+            assert 'status: shipped' in later.read_text() and 'status: shipped' in master.read_text()
         assert (home/'settings.json').read_bytes()==original
         assert not project_status(runtime)['busy']
         closes=[json.loads(line) for line in (world['data_home']/'projects'/world['key']/'logs/.ilk-loop.log').read_text().splitlines()]
@@ -119,6 +128,8 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         assert closed['driver_acceptance']['accepted'] is True
         assert closed['driver_integrity_passed'] is True and closed['state_audit']['explained'] is True
         assert len(closed['driver_acceptance']['attempts'])==1
+        if case=='two-plans':
+            assert len([row for row in closes if row.get('record_phase')=='close'])==2
     finally:
         if runtime.exists():
             for row in project_status(runtime)['runs']:

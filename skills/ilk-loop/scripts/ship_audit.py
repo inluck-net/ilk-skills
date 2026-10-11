@@ -792,12 +792,59 @@ def _evaluate_gate(
 
 # ── main predicate ────────────────────────────────────────────────────────────
 
+def _accepted_continuation(records,anchor,*,cwd,master,master_fp):
+    """Every later code commit must have its own closed acceptance.
+
+    This proves historical scoped acceptance, never current-suite outcomes.
+    Single-parent driver commits and their empty ship markers only; merge,
+    missing input identities, changed contracts and unclosed work refuse.
+    """
+    from plan_fingerprint import fingerprint
+    try:
+        commits=subprocess.check_output(['git','rev-list','--reverse',anchor+'..HEAD'],cwd=cwd,text=True).splitlines()
+        covered={};slugs=set()
+        for row in records:
+            checks=row.get('driver_gate_checks') or []
+            if (row.get('driver_owned') is not True or row.get('record_phase')!='close'
+                    or row.get('integrity_passed') is not True or row.get('landed') is not True
+                    or row.get('gate_outcome')!='pass' or row.get('master_path')!=str(master)
+                    or row.get('context_master_fingerprint')!=master_fp or not checks
+                    or not all(check.get('passed') is True and check.get('output_complete') is True for check in checks)):
+                continue
+            plan=Path(row.get('context_plan_path') or '').resolve(strict=True)
+            if plan.parent!=master.parent or fingerprint(plan)!=row.get('context_plan_fingerprint'):continue
+            base=row.get('acceptance_base_commit');accepted=row.get('accepted_head')
+            tree=row.get('accepted_tree')
+            if not base or not accepted or not tree:continue
+            # The candidate driver creates exactly one code commit per step;
+            # dirty/member/selfmod merge adapters cannot borrow this proof.
+            parents=subprocess.check_output(['git','rev-list','--parents','-n','1',accepted],cwd=cwd,text=True).split()
+            if accepted!=base and (parents!=[accepted,base] or row.get('commits')!=[accepted]):continue
+            actual=subprocess.check_output(['git','rev-parse',accepted+'^{tree}',base+'^{tree}'],cwd=cwd,text=True).splitlines()
+            if actual!=[tree,row.get('acceptance_base_tree')]:continue
+            covered[accepted]=row;slugs.add(row.get('slug'))
+        previous=anchor
+        for commit in commits:
+            parent=subprocess.check_output(['git','rev-list','--parents','-n','1',commit],cwd=cwd,text=True).split()
+            if parent!=[commit,previous]:return False
+            trees=subprocess.check_output(['git','rev-parse',commit+'^{tree}',previous+'^{tree}'],cwd=cwd,text=True).splitlines()
+            if trees[0]!=trees[1]:
+                if commit not in covered:return False
+            else:
+                message=subprocess.check_output(['git','show','-s','--format=%B',commit],cwd=cwd,text=True)
+                if not any(f'[plan:{slug}#ship]' in message for slug in slugs):return False
+            previous=commit
+        return True
+    except (OSError,ValueError,subprocess.CalledProcessError):return False
+
+
 def _resolve_driver_gate(records,*,slug,authored,declared_checks,cwd,subplan_path,master_path):
     """Closed scoped driver proof, independent of an optional batch verifier.
 
     This reads actual acceptance, not cached gate outcomes. Each authored step
-    needs its accepted lineage/contract; the final accepted tree must be HEAD's
-    exact tree. Plan 07m R1/R2's changed-tree false-green path stays refused.
+    needs its accepted lineage/contract. Later code requires an unbroken chain
+    of its own closed acceptances. This is historical step proof, not suite
+    outcome carry-forward: plan 07m R1/R2 selection/count reuse stays absent.
     """
     candidates=[row for row in (records or []) if row.get('driver_owned') is True
                 and row.get('slug')==slug and row.get('record_phase')=='close']
@@ -829,8 +876,9 @@ def _resolve_driver_gate(records,*,slug,authored,declared_checks,cwd,subplan_pat
     final=max(authored) if authored else None
     if not set(authored)<=covered or not required<=ran:
         return 'incomplete','scoped driver proof is missing an accepted step or declared gate'
-    if not any(row.get('step_from')==final and row.get('accepted_tree')==head_tree for row in valid):
-        return 'stale_head','final scoped driver proof does not cover the current tree'
+    if not any(row.get('step_from')==final and (row.get('accepted_tree')==head_tree or
+            _accepted_continuation(records,row['accepted_head'],cwd=cwd,master=master,master_fp=master_fp)) for row in valid):
+        return 'stale_head','final scoped proof has an unaccepted or changed-contract continuation'
     return 'pass',None
 
 def audit_ship(

@@ -153,6 +153,15 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- 2026-10-11 B2/E2 measured multi-subplan refusal: two actual driver
+  transactions reproduced first-step `stale_head` after a later independent
+  accepted commit (1.41s focused reproduction). Added exact-base identities to
+  closed proof and an unbroken accepted-history audit; no suite counts/outcomes
+  are carried. Unknown commits, red/unclosed work, missing base, incorrect tree
+  and changed contracts refuse. Ownership design records scope and limits;
+  final verification stays opt-in. Exact archived startup after marker/master
+  recovery at `45887e60`: three cases passed in 11.73s.
+
 - 2026-10-11 B3/C3 recovery continuation: actual archived startup at `6538f49f`
   passed all three ordinary-consumer/hold/pending-advance cases (11.41s).
   Recovery now permits only the original accepted tree's own empty ship marker,
