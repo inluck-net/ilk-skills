@@ -167,6 +167,28 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- PowerShell public provider provenance now calls the same protected sanitizer
+  as Bash, preserves the configured URL privately, and writes only origin plus
+  the explicit `configured URL; actual provider unobserved` basis on open/close.
+  Portable PowerShell executes the real adapter with secret-bearing URL:
+  origin-only JSON, no secret in stdout/stderr. Missing adapter negative failed
+  in 0.04s; six sanitizer/portable adapter checks passed in 0.47s. This is
+  record parity, not native Windows owned-process/sandbox evidence.
+
+
+- Launch identity race: reservation/last-launch now read the prepared inputs'
+  toolkit SHA, and refuse a contradictory drain selection. A source checkout
+  change after archive creation cannot relabel pinned code. Real detached
+  caller with a simulated source SHA change passed in 12.66s; restoring the
+  old live-SHA query failed that same check in 31.23s (startup refused).
+  Five focused packaged-engine/SHA checks passed in 0.51s. An initial wrapper
+  also intercepted pinned runner queries and failed; narrowed to the exact
+  mutable source helper before the meaningful old/new comparison. Initial
+  helper-only RED used an ambient parent test guard, which reported concurrent
+  live-root changes; passing caller/check invocations pin HOME and both data
+  variables. Production workers, code, metadata and controllers untouched.
+
+
 - E3 actual small eligible toolkit exercise passed 97.725s with candidate
   24190e78: actual MiMo PRO, native tools, explicit thinking disabled, eight
   production hooks, seven focused reporter checks, one authoritative gate,

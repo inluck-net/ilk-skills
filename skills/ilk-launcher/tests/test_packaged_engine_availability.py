@@ -67,3 +67,25 @@ def test_powershell_packaged_engine_preflight(tmp_path):
                             capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "PACKAGED_ENGINE_PREFLIGHT_PASS" in result.stdout
+
+
+def test_launch_identity_comes_from_prepared_snapshot_after_source_moves(tmp_path):
+    import json
+    import os
+    pinned = tmp_path / 'inputs'
+    pinned.mkdir()
+    sha = 'a' * 40
+    (pinned / 'inputs.json').write_text(json.dumps({'toolkit_sha': sha}))
+    # The live checkout helper now identifies another commit. It must never
+    # be queried for the identity of this already-prepared worker snapshot.
+    helper = tmp_path / 'live/ilk-loop/scripts/run_registry.py'
+    helper.parent.mkdir(parents=True)
+    helper.write_text('print("' + 'b' * 40 + '")')
+    result = subprocess.run(['bash', '-c',
+        'source "$1"; _SKILL_ROOT="$2"; launch_code_sha "$3"',
+        'probe', str(SCRIPT), str(tmp_path / 'live'), str(pinned)],
+        env=dict(os.environ, HOME=str(tmp_path), ILK_DATA_HOME=str(tmp_path / 'data'),
+                 ILK_DATA_DIR=str(tmp_path / 'data'), ILK_SKIP_MAIN='1'),
+        capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == sha

@@ -391,6 +391,15 @@ function Get-ActiveSubplanTarget {
   return $null
 }
 
+function Get-ProviderProvenance {
+  # Public records observe the configured origin only. The private worker URL
+  # retains its routing path; credentials/path/query/fragment never enter JSONL.
+  $scriptDir = Join-Path $SkillRoot 'ilk-loop/scripts'
+  $json = & python -c 'import json,os,sys;sys.path.insert(0,sys.argv[1]);from provider_provenance import configured_provider;print(json.dumps(configured_provider(os.environ.get("ANTHROPIC_BASE_URL"))))' $scriptDir | Out-String
+  if ($LASTEXITCODE -ne 0) { throw 'sanitized configured provider unavailable' }
+  return ($json | ConvertFrom-Json)
+}
+
 function Get-WorkerDispatchContext {
   param([string]$Project, $Target)
   if (-not $Target) { return $null }
@@ -2341,10 +2350,12 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     Write-Host "[steer] interjection injected ($ijLen chars)" -ForegroundColor Cyan
   }
 
+  $providerConfigured = Get-ProviderProvenance
   $startedRecord = @{
     run_id = $RunId; cli = 'claude'; iteration = $i
     timestamp = (Get-Date).ToString('o'); project = $ProjectPath
     model = $ResolvedModel; status = 'started'; record_phase = 'open'; context = $iterationContext
+    base_url = $providerConfigured.origin; provider_configured = $providerConfigured
   }
   if ($dispatchContext) { $startedRecord['dispatch'] = $dispatchContext.Identity }
   Write-JsonlRecord -Record $startedRecord
@@ -2662,7 +2673,8 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     timestamp         = (Get-Date).ToString("o")
     project           = $ProjectPath
     model             = if ($ResolvedModel) { $ResolvedModel } elseif ($Model) { $Model } else { $env:ANTHROPIC_MODEL }
-    base_url          = $env:ANTHROPIC_BASE_URL
+    base_url          = $providerConfigured.origin
+    provider_configured = $providerConfigured
     max_budget_usd    = $MaxBudgetUsd
     duration_sec      = $iterDurSec
     driver_elapsed_sec = [int]((Get-Date) - $iterStart).TotalSeconds

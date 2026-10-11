@@ -185,7 +185,8 @@ def test_plan_script_uses_pinned_code_with_space_in_path(tmp_path,quoted):
     assert cp.returncode==0 and cp.stdout.strip()=='pinned',cp.stderr
 
 
-def test_actual_launcher_runs_from_private_inputs_without_changing_source_home(tmp_path,monkeypatch):
+@pytest.mark.parametrize("source_moves", [False, True])
+def test_actual_launcher_runs_from_private_inputs_without_changing_source_home(tmp_path,monkeypatch,source_moves):
     import importlib.util,os,sys,time
     from ilk_paths import external_launcher_dir
     from run_registry import project_status,signal_run
@@ -198,6 +199,16 @@ def test_actual_launcher_runs_from_private_inputs_without_changing_source_home(t
     monkeypatch.setenv('ILK_DATA_HOME',str(world['data_home']));monkeypatch.setenv('ILK_DATA_DIR',str(world['data_home']))
     runtime=external_launcher_dir(world['key']);scripts=Path(__file__).parents[2]
     env=dict(os.environ,HOME=str(root),ILK_SKIP_MAIN='1',ILK_SKILL_HOME=str(scripts),PATH=str(world['bin'])+os.pathsep+os.environ['PATH'])
+    if source_moves:
+        import shlex
+        # Simulate a new live HEAD only for the post-preparation SHA query;
+        # the committed archive and real checkout are untouched.
+        python = world['bin'] / 'python3'
+        python.write_text('#!/bin/bash\n'
+            'if [[ "$1" == ' + shlex.quote(str(scripts / 'ilk-loop/scripts/run_registry.py')) + ' && "$2" == code-sha ]]; then\n'
+            '  echo "' + 'b' * 40 + '"; exit 0\nfi\n'
+            'exec ' + shlex.quote(sys.executable) + ' "$@"\n')
+        python.chmod(0o700)
     call='source "$1"; start_ilk_window "$2" fixture 1 2 false false "" claude-worker "$3" true ""'
     try:
         cp=subprocess.run(['bash','-c',call,'fixture',str(scripts/'ilk-launcher/scripts/launch.sh'),str(world['project']),str(source_home)],env=env,capture_output=True,text=True,timeout=20)
@@ -216,6 +227,7 @@ def test_actual_launcher_runs_from_private_inputs_without_changing_source_home(t
         assert terminal['toolkit_sha']==launch['toolkit_sha']
         assert terminal['run_id']==launch['run_id']
         inputs=Path(launch['log_dir'])/'inputs';manifest=json.loads((inputs/'inputs.json').read_text())
+        assert manifest['toolkit_sha']==launch['toolkit_sha']
         assert Path(launch['loop_script']).is_relative_to(inputs/'code')
         assert 'fixture-private-token' not in (inputs/'inputs.json').read_text()
         assert settings.read_bytes()==original

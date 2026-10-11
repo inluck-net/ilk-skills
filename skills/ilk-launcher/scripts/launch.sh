@@ -586,6 +586,21 @@ test_running_pid() {
   python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(next((str(r["pid"]) for r in d["runs"] if r["liveness"]=="running"),"registry-busy"))' "$state"
 }
 
+# The reservation and public launch identity name the prepared worker code,
+# never a later HEAD of the mutable source checkout.
+launch_code_sha() {
+  local inputs="${1:-}"
+  if [[ -n "$inputs" ]]; then
+    python3 -c 'import json,re,sys
+sha=json.load(open(sys.argv[1])).get("toolkit_sha")
+if not isinstance(sha,str) or not re.fullmatch(r"[0-9a-f]{40}",sha):
+    raise SystemExit("prepared toolkit identity unavailable")
+print(sha)' "$inputs/inputs.json"
+  else
+    python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_registry.py" code-sha --code-root "${_SKILL_ROOT}/.."
+  fi
+}
+
 start_ilk_window() {
   local project_path="$1"
   local project_name="$2"
@@ -831,9 +846,10 @@ print(prefix+shlex.join(args))
   # reaching expiry falsifies this default. Operator can set an explicit TTL.
   local launch_ttl="${ILK_LAUNCH_TTL_SEC:-120}" launcher_dir code_sha
   launcher_dir=$(get_external_launcher_dir "$project_path") || return 1
-  code_sha="${prepared_sha:-}"
-  if [[ -z "$code_sha" ]]; then
-    code_sha=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_registry.py" code-sha --code-root "${_SKILL_ROOT}/..") || return 1
+  code_sha=$(launch_code_sha "$inputs_dir") || return 1
+  if [[ -n "$prepared_sha" && "$code_sha" != "$prepared_sha" ]]; then
+    echo "[ilk] prepared toolkit identity contradicts upgrade selection" >&2
+    return 1
   fi
   python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_registry.py" reserve --runtime "$launcher_dir" \
     --run-id "$run_id" --project "$project_path" --key "$project_key" --toolkit-sha "$code_sha" --ttl "$launch_ttl" >/dev/null || return 1
