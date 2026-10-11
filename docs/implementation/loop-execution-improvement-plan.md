@@ -152,6 +152,32 @@ A failed capability experiment must result in a documented working fallback,
 not an unsupported dependency. Numeric defaults/thresholds need judgment-call
 basis and falsifier before activation.
 
+## Current implementation and evidence map
+
+This matrix prevents a checked Mac mechanism being mistaken for complete
+cross-platform delivery. A legacy fallback retains its historical authority;
+an explicit owned-profile refusal does not prove an unbuilt adapter.
+
+| Requirement | Implemented mechanism / source anchor | Evidence and delivery limit |
+|---|---|---|
+| Exact target and roots (A1/B1/I1) | iteration_context.py:186 resolves canonical roles before snapshots; :67 validates declared worktree binding. dispatch_target resolves pinned master identity. | Normal/declared/selfmod archived callers passed. Member and dirty owned entry refuse; legacy remains. |
+| Durable open/close (B2/I2) | Bash and PowerShell existing JSONL open/close; iteration_context.py:151 captures execution; iteration_record.py:11 finalizes provisional proof. | Close checks require positive integrity/state/landing on owned Mac path; no inferred open-only proof. Full legacy reader migration remains open. |
+| Recovery (B3/C5) | recovery.py:112 transcript salvage; acceptance_recovery.py:81 original transaction recovery; worker_iteration preserves same-session diagnostics. | Actual provider red→repair→green, archived commit/staged/selfmod/worktree recovery; salvage is diagnostic only. PowerShell retry parity remains open. |
+| Kernel freeze (C1) | safety_kernel.py:203 admission and :293 frozen-base range policy; safety-kernel.json owner-only new bases. | Focused kernel/sandbox checks; historical bases retain their own policy. Supported runtime-tier loop changes remain eligible. |
+| Worker scope (C2/C3) | worker_dispatch.py private settings/broker plus worker_sandbox OS policy; driver_step.py:167 gates/commit/CAS. | Real native tools and driver gate scopes checked on Mac, source home unchanged. Windows/network/nested-sandbox adapters refuse new profiles. |
+| State ownership (C4/C6/I3) | plan_state.py:158 transition byte CAS + durable journal; :84 owned state audit. | Holds, concurrent transition, registry projection, rollback and interruption negatives passed. Legacy workers keep older authority until migrated; policing retired only on enforced path. |
+| Process ownership (D1/I4) | run_registry.py:145 launch reservation, :352 child registration, :33 fresh driver authority. | Native owned-child and scheduler/watchdog/stop reader checks; PID reuse and unknown group refuse. Windows ownership adapter not established. |
+| Input pinning (D2/I6) | run_inputs private code/settings/hooks/MCP/inventory; instruction_inputs.py:9 named inputs; provider_provenance.py configured origin. | Actual provider with eight copied hooks, immutable homes and sanitized records. Managed settings, system libraries and arbitrary external imports require explicit coordination/adapters. |
+| Consumer compatibility (D3) | gh-resolve claim readers installed at 8472771f; 2cb713ae adds hermetic explicit toolkit fixture and quoted runtime pin rendering/probe. | Consumer negative ambient poison reproduced; 7 pin/integration checks and 8 adjacent focused checks passed. New consumer candidate not yet installed; rezmac unchanged. |
+| Upgrade (D4) | upgrade_drain.py:18 positive accepted boundary, :92 activation, :150 consume. | Archived real launcher preserves limits/master/budget/holds, refuses live old children and tampering. Global opt-in remains off. Production local activation separate below. |
+| All-attempt verdicts (E2/I5) | driver_step.attempt_verdict groups same frozen input tree and scope/command; driver history retained before commit. | Same-tree red→pass flaky leaves HEAD/pointer unchanged; changed repaired tree green. Conservative owned refusal does not implement legacy flaky escalation/baseline-red advancement/strike attribution. |
+| Measurements (A4/E1/E3) | report.py parser v6 and phase_observation driver clocks. | Same MiMo consumer task 230s vs 199s; eligible toolkit repair 98s. One pair, uncontrolled concurrency, no causal/default-model speed claim. Shell/native representative pairing remains open. |
+| Hermeticity (I7) | Private HOME + both data variables; consumer fixture explicit committed toolkit snapshot, isolated parser processes; fixture identity-loss spawn seam. | Focused checks above. Missing integration input is explicitly unknown/skip, strict full-coverage existing guard rejects it; no full suite run. Whole-repository lint eligibility audit remains open. |
+
+Open unsupported adapters remain on the entire checklist. This map is evidence,
+not permission to drop them or to report the whole plan complete. Current Mac
+preview activation cannot establish hosted Windows or rezmac verification.
+
 ## Evidence and coordination
 
 External evidence directory:
@@ -166,6 +192,13 @@ an actual safe landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- All-attempt caller/recovery checks: 28 passed/2 fixture seam failures in
+  17.19s; four corrected authority-loss checks passed in 1.00s. Archived
+  production-entry gate-first-red and upgrade-drain checks passed in 37.09s
+  against committed 0a89d338. Actual fixtures preserve all attempts, worker
+  resume and positive accepted boundary; no suite or active batch change.
+
 
 - Fresh read-only boundary observation at 23:33 local: toolkit run
   20261011-215532 has idled on the existing 12:10 pause flag since before
