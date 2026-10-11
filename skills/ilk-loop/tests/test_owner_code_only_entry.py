@@ -300,6 +300,19 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             state=json.loads((runtime/'selfmod-state.json').read_text())
             assert state['state']=='MERGED'
             assert not (work/'.ilk-merge-deferred').exists()
+            # Consume the actual archived driver's context, whose canonical
+            # clone differs from execution; a hand-shaped fixture missed this.
+            result_file=tmp_path/'selfmod-result.json'
+            summary=world['data_home']/'projects'/world['key']/'logs/.ilk-loop.log'
+            emitted=subprocess.run([sys.executable,str(code/'skills/ilk-loop/scripts/run_result.py'),
+                'write','--result-file',str(result_file),'--run-id',closed['run_id'],
+                '--master',master.name,'--exit-state','all-shipped','--project-path',str(work),
+                '--iteration-log',str(summary)],env=env,capture_output=True,text=True,timeout=10)
+            assert emitted.returncode==0,emitted.stderr
+            result=json.loads(result_file.read_text())
+            assert result['git_provenance']['observation_complete'] is True,result['git_provenance']
+            assert result['base_sha']==closed['context']['base_commit']
+            assert result['head_sha']==closed['execution']['head_commit']
         else:
             assert phases['landing']['duration_sec'] is None # ordinary consumer has no merge
         assert len(closed['driver_acceptance']['attempts'])==(2 if case=='gate-first-red' else 1)

@@ -9,7 +9,7 @@ import pytest
 def _close(project, iteration, base, head, commits, master='MASTER-test.md'):
     return dict(record_phase='close', run_id='run', iteration=iteration,
         context=dict(run_id='run', iteration=iteration, base_commit=base,
-            clone_tree=str(project), exec_tree=str(project),
+            clone=str(project), exec_tree=str(project),
             dispatch=dict(master_path=str(project/master))),
         execution=dict(head_commit=head, commits=commits))
 
@@ -63,7 +63,7 @@ def test_conflicting_execution_is_unknown(tmp_path,monkeypatch,change):
     elif change=='context-run': row['context']['run_id']='other'
     elif change=='context-step': row['context']['iteration']=2
     elif change=='foreign-root':
-        row['context'].update(clone_tree=str(tmp_path/'other'),exec_tree=str(tmp_path/'other'))
+        row['context'].update(clone=str(tmp_path/'other'),exec_tree=str(tmp_path/'other'))
     elif change=='wrong-range': row['execution']['commits']=['c'*40]
     elif change=='duplicate':
         rows.append(_close(tmp_path,1,'a'*40,'c'*40,['c'*40]))
@@ -81,6 +81,14 @@ def test_legacy_missing_base_does_not_invent_parent(tmp_path,monkeypatch):
             '-qm',message],check=True)
     base,head,commits=run_result._git_info(tmp_path)
     assert base=='' and head and commits==[]
+
+
+def test_canonical_source_clone_can_report_a_distinct_execution_root(tmp_path,monkeypatch):
+    row=_close(tmp_path,1,'a'*40,'b'*40,['b'*40])
+    row['context']['exec_tree']=str(tmp_path/'isolated-worktree')
+    result=_write(tmp_path,[row],monkeypatch)
+    assert result['base_sha']=='a'*40 and result['head_sha']=='b'*40
+    assert result['git_provenance']['observation_complete'] is True
 
 
 @pytest.mark.parametrize('raw', [

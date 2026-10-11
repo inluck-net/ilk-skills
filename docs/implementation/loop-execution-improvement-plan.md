@@ -23,7 +23,7 @@ request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: close remaining legacy reader/recovery/parity requirements
-and delivery documentation in this isolated worktree. Toolkit preview e434e346
+and delivery documentation in this isolated worktree. Toolkit preview 311265c2
 and consumer compatibility 2cb713ae are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -2492,3 +2492,24 @@ anchors at the time of inspection and can move as integration changes code.
   not use a pin alone or --force to ignore working checkout ownership. Earlier
   local activations already made these independent checks and preserved the
   controller and protected files; this fixes the reusable guard itself.
+
+
+### Guard delivered and canonical result root correction
+
+- Archived committed 311265c2 selfmod and prepared-pin drain/relaunch entries:
+  2 passed/13 deselected in 41.12s. Original bounds and ownership remain.
+- Local 311265c2 preview activated at a freshly proved paused/undispatched
+  boundary. The stronger host query correctly reports controller 94556 as a
+  checkout blocker; explicit exclusion follows independent pause/private-pin/
+  no-child/no-dispatched-work observations. All 1,891 protected hashes and
+  exact controller stayed unchanged; idle scheduler restored. Evidence:
+  toolkit-delivery-preview-20261012g/installed.json. No remote activation.
+- Source inspection caught our new result fixture using `clone_tree` instead
+  of canonical iteration_context._resolve_context's `clone` field. Normal
+  same-root entries hid the mistake. A distinct execution-root negative
+  reproduced unknown range before correction (1 failed in 0.05s); this was
+  false unknown, not false green. Corrected reader and fixture to real schema.
+- Result/transport/existing contracts: 27 passed/8 deselected in 0.46s.
+  Strengthened the archived selfmod case to invoke the pinned result CLI on
+  its actual close context from the original clone path. Commit before
+  running this archived validation so it exercises corrected code.

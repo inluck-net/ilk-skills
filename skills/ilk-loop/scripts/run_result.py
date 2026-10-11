@@ -230,7 +230,7 @@ def _recorded_git_info(log: Path, run_id: str, master: str, project: str):
                     or Path(selected['master_path']).stem != Path(master).stem):
                 return unknown('close master differs from result master')
             if project and Path(project).resolve() not in {
-                    Path(context.get(role, '')).resolve() for role in ('clone_tree', 'exec_tree')}:
+                    Path(context.get(role, '')).resolve() for role in ('clone', 'exec_tree')}:
                 return unknown('close project differs from result project')
             start = context.get('base_commit'); end = execution.get('head_commit')
             recorded = execution.get('commits')
