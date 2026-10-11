@@ -205,7 +205,7 @@ def extract_master_order(master_text: str, plans_dir: Path | None = None) -> lis
     return ordered
 
 
-def pick_active_master(masters: list[Path], json_mode: bool = False) -> tuple[Path, dict]:
+def pick_active_master(masters: list[Path], json_mode: bool = False, *, pinned_master: Path | None = None) -> tuple[Path, dict]:
     """
     Choose the master plan to drive this run, plus a summary of the
     queue for display purposes.
@@ -285,9 +285,9 @@ def pick_active_master(masters: list[Path], json_mode: bool = False) -> tuple[Pa
     # and the file exists in the plans dir, that master is the only
     # candidate — whatever its status.  A pinned all-shipped master
     # yields all-shipped; it never rolls over to another master.
-    ilk_master = os.environ.get("ILK_MASTER", "").strip()
+    ilk_master = pinned_master.name if pinned_master else os.environ.get("ILK_MASTER", "").strip()
     if ilk_master and plans_dir is not None:
-        pinned = plans_dir / ilk_master
+        pinned = pinned_master if pinned_master else plans_dir / ilk_master
         if pinned.exists():
             try:
                 fm = parse_frontmatter(pinned.read_text(encoding="utf-8-sig"))
@@ -304,6 +304,8 @@ def pick_active_master(masters: list[Path], json_mode: bool = False) -> tuple[Pa
                 "notices": notices,
             }
         else:
+            if pinned_master is not None:
+                raise ValueError('frozen master disappeared')
             notices.append(
                 f"[ilk] ILK_MASTER={ilk_master!r} not found in {plans_dir}; "
                 "falling back to default pick."
@@ -369,7 +371,27 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
       - next: dict|None with fname, status, cur, est, repo (if any)
       - notices: list[str] (empty when no notices; populated in json_mode)
     """
-    plans_dir, plans_source = _resolve_plans_dir(cwd)
+    from iteration_context import read_context, ContextError
+    try:
+        context = read_context()
+        frozen_master = None
+        if context is not None:
+            plans_dir = Path(context['plans_dir']).resolve(strict=True)
+            dispatch = context.get('dispatch')
+            if not isinstance(dispatch, dict):
+                raise ContextError('frozen dispatch is absent or invalid')
+            raw_master = dispatch.get('master_path')
+            if not isinstance(raw_master, str) or not Path(raw_master).is_absolute():
+                raise ContextError('frozen master is absent or invalid')
+            frozen_master = Path(raw_master).resolve(strict=True)
+            if (frozen_master.parent != plans_dir or not frozen_master.is_file()
+                    or not frozen_master.name.startswith('MASTER-') or frozen_master.suffix != '.md'):
+                raise ContextError('frozen master is outside plans directory')
+            plans_source = 'context'
+        else:
+            plans_dir, plans_source = _resolve_plans_dir(cwd)
+    except (ContextError, OSError, TypeError, ValueError) as exc:
+        return {'error': f'iteration context unavailable: {exc}', 'queue_exit': 2}
     if not plans_dir:
         return {"error": "no plans dir found", "queue_exit": 2}
 
@@ -377,7 +399,10 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
     if not masters:
         return {"error": f"No MASTER-*.md in {plans_dir}", "queue_exit": 2}
 
-    master, queue_view = pick_active_master(masters, json_mode=json_mode)
+    try:
+        master, queue_view = pick_active_master(masters, json_mode=json_mode, pinned_master=frozen_master)
+    except ValueError as exc:
+        return {'error': f'iteration context unavailable: {exc}', 'queue_exit': 2}
     master_text = master.read_text(encoding="utf-8-sig")
     ordered_files = extract_master_order(master_text, plans_dir=plans_dir)
 
@@ -700,9 +725,10 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
     # Read the launcher's last-exit.json to surface the run's exit state.
     # A parked project (e.g. ship_integrity_violation) must not read as
     # ordinary outstanding work.
-    sentinel = _resolve_exit_sentinel(plans_dir, plans_source, cwd)
+    sentinel = (Path(context['runtime_dir']) / 'launcher' / 'last-exit.json'
+                if context is not None else _resolve_exit_sentinel(plans_dir, plans_source, cwd))
     raw = _read_exit_sentinel(sentinel)
-    result["exit_state"] = _classify_exit_state(raw, cwd=cwd)
+    result["exit_state"] = _classify_exit_state(raw, cwd=Path(context['exec_tree']) if context is not None else cwd)
 
     return result
 

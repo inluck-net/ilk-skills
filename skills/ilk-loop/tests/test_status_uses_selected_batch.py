@@ -3,6 +3,7 @@ from pathlib import Path
 import batch_gate
 import loop_status
 import ship_audit
+import json
 
 
 def test_status_does_not_switch_to_higher_priority_queued_proof(tmp_path,monkeypatch):
@@ -30,3 +31,30 @@ def test_status_does_not_switch_to_higher_priority_queued_proof(tmp_path,monkeyp
     assert Path(status['master']).name=='MASTER-alpha.md'
     assert calls and calls[0]['batch']=='batch-alpha'
     assert Path(calls[0]['master_path']).name=='MASTER-alpha.md'
+
+
+def test_status_uses_frozen_roots_and_master(tmp_path,monkeypatch):
+    plans=tmp_path/'frozen-plans';plans.mkdir()
+    master=plans/'MASTER-frozen.md'
+    master.write_text('---\nmaster_plan: frozen\nstatus: active\n---\n')
+    (plans/'MASTER-other.md').write_text('---\nmaster_plan: other\nstatus: active\npriority: 100\n---\n')
+    context=dict(schema_version=1,dispatch={'master_path':str(master)},
+        **{key:str(tmp_path/key) for key in ('clone','exec_tree','runtime_dir','data_root','code_root')},
+        plans_dir=str(plans))
+    path=tmp_path/'context.json';path.write_text(json.dumps(context))
+    monkeypatch.setenv('ILK_ITER_CONTEXT',str(path))
+    monkeypatch.setenv('ILK_MASTER','MASTER-other.md')
+    def discovery(*args):raise AssertionError('frozen status rediscovered plans')
+    monkeypatch.setattr(loop_status,'_resolve_plans_dir',discovery)
+    status=loop_status.resolve_status(tmp_path,json_mode=True)
+    assert status['master']==master.name
+    assert status['plans_dir']==str(plans)
+
+
+def test_invalid_frozen_context_does_not_fall_back(tmp_path,monkeypatch):
+    path=tmp_path/'context.json';path.write_text('{')
+    monkeypatch.setenv('ILK_ITER_CONTEXT',str(path))
+    def discovery(*args):raise AssertionError('invalid context fell back')
+    monkeypatch.setattr(loop_status,'_resolve_plans_dir',discovery)
+    status=loop_status.resolve_status(tmp_path,json_mode=True)
+    assert status['queue_exit']==2 and 'context' in status['error']

@@ -2538,3 +2538,24 @@ anchors at the time of inspection and can move as integration changes code.
   entry. Installed local preview remains 311265c2; remote remains v0.9.193,
   with only e434e346 prepared privately. Do not activate that older remote
   candidate as the final delivery; it needs these checked corrections.
+
+
+### Frozen status reader and unattended result entry
+
+- Committed cb63a8eb actual archived unattended selfmod entry: 1 passed/14
+  deselected in 25.02s. Automatic outside result and explicit pinned result
+  reader consumed the real closed context; no agent/model dispatched.
+- Two new frozen-status negatives reproduced competing discovery and invalid
+  context fallback (2 failed/1 passed in 0.08s). Status now reads canonical
+  plans/master/runtime/execution roots from an available iteration context,
+  preserves that exact master even against a conflicting ILK_MASTER, and
+  returns queue_exit 2 for invalid/unavailable context. Without context,
+  historical queue selection remains. No plan bytes or ownership changed.
+- Status, ledger, queue, exit-state and master-ownership callers: 35 passed
+  in 17.06s. New fixtures and existing production-entry stubs are focused;
+  no routine suite or final verifier was run. Commit before the archived
+  two-plan/selfmod entry check. Installed local preview remains 311265c2.
+- Fresh controller tuple remains PID/PGID 94556, start Oct 11 23:44:49,
+  private run 20261011-234448; remote pointer remains v0.9.193. Remote rg
+  was absent from noninteractive PATH, so that service-list filter yielded
+  no evidence; do not infer idleness from it.
