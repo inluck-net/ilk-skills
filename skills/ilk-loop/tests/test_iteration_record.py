@@ -212,7 +212,7 @@ def test_retry_state_updates_keep_existing_identity_and_private_atomic_file(tmp_
     assert update_retry_state(path,'step:0','count')==1
     assert json.loads(path.read_text())=={'other:0':3,'step:0':1}
     assert path.stat().st_mode & 0o777 == 0o600
-    assert list(tmp_path.iterdir())==[path]
+    assert set(tmp_path.iterdir())=={path,path.with_name(path.name+'.lock')}
 
 
 def test_missing_failure_identity_cannot_extend_retry_budget():
@@ -220,3 +220,29 @@ def test_missing_failure_identity_cannot_extend_retry_budget():
     assert not decide_gate_retry(red_count=1,progress_known=False).should_stop
     assert decide_gate_retry(red_count=2,progress_known=False).should_stop
     assert not decide_gate_retry(red_count=2,progress_known=True,same_failing_set=False).should_stop
+
+
+def test_retry_updates_do_not_lose_parallel_counts(tmp_path,monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from recovery import update_retry_state,read_retry_state
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    path=tmp_path/'retries.json'
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results=list(pool.map(lambda _:update_retry_state(path,'step:0','count'),range(12)))
+    assert sorted(results)==list(range(1,13))
+    assert read_retry_state(path,'count')=={'step:0':12}
+
+
+@pytest.mark.parametrize('writer',['retry','notice','salvage'])
+def test_worker_cannot_change_recovery_history(tmp_path,monkeypatch,writer):
+    from recovery import update_retry_state,save_notice,salvage_transcript
+    from run_registry import RegistryError
+    monkeypatch.setenv('ILK_WORKER_SESSION','1')
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    target=tmp_path/'history';source=tmp_path/'source';source.write_text('{}\n')
+    context={'run_id':'old','iteration':1,'recovery_dir':str(target)}
+    with pytest.raises(RegistryError,match='worker'):
+        if writer=='retry':update_retry_state(target,'step:0','count')
+        elif writer=='notice':save_notice(context,'step',0,source)
+        else:salvage_transcript(context,source,target)
+    assert not target.exists()

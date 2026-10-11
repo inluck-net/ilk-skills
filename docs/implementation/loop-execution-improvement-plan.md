@@ -153,6 +153,32 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- Recovery history mutations now require fresh driver authority before I/O and
+  replacement, lock each retry read/increment/write, and fsync parent directories
+  for counters/notices/salvage. Concurrent counter and worker-refusal checks plus
+  existing recovery/record/commit-interruption checks: 38 passed in 7.13s with
+  isolated HOME/data. First run found one old no-lock-file assertion (1 failed,
+  26 passed in 1.58s); a persistent lock inode is required for serialization,
+  so the fixture now checks that only the history and its lock remain. Pending
+  archived normal/interrupted-acceptance entry checks before activation.
+
+- Consumer `8472771f`: malformed upgrade master identity reproduced with 6
+  failed checks in 0.82s (integer/object raised TypeError; relative path dropped
+  protection). Known worktrees now stay pending for unreadable identities;
+  a readable absolute different master still excludes the claim. 25 scoped
+  checks passed in 0.61s. Ambient observer noticed real project byte changes
+  during the separately running disposable provider fixture; this test run
+  is not evidence of complete host isolation. No source consumer/daemon update.
+- Actual isolated consumer repeat at `0657df35` FAILED at unchanged 120s cap,
+  123.226s wall. Fourteen calls stayed in consumer implementation/tests/docs;
+  no edit/gate/acceptance. Source home unchanged, registry idle. Root-role prompt
+  corrected toolkit discovery but did not prove speed or solve task time. No
+  identical rerun: a new 240s fixture bound is a judgment after the measured
+  14-call discovery span falsified the old task allowance. Existing run caps
+  and production defaults unchanged. Evidence is kept separately under
+  `consumer-provider-explicit-implementation-root/` and
+  `consumer-provider-valid-task-bound/`; neither is a controlled speed comparison.
+
 - Implementation-root prompt clarification plus focused caller checks: 10 passed
   in 16.18s. The first run found two stale copied-fixture assumptions (missing
   script import path and no toolkit Git identity) and a real early-exit unset

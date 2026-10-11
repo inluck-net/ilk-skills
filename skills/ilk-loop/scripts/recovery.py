@@ -27,6 +27,16 @@ def read_retry_state(path: Path, kind: str) -> dict:
 
 
 def update_retry_state(path: Path, key: str, kind: str, value=None):
+    from run_registry import require_driver
+    from plan_state import _lock
+    context=read_context();require_driver(context)
+    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
+    with _lock(path.with_name(path.name+'.lock')):
+        require_driver(context)
+        return _update_retry_state(path,key,kind,value,context=context)
+
+
+def _update_retry_state(path: Path, key: str, kind: str, value=None, *, context):
     # The runner lock serializes driver writes. Never repair corrupt history by
     # resetting it: that would silently grant another retry budget.
     data=read_retry_state(path,kind)
@@ -44,7 +54,9 @@ def update_retry_state(path: Path, key: str, kind: str, value=None):
         except BaseException:
             tmp.unlink(missing_ok=True);raise
     try:
-        tmp.chmod(0o600);os.replace(tmp,path)
+        from run_registry import require_driver
+        from plan_state import _sync_parent
+        tmp.chmod(0o600);require_driver(context);os.replace(tmp,path);_sync_parent(path)
     finally: tmp.unlink(missing_ok=True)
     return value
 
@@ -55,11 +67,24 @@ def notice_path(context: dict, slug: str, step: int) -> Path:
 
 
 def save_notice(context: dict, slug: str, step: int, source: Path):
-    destination=notice_path(context,slug,step)
-    destination.parent.mkdir(parents=True,exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode='w',dir=destination.parent,delete=False) as f:
-        tmp=Path(f.name);f.write(source.read_text());f.flush();os.fsync(f.fileno())
-    tmp.chmod(0o600);os.replace(tmp,destination)
+    _write_diagnostic(context,notice_path(context,slug,step),source.read_text())
+
+
+def _write_diagnostic(context, destination, text):
+    from run_registry import require_driver
+    from plan_state import _lock,_sync_parent
+    require_driver(context)
+    destination=Path(destination);destination.parent.mkdir(parents=True,exist_ok=True)
+    with _lock(destination.with_name(destination.name+'.lock')):
+        require_driver(context)
+        with tempfile.NamedTemporaryFile(mode='w',dir=destination.parent,delete=False) as stream:
+            temporary=Path(stream.name)
+            try:stream.write(text);stream.flush();os.fsync(stream.fileno())
+            except BaseException:temporary.unlink(missing_ok=True);raise
+        try:
+            temporary.chmod(0o600);require_driver(context)
+            os.replace(temporary,destination);_sync_parent(destination)
+        finally:temporary.unlink(missing_ok=True)
 
 
 def brief(context: dict, slug: str, step: int) -> list[str]:
@@ -123,10 +148,7 @@ def salvage_transcript(context: dict, source: Path, destination: Path) -> dict:
                  pending_tools=[v for key,v in tools.items() if key not in finished],
                  unfinished_stream_response=None if last_stream is None else last_stream!='message_stop',
                  malformed_rows=malformed,result_subtypes=result_subtypes)
-    destination.parent.mkdir(parents=True,exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode='w',dir=destination.parent,delete=False) as f:
-        tmp=Path(f.name);json.dump(payload,f);f.write('\n');f.flush();os.fsync(f.fileno())
-    tmp.chmod(0o600);os.replace(tmp,destination)
+    _write_diagnostic(context,destination,json.dumps(payload)+'\n')
     return payload
 
 
