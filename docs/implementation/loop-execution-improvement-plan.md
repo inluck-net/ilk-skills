@@ -24,7 +24,7 @@ required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: wire candidate measured-red progress into opt-in Mac
 worker/loop, close/result and consumer readers, then finish remaining
-legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview 524fedca
+legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview d74d6631
 and consumer compatibility 3987a299 are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -37,7 +37,7 @@ Mac evidence. Actual provider red then green used the same session; a real
 consumer repair passed and a focused-diagnostics comparison is recorded.
 Windows/member/dirty-entry adapters remain open. The controlled shell/native pairing is recorded in docs/verification/loop-tools-comparison-2026-10-12.md.
 Continue here per Chad: “no more handover, until the whole thing done”.
-Overall estimate about 74% is a judgment over the whole installed/measured scope,
+Overall estimate about 75% is a judgment over the whole installed/measured scope,
 not a checkbox count. Do not infer whole completion from capability checks.
 
 Old runs 20261011-102057/130246/212131/215532 and their controller identities
@@ -167,16 +167,16 @@ an explicit owned-profile refusal does not prove an unbuilt adapter.
 | Requirement | Implemented mechanism / source anchor | Evidence and delivery limit |
 |---|---|---|
 | Exact target and roots (A1/B1/I1) | iteration_context.py:186 resolves canonical roles before snapshots; :67 validates declared worktree binding. dispatch_target resolves pinned master identity. | Normal/declared/selfmod archived callers passed. Member and arbitrary/timeout dirty owned entry refuse; exact closed-red re-entry is checked below; legacy remains. |
-| Durable open/close (B2/I2) | Bash and PowerShell existing JSONL open/close; iteration_context.py:151 captures execution; iteration_record.py:11 finalizes provisional proof. | Close checks require positive integrity/state/landing on owned Mac path; no inferred open-only proof. Status now uses the frozen exact master/plans/runtime/execution identity; unattended results project closed recorded ranges. Other legacy reader migration remains open. |
-| Recovery (B3/C5) | recovery.py:112 transcript salvage; acceptance_recovery.py:81 original transaction recovery; worker_iteration preserves same-session diagnostics. | Actual provider red→repair→green, archived commit/staged/selfmod/worktree recovery; salvage is diagnostic only. PowerShell retry parity remains open. |
+| Durable open/close (B2/I2) | Bash and PowerShell existing JSONL open/close; iteration_context.py:151 captures execution; iteration_record.py:11 finalizes provisional proof. | Close checks require positive integrity/state/landing on owned Mac path; no inferred open-only proof. Status now uses the frozen exact master/plans/runtime/execution identity; unattended results project closed recorded ranges. Exact-run watch and feedback, ship audit and consumer strict close readers are migrated; remaining legacy authority paths remain open. |
+| Recovery (B3/C5) | recovery.py:112 transcript salvage; acceptance_recovery.py:81 original transaction recovery; worker_iteration preserves same-session diagnostics. | Actual provider red→repair→green, archived commit/staged/selfmod/worktree recovery; salvage is diagnostic only. Portable PowerShell diagnostic resume and confirmation transport passed; native Windows ownership/recovery remains open. |
 | Kernel freeze (C1) | safety_kernel.py:203 admission and :293 frozen-base range policy; safety-kernel.json owner-only new bases. | Focused kernel/sandbox checks; historical bases retain their own policy. Supported runtime-tier loop changes remain eligible. |
 | Worker scope (C2/C3) | worker_dispatch.py private settings/broker plus worker_sandbox OS policy; driver_step.py:167 gates/commit/CAS. | Real native tools and driver gate scopes checked on Mac, source home unchanged. Windows/network/nested-sandbox adapters refuse new profiles. |
 | State ownership (C4/C6/I3) | plan_state.py:158 transition byte CAS + durable journal; :84 owned state audit. | Holds, concurrent transition, registry projection, rollback and interruption negatives passed. Legacy workers keep older authority until migrated; policing retired only on enforced path. |
 | Process ownership (D1/I4) | run_registry.py:145 launch reservation, :352 child registration, :33 fresh driver authority. | Native owned-child and scheduler/watchdog/stop reader checks; PID reuse and unknown group refuse. Windows ownership adapter not established. |
-| Input pinning (D2/I6) | run_inputs private code/settings/hooks/MCP/inventory; instruction_inputs.py:9 named inputs; provider_provenance.py configured origin. | Actual provider with eight copied hooks, immutable homes and sanitized records. Managed settings, system libraries and arbitrary external imports require explicit coordination/adapters. |
-| Consumer compatibility (D3) | gh-resolve claim readers installed at 8472771f; installed 2cb713ae adds hermetic explicit toolkit fixture and quoted runtime pin rendering/probe. | Consumer negative ambient poison reproduced; 7 pin/integration checks and 8 adjacent focused checks passed. Installed consumer/toolkit 4de pair: 4 focused checks passed in 0.91s; rezmac unchanged. |
+| Input pinning (D2/I6) | run_inputs private code/settings/hooks/MCP/inventory; instruction_inputs.py inventory/import_paths named, rule and manually referenced inputs; provider_provenance.py configured origin. | Actual provider with eight copied hooks, immutable homes and sanitized records. Manual repository references are frozen with protocol 2. Plain global instructions are explicit reads; global import rebasing, managed settings and system libraries require adapters/coordination. |
+| Consumer compatibility (D3) | gh-resolve closed exact proof readers installed at 3987a299; hermetic explicit toolkit fixtures and quoted pin rendering retained. | Consumer negative ambient poison reproduced; 7 pin/integration checks and 8 adjacent focused checks passed. Affected strict consumer readers passed 49 in 1.32s; local consumer 3987a299 installed. Rezmac private consumer 3987a299 prepared; shared rezmac activation remains pending. |
 | Upgrade (D4) | upgrade_drain.py:18 positive accepted boundary, :92 activation, :150 consume. | Archived real launcher preserves limits/master/budget/holds, refuses live old children and tampering. Global opt-in remains off. Production local activation separate below. |
-| All-attempt verdicts (E2/I5) | driver_step.attempt_verdict groups same frozen input tree and scope/command; driver history retained before commit. | Same-tree red→pass flaky leaves HEAD/pointer unchanged; changed repaired tree green. Legacy rolling flaky history, shared capped actual-base attribution and portable PowerShell transport are checked below. Native Windows ownership/recovery and owned baseline-red advancement remain incomplete. |
+| All-attempt verdicts (E2/I5) | driver_step.attempt_verdict groups same frozen input tree and scope/command; driver history retained before commit. | Same-tree red→pass flaky leaves HEAD/pointer unchanged; changed repaired tree green. Legacy rolling flaky history, shared capped actual-base attribution and portable PowerShell transport are checked below. Opt-in Mac measured-red progress advances only after fresh exact-base samples and typed non-green close; archived and actual consumer repair passed. Windows ownership/recovery remains unsupported. |
 | Measurements (A4/E1/E3) | report.py parser v6 and phase_observation driver clocks. | Same MiMo consumer task 230s vs 199s; eligible toolkit repair 98s. One pair, uncontrolled concurrency, no causal/default-model speed claim. Shell/native pairing is recorded below with one failed shell arm; no accepted-work speed ratio is justified. |
 | Hermeticity (I7) | Private HOME + both data variables; consumer fixture explicit committed toolkit snapshot, isolated parser processes; fixture identity-loss spawn seam. | Focused checks above. Missing integration input is explicitly unknown/skip, strict full-coverage existing guard rejects it; no full suite run. Whole-repository lint eligibility audit remains open. |
 
@@ -3287,7 +3287,7 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
   journal/encoding checks: 5 passed in 0.05s. All fixture plans disposable.
   Multi-plan atomic return and crash recovery of returned-id bookkeeping remain
   open; a journaled plan revision alone does not establish those capabilities.
-  Overall estimate about 74% remains a judgment over installed/measured scope.
+  Overall estimate about 75% remains a judgment over installed/measured scope.
 
 - B3/C4 legacy return-red crash recovery: focused fault after durable plan
   replacement but before returned IDs duplicated the authored check/finding on
@@ -3366,3 +3366,21 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
   checks passed in 0.37s. This is resumable per-owner CAS, not filesystem atomicity
   across multiple plan files; concurrent late human edits still refuse rather
   than roll them back. Aggregate atomicity remains an explicit open requirement.
+
+- A2/B4 portable phase observation candidate: PowerShell uses its stopwatch
+  for additive worker, orphan-cleanup, local-check/history, quality and integrity
+  boundaries, with an explicit powershell-stopwatch basis. Shared observer keeps
+  overlaps separate, missing clocks unknown and repeat identity unknown when
+  driver attempts were not observed. Malformed transport initially raised and
+  could interrupt logging; reproduced then corrected to observation-unavailable
+  data without changing acceptance. Nine portable observation/recovery/profile
+  refusal checks passed in 1.81s. This does not establish native Windows OS
+  enforcement or a representative batch speed gain. A 15s test startup allowance
+  is a fixture judgment with its basis/falsifier in the test, not a runtime default.
+
+- Delivery s: d74d6631 installed locally with controller 94556 and all 1,891
+  protected hashes preserved. Rezmac isolated checkout fast-forwarded from
+  6aa18f7f to d74d6631 and a read-only standby was extracted. Initial bundle
+  fetch named an unexported branch and refused without mutation; corrected to
+  the actual advertised HEAD ref after bundle verification. Shared rezmac
+  pointer remains v0.9.193. No public release or active-worker replacement.

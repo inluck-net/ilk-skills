@@ -420,6 +420,22 @@ function Get-WorkerDispatchContext {
   return [PSCustomObject]@{ Identity = $identity; Brief = $brief.TrimEnd() }
 }
 
+function Get-PhaseClock {
+  return [double][System.Diagnostics.Stopwatch]::GetTimestamp() / [System.Diagnostics.Stopwatch]::Frequency
+}
+
+function Get-DriverPhaseObservation {
+  param([hashtable]$Boundaries)
+  try {
+  $payload = $Boundaries | ConvertTo-Json -Depth 10 -Compress
+  $observed = $payload | & python -c 'import json,sys;sys.path.insert(0,sys.argv[1]);from phase_observation import observe;d=observe({},json.load(sys.stdin));[r.update(clock_basis="powershell-stopwatch") for r in d["intervals"]];print(json.dumps(d))' (Join-Path $SkillRoot 'ilk-loop/scripts') | Out-String
+  if ($LASTEXITCODE -ne 0) { return @{ observation_complete=$false; capture_error='phase observation unavailable' } }
+  return $observed | ConvertFrom-Json
+  } catch {
+    return @{ observation_complete=$false; capture_error='phase observation unavailable' }
+  }
+}
+
 function Get-FrozenWorkerBrief {
   # Format the already-frozen dispatch; do not rediscover the mutable queue.
   $scriptDir = Join-Path $SkillRoot 'ilk-loop/scripts'
@@ -2483,6 +2499,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
   if ($dispatchContext) { $startedRecord['dispatch'] = $dispatchContext.Identity }
   Write-JsonlRecord -Record $startedRecord
 
+  $workerStarted = Get-PhaseClock
   $result = Invoke-ClaudeIteration `
     -Cwd $ProjectPath `
     -LogFile $iterLog `
@@ -2490,6 +2507,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     -TimeoutSec $timeoutSec `
     -BudgetUsd $MaxBudgetUsd `
     -ModelOverride $Model
+  $workerEnded = Get-PhaseClock
 
   $iterDurSec = [int]((Get-Date) - $iterStart).TotalSeconds
   if (-not $result.Completed) {
@@ -2548,13 +2566,18 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
   $iterMetrics = Count-IterationMetrics -JsonlLog "$iterLog.jsonl"
 
   # Reap iteration orphans (AC-13/14 parity with .sh)
+  $cleanupStarted = Get-PhaseClock
   Reap-IterationOrphans
+  $cleanupEnded = Get-PhaseClock
 
   # Optional: run local_checks declared in sub-plan frontmatter / per-step
   # yaml fences. Observation only — never gates or stops the loop. Opt-in
   # via -RunLocalChecks. Targets are derived from [plan:<slug>#step-N]
   # tags in this iteration's new commit messages (highest step per slug).
   $localChecksRun = @()
+  $localChecksStarted = Get-PhaseClock
+  $qualityStarted = $null; $qualityEnded = $null
+  $integrityStarted = $null; $integrityEnded = $null
   $localChecksBlocked = $false
   if ($RunLocalChecks -and $totalNew -gt 0) {
     $allTargets = @()
@@ -2723,12 +2746,14 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     }
   }
 
+  $localChecksEnded = Get-PhaseClock
   try {
   # Deferred B2 break: the failing iteration is now recorded above (so the
   # classifier can see it); stop before running quality gates / shipping.
   if ($localChecksBlocked) { break }
 
   if ($totalNew -gt 0) {
+    $qualityStarted = Get-PhaseClock
     $gateResult = Invoke-QualityGatesIfNeeded `
       -Project $ProjectPath `
       -Repos $repos `
@@ -2736,6 +2761,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
       -HeadsAfter $headsAfter `
       -TotalNew $totalNew `
       -NewCommits $newCommits
+    $qualityEnded = Get-PhaseClock
     if ($gateResult.Blocked) {
       $stopReason = $gateResult.Reason
       if ($gateResult.ShipReport) {
@@ -2754,6 +2780,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
   # Ship-integrity enforcement: a sub-plan must not be "shipped" while its
   # declared local_checks gate is red.  If the agent set status=shipped but
   # the gate failed, revert and stop.
+  $integrityStarted = Get-PhaseClock
   $shipViolations = @(Test-ShipIntegrity -ProjectPath $ProjectPath -LocalChecksRun $localChecksRun)
   if ($shipViolations.Count -gt 0) {
     foreach ($v in $shipViolations) {
@@ -2786,6 +2813,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     }
     break
   }
+  $integrityEnded = Get-PhaseClock
 
   } finally {
   $jsonlRecord = @{
@@ -2812,6 +2840,13 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     local_checks      = $localChecksRun
   }
   $jsonlRecord['context'] = $iterationContext
+  $jsonlRecord['driver_phase_observation'] = Get-DriverPhaseObservation -Boundaries @{
+    worker_turn=@($workerStarted,$workerEnded)
+    iteration_orphan_cleanup=@($cleanupStarted,$cleanupEnded)
+    local_checks_and_history=@($localChecksStarted,$localChecksEnded)
+    quality_gates=@($qualityStarted,$qualityEnded)
+    integrity=@($integrityStarted,$integrityEnded)
+  }
   $captureJson = & python (Join-Path $SkillRoot 'ilk-loop/scripts/iteration_context.py') --capture $env:ILK_ITER_CONTEXT | Out-String
   if ($LASTEXITCODE -eq 0) {
     $jsonlRecord['execution'] = $captureJson | ConvertFrom-Json
