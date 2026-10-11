@@ -118,6 +118,10 @@ def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
         selected=Path(dispatch['subplan_path']).resolve(strict=True)
         if selected.parent!=Path(plans_dir):
             raise ValueError('dispatch belongs to another plans root')
+        from safety_kernel import check_plan_admission
+        violations = check_plan_admission(selected.read_text(encoding='utf-8-sig'), Path(exec_tree))
+        if violations:
+            raise ValueError('; '.join(violations))
         master=dispatch.get('master_path')
         if master and Path(master).resolve(strict=True).parent!=Path(plans_dir):
             raise ValueError('master belongs to another plans root')

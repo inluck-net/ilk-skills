@@ -53,7 +53,7 @@ def load(repo: Path | None = None) -> dict:
     entry without ``path`` or ``why``.
     """
     if repo is None:
-        repo = _HERE.parents[2]
+        repo = _HERE.parents[3]
     kfile = repo / "skills" / "ilk-loop" / "safety-kernel.json"
     try:
         text = kfile.read_text(encoding="utf-8")
@@ -66,12 +66,19 @@ def load(repo: Path | None = None) -> dict:
     if data.get("schema") != 1:
         raise KernelListError(
             f"expected schema 1, got {data.get('schema')}")
+    _validate_policy(data)
     for tier_name in ("rules", "kernel"):
         for entry in data.get(tier_name, []):
             if "path" not in entry or "why" not in entry:
                 raise KernelListError(
                     f"{tier_name} entry missing 'path' or 'why': {entry}")
     return data
+
+
+def _validate_policy(kernel: dict) -> None:
+    # Missing policy denotes the historical session-planned slow path.
+    if kernel.get("loop_kernel_policy") not in (None, "legacy-session", "owner-only"):
+        raise KernelListError("unknown loop_kernel_policy")
 
 
 def normalise(path: str, repo: Path | None = None) -> str:
@@ -193,6 +200,27 @@ def check_paths(paths: list[str], *, kernel: dict | None = None) -> list[dict]:
     return results
 
 
+def check_plan_admission(text: str, repo: Path) -> list[str]:
+    """Refuse declared loop kernel writes under the current toolkit policy.
+
+    Consumer repos without the toolkit policy are unaffected. This is admission,
+    not an enforcement substitute for inspecting actual worker writes.
+    """
+    if not (repo / "skills/ilk-loop/safety-kernel.json").is_file():
+        return []
+    kernel = load(repo)
+    if kernel.get("loop_kernel_policy") != "owner-only":
+        return []
+    from plan_lint import _extract_scope_paths
+    paths = _extract_scope_paths(text)
+    # Explicit Write/Edit bullets also declare writes outside YAML scope.
+    for line in text.splitlines():
+        if re.match(r"^\s*(?:[-*]|\d+[.)])\s+(?:\*\*)?(?:Write|Edit)\b", line, re.I):
+            paths.extend(re.findall(r"`([^`]+)`", line))
+    return [f"kernel write requires supervised owner build: {hit['path']}"
+            for hit in check_paths(sorted(set(paths)), kernel=kernel)]
+
+
 def _git_diff_paths(repo: Path, base: str, head: str) -> list[str]:
     """Return the file paths changed between base and head."""
     out = _git_output(["diff", "--name-only", base, head], repo)
@@ -280,8 +308,9 @@ def check_range(
     no violations.
 
     A ``kernel``-tier edit by a session-planned master (no ``auto_planned``)
-    is NOT a violation — the slow path (full-scope verify) governs it.
-    See docs/architecture/unattended-unblocking-design.md:306-309.
+    is allowed only by historical bases without ``owner-only`` policy.
+    New owner-only bases refuse all loop kernel edits, including session plans.
+    Ordinary manual commits are not loop builds; no full suite is inferred.
     """
     # Read the kernel list at base.
     raw = _git_output(
@@ -295,6 +324,7 @@ def check_range(
     if kernel.get("schema") != 1:
         raise KernelListError("wrong schema at base")
 
+    _validate_policy(kernel)
     commits = _git_output(["rev-list", f"{base}..{head}"], repo)
     points = _read_points(repo, plans_dir, ledger_dir)
     violations: list[dict] = []
@@ -348,8 +378,10 @@ def check_range(
                     reason = "kernel-edit-unresolved-master"
                 elif master_fm.get("auto_planned") == "true":
                     reason = "kernel-edit-by-unattended-build"
+                elif kernel.get("loop_kernel_policy") == "owner-only":
+                    reason = "kernel-edit-requires-owner-build"
                 else:
-                    # Session-planned master — slow path, not a violation.
+                    # Historical session-planned base policy.
                     continue
 
             violations.append({

@@ -386,6 +386,15 @@ def preflight_batch(
         else:
             result.failures.append(finding)
 
+    # Current admission policy is distinct from historical release-base policy.
+    from safety_kernel import check_plan_admission, KernelListError
+    for name, text in subplan_texts.items():
+        try:
+            result.failures.extend(f"{name}: {item}" for item in
+                                   check_plan_admission(text, project_root))
+        except KernelListError as exc:
+            result.failures.append(f"{name}: invalid kernel policy: {exc}")
+
     # AC3: Step-commit feasibility.
     result.failures.extend(_check_step_commit_feasibility(subplan_texts))
 

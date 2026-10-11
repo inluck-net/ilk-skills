@@ -1,5 +1,6 @@
 {
   "schema": 1,
+  "loop_kernel_policy": "owner-only",
   "rules": [
     {"path": "tests/invariants/", "why": "the invariant suite that judges all improvement builds", "may_be_absent": true},
     {"path": "skills/ilk-loop/safety-kernel.json", "why": "the single machine-readable safety kernel"},
@@ -37,7 +38,17 @@
     {"path": "hooks/no-foreign-plan-edit.py", "guard": "hooks", "why": "foreign plan edit guard"},
     {"path": "hooks/no-full-suite.sh", "guard": "hooks", "why": "full suite guard"},
     {"path": "pytest.ini", "guard": "test-infra", "why": "pytest configuration"},
-    {"path": ".ilk-launch.json", "guard": "test-infra", "why": "launch configuration"}
+    {"path": ".ilk-launch.json", "guard": "test-infra", "why": "launch configuration"},
+    {"path": "install.sh", "guard": "owner", "why": "toolkit installation"},
+    {"path": "skills/ilk-watchdog/scripts/bounce_daemons.sh", "guard": "owner", "why": "daemon activation"},
+    {"path": "skills/ilk-ship/scripts/host_deploy_status.py", "guard": "owner", "why": "deployment identity"},
+    {"path": "skills/ilk-loop/scripts/iteration_context.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
+    {"path": "skills/ilk-loop/scripts/iteration_record.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
+    {"path": "skills/ilk-loop/scripts/ship_proof_ledger.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
+    {"path": "skills/ilk-loop/scripts/selfmod_state.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
+    {"path": "skills/ilk-loop/scripts/dispatch_target.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
+    {"path": "skills/ilk-loop/scripts/recovery.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
+    {"path": "skills/ilk-loop/scripts/emit_jsonl_record.py", "guard": "owner", "why": "driver context, evidence or recovery authority"}
   ],
   "kernel_basenames": [
     {"name": "conftest.py", "why": "test infrastructure shared fixture file"}

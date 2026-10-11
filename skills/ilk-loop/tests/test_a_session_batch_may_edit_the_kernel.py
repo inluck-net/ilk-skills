@@ -68,7 +68,9 @@ def _copy_kernel_json(tmp_repo: Path) -> Path:
     dst_dir = tmp_repo / "skills" / "ilk-loop"
     dst_dir.mkdir(parents=True, exist_ok=True)
     dst = dst_dir / "safety-kernel.json"
-    dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    historical = json.loads(src.read_text(encoding="utf-8"))
+    historical.pop("loop_kernel_policy", None)
+    dst.write_text(json.dumps(historical), encoding="utf-8")
     _git(["add", "."], tmp_repo)
     _git(["commit", "-m", "add kernel list"], tmp_repo)
     return dst

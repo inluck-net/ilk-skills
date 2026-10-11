@@ -204,7 +204,7 @@ unit_test_targets:
 ## Steps
 
 ### Step 0 — implement
-- Edit `skills/ilk-loop/scripts/plan_lint.py` to add the new check.
+- Edit `skills/ilk-loop/tests/test_plan_lint.py` to add a caller fixture.
 - Commit: `feat(lint): add new check [plan:beta#step-0]`
 
 ### Step 1 — verify

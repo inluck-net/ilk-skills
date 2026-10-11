@@ -9,17 +9,20 @@ Keep it updated after each checked increment and before any context handoff.
 1. Read this file and the linked designs. Do not reconstruct scope from chat.
 2. Work in `/Users/chad/Projects/github/inluck-net/ilk-skills-worktrees/owner-loop-performance-20261011`, branch `owner/loop-performance-20261011`.
 3. Inspect source and git status before changes. The shared main checkout has
-   an independent active worker; do not stage, revert or overwrite its files.
+   old worker has exited; back up and reconcile owner prose before integration.
+   Do not stage, revert or overwrite unknown files.
 4. Finish the first unchecked item below. Record actual check output, affected
    paths, remaining limitations, and the next action here. Candidate-tested,
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: finish **A2 caller reconciliation**, then **B1 canonical
-context** while A3 waits for the active worker's verified boundary. Candidate
-checkpoint `047e5cbb` is rebased onto main `22f72cad`; newer dispatch/recovery
-changes are in this owner checkout. Reconcile main again before landing.
+Current next action: complete kernel admission and caller checks, then finish
+B3 recovery replay and C2/C3 driver ownership. Safe boundary is verified: old
+run `20261011-102057` ended at 12:53 after its own timeout, PID/PGID gone.
+Owner checkpoints are rebased onto main `5081038b`; implementation bytes match
+the pre-rebase tested candidate. Do not restart the pending overlapping batch.
 PowerShell function parity passed on macOS; full Windows entry remains untested.
+No new installation or consumer benchmark has occurred.
 
 ## Authorization and invariants
 
@@ -271,3 +274,18 @@ No completion/ship/proof markers are inferred from this human tracker.
   and ownership prose, not worker implementation; do not credit it to plan 2.
   Reconcile these prose changes and owner checkpoints before integration.
   Keep the pending batch intact and do not restart it into overlapping code.
+
+- Kernel ownership increment: fixed default repository lookup in
+  `safety_kernel.load`; added explicit `owner-only` policy and protected
+  installation/daemon/deployment and new context/proof/recovery authority files.
+  Release-range checks continue to use the frozen base policy; historical
+  session allowance remains explicit. Existing unattended/unresolved reason
+  codes are preserved. New-policy session edits now require owner builds.
+  Admission in plan preflight and frozen-context preparation rejects declared
+  kernel writes before dispatch. Consumer repos and report tools are unaffected.
+  This is not yet actual write-scope enforcement (C2) or full C1 completion.
+  Red-first: 13 failures/1 pass before implementation. Focused policy/history/
+  context/production entry checks: 56 passed in 14.45s. Preflight callers and
+  admission checks: 34 passed in 0.95s. Diff whitespace check passed.
+  Updated the old clean-preflight fixture to edit a test, because its previous
+  kernel edit is now correctly refused; a new caller test asserts that refusal.
