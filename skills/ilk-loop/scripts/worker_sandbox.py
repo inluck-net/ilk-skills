@@ -6,6 +6,7 @@ an explicit adapter; lack of sandbox support must not silently weaken scope.
 """
 from __future__ import annotations
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -35,6 +36,15 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
     if temporary==root or any(_inside(temporary,path) or _inside(path,temporary) for path in protected+[root]):
         raise ContextError('private temporary directory overlaps execution/control inputs')
     if context['mode']=='selfmod':protected.append(Path(context['clone']).resolve())
+    kernel=context.get('kernel_list') or {}
+    kernel_paths=[]
+    if kernel.get('loop_kernel_policy')=='owner-only':
+        for entry in kernel.get('rules',[])+kernel.get('kernel',[]):
+            relative=Path(entry['path'])
+            if relative.is_absolute() or '..' in relative.parts:
+                raise ContextError('kernel path escapes execution root')
+            kernel_paths.append(root/relative)
+        protected.extend(kernel_paths)
     # Git commands may read metadata, but workers may not mutate it.
     protected.append(root/'.git')
     common=subprocess.run(['git','-C',str(root),'rev-parse','--git-common-dir'],capture_output=True,text=True)
@@ -62,4 +72,15 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
     # execution/home directories; retain exact nested control-plane exclusions.
     rules.extend(_rule('deny','file-write*',path) for path in protected
                  if any(_inside(path,allowed) for allowed in [root,temporary]+([Path(private_home).resolve()] if private_home and not shell else [])))
+    for path in kernel_paths:
+        # Renaming a writable ancestor must not move protected files out of
+        # their frozen pathname. Ordinary sibling files remain writable.
+        for ancestor in path.parents:
+            if not _inside(ancestor,root):break
+            rules.append(f'(deny file-write-unlink (literal {json.dumps(str(ancestor))}))')
+    if kernel.get('loop_kernel_policy')=='owner-only':
+        for entry in kernel.get('kernel_basenames',[]):
+            # Include a basename directly beneath the execution root too.
+            pattern='^'+re.escape(str(root))+'/(.*/)?'+re.escape(entry['name'])+'$'
+            rules.append(f'(deny file-write* (regex {json.dumps(pattern)}))')
     return '\n'.join(rules)+'\n'

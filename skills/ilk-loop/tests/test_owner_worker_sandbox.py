@@ -45,6 +45,22 @@ def test_shell_network_is_denied_before_connecting(tmp_path):
     assert cp.returncode!=0 and 'PermissionError' in cp.stderr
 
 
+def test_frozen_kernel_scope_denies_writes_creation_and_ancestor_rename(tmp_path):
+    ctx,temporary,_=fixture(tmp_path);root=Path(ctx['exec_tree'])
+    (root/'driver').mkdir();protected=root/'driver/authority.py';protected.write_text('owner')
+    ctx['kernel_list']={'loop_kernel_policy':'owner-only','rules':[{'path':'driver/authority.py'}],
+                        'kernel_basenames':[{'name':'conftest.py'}]}
+    policy=profile(ctx,temporary=temporary,shell=True)
+    for target in (protected,root/'conftest.py',root/'driver/conftest.py'):
+        cp=run(policy,'/usr/bin/python3','-c',
+               'from pathlib import Path;Path(__import__("sys").argv[1]).write_text("worker")',str(target))
+        assert cp.returncode!=0
+    cp=run(policy,'/bin/mv',str(root/'driver'),str(root/'moved-driver'))
+    assert cp.returncode!=0 and protected.read_text()=='owner'
+    cp=run(policy,'/usr/bin/python3','-c','from pathlib import Path;Path(__import__("sys").argv[1]).write_text("allowed")',str(root/'driver/report.md'))
+    assert cp.returncode==0 and (root/'driver/report.md').read_text()=='allowed'
+
+
 def test_parent_home_is_writable_but_settings_and_hooks_are_pinned(tmp_path):
     ctx,temporary,home=fixture(tmp_path);policy=profile(ctx,temporary=temporary,private_home=home)
     python=['/usr/bin/python3','-c','import pathlib,sys;pathlib.Path(sys.argv[1]).write_text("fixture")']

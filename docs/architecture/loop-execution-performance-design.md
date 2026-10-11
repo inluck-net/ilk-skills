@@ -483,3 +483,13 @@ Recovery keys now use the existing `plan_fingerprint.surface` normalizer,
 including master registry Status and Progress log exclusions. Ordinary driver
 state updates retain counts; real plan contract edits change identity. This
 stores diagnostic history only, never reuses a green gate outcome.
+
+The actual MiMo PRO CLI with copied production hooks now passes brokered
+same-session driver-red repair, and an owned interruption after completed tool
+result resumes to green. Evidence is retained externally in
+`design-revision-20261011/*brokered-resume-capability-probe*.json`; no batch
+speed inference. Claude scratch paths require both CLAUDE_CODE_TMPDIR and
+CLAUDE_TMPDIR pinned to private temp. Kernel list is frozen in context;
+OS denial includes listed paths, basename creation and ancestor renames.
+Broker cleanup handles idle connections and background descendants, but the
+shared lifecycle registry is not built. Driver-controller wiring remains new.

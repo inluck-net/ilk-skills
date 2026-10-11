@@ -158,6 +158,10 @@ def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
                        'master_fingerprint':(master_snapshot or {}).get('fingerprint'),
                        'plan_fingerprint':snapshots.get(Path((dispatch or {}).get('subplan_path','')).name,{}).get('fingerprint')}
     recovery_key=hashlib.sha256(json.dumps(recovery_identity,sort_keys=True).encode()).hexdigest()
+    kernel_list=None
+    if (Path(exec_tree)/'skills/ilk-loop/safety-kernel.json').exists():
+        from safety_kernel import load
+        kernel_list=load(Path(exec_tree))
     return dict(schema_version=1,run_id=run_id,iteration=int(iteration),
                 clone=clone,exec_tree=exec_tree,observe_tree=observed,mode=mode,
                 plans_dir=plans_dir,runtime_dir=str(runtime),
@@ -168,7 +172,8 @@ def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
                 toolkit_sha=git_value(Path(code_root),'HEAD'),
                 base_commit=git_value(Path(exec_tree),'HEAD'),
                 base_tree=git_value(Path(exec_tree),'HEAD^{tree}'),
-                dispatch=dispatch or None, plans=snapshots, master_snapshot=master_snapshot)
+                dispatch=dispatch or None, plans=snapshots, master_snapshot=master_snapshot,
+                kernel_list=kernel_list)
 
 
 def write_context(path: Path, context: dict):

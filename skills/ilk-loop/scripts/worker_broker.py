@@ -28,7 +28,7 @@ class ShellBroker:
         self.nonce=uuid.uuid4().hex
         self._listener=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
         self._listener.bind(str(self.path));self.path.chmod(0o600);self._listener.listen()
-        self._closed=threading.Event();self._active=None;self._guard=threading.Lock()
+        self._closed=threading.Event();self._active=None;self._connection=None;self._guard=threading.Lock()
         self.error=None;self.command_started=threading.Event()
         self._thread=threading.Thread(target=self._serve,daemon=True)
 
@@ -43,6 +43,7 @@ class ShellBroker:
         try:
             while not self._closed.is_set():
                 connection,_=self._listener.accept()
+                with self._guard:self._connection=connection
                 with connection:
                     connection.settimeout(max(self.deadline-time.monotonic(),0))
                     with connection.makefile('rwb') as stream:
@@ -53,6 +54,7 @@ class ShellBroker:
                             response={'error':'unsupported broker operation','exit_code':1}
                         else:response=self._execute(request['command'])
                         stream.write(json.dumps(response).encode()+b'\n');stream.flush()
+                with self._guard:self._connection=None
         except Exception as exc:
             if not self._closed.is_set():self.error=type(exc).__name__
         finally:self._listener.close()
@@ -73,9 +75,11 @@ class ShellBroker:
         started=time.monotonic();timed_out=False
         with stdout_path.open('wb') as stdout,stderr_path.open('wb') as stderr:
             stdout_path.chmod(0o600);stderr_path.chmod(0o600)
-            process=subprocess.Popen(['/usr/bin/sandbox-exec','-p',policy,'/bin/bash','-c',command],
-                cwd=context['exec_tree'],env=env,stdout=stdout,stderr=stderr,start_new_session=True)
-            with self._guard:self._active=process
+            with self._guard:
+                if self._closed.is_set():return {'exit_code':124,'error':'broker closed'}
+                process=subprocess.Popen(['/usr/bin/sandbox-exec','-p',policy,'/bin/bash','-c',command],
+                    cwd=context['exec_tree'],env=env,stdout=stdout,stderr=stderr,start_new_session=True)
+                self._active=process
             self.command_started.set()
             try:code=process.wait(timeout=max(self.deadline-time.monotonic(),0))
             except subprocess.TimeoutExpired:
@@ -84,6 +88,10 @@ class ShellBroker:
                 except ProcessLookupError:pass
                 process.wait();code=124
             finally:
+                # Shell leaders can exit while descendants still hold output or
+                # keep writing. Terminate this exact owned session before reply.
+                try:os.killpg(process.pid,signal.SIGKILL)
+                except ProcessLookupError:pass
                 with self._guard:self._active=None
         result={'exit_code':code,'stdout':stdout_path.read_text(errors='replace'),
                 'stderr':stderr_path.read_text(errors='replace'),'stdout_path':str(stdout_path),'stderr_path':str(stderr_path)}
@@ -100,6 +108,9 @@ class ShellBroker:
             if self._active is not None and self._active.poll() is None:
                 try:os.killpg(self._active.pid,signal.SIGKILL)
                 except ProcessLookupError:pass
+            if self._connection is not None and self._active is None:
+                try:self._connection.shutdown(socket.SHUT_RDWR)
+                except OSError:pass
         try:
             with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as connection:
                 connection.connect(str(self.path));connection.sendall(json.dumps({'op':'close','nonce':self.nonce}).encode()+b'\n')

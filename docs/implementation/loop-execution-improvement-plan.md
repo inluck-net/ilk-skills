@@ -16,9 +16,8 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: validate the brokered boundary with actual provider/copied
-hooks in a disposable fixture, then finish C3 driver ownership and interrupted
-resume. Candidate broker/profile/hook/binding and canonical recovery identity:
+Current next action: finish C3 driver ownership and integrate the measured
+brokered same-session/interrupted recovery path. Candidate broker/profile/hook/binding and canonical recovery identity:
 36 focused checks passed in 2.66s. The master registry/progress normalizer is
 now shared with amendment detection; ordinary status updates retain retry caps.
 Old run `20261011-102057` timed out by itself. Watchdog restarted old run
@@ -458,3 +457,29 @@ No completion/ship/proof markers are inferred from this human tracker.
   master registry Status/Progress log. Reused canonical surface; a regression
   verifies relaunch/status/progress preserve the key while contract edits
   change it. This is not gate-outcome reuse and creates no green evidence.
+
+- Actual enforced-provider continuation: snapshot 46290f7b, copied production
+  hooks, Bash-only advertised tool under parent OS profile and broker shell
+  boundary. Initial expected assertion red: 17.102s/two turns/one broker attempt;
+  same-session repair green: 14.069s/two turns/two cumulative attempts. First
+  attempt failed correctly at Claude hardcoded scratch mkdir outside scope;
+  local CLI binary exposes CLAUDE_CODE_TMPDIR/CLAUDE_TMPDIR, now explicitly set
+  to frozen private temp. Retain failed `brokered-resume-capability-probe.json`
+  and accepted `brokered-resume-capability-probe-retry.json`, not a speed claim.
+- Controlled interrupted continuation: same frozen snapshot/provider/hooks,
+  disposable owned CLI interrupted only after completed tool result. Initial
+  exit -9, no terminal result, expected driver assertion red at 7.338s; same
+  session resumed to green in 19.381s/two turns. Evidence
+  `interrupted-brokered-resume-capability-probe-retry.json`. First experimental
+  group kill raised EPERM; retry validates owned Popen PID/group and exact-child
+  fallback, never process-name scanning. No real worker interrupted. This
+  proves the sampled interrupted tool-result boundary, not every interruption.
+- C1 undeclared-write candidate: freeze the execution repo's kernel list in
+  context; native hook classifies owner-kernel targets, OS boundary denies
+  listed writes, basename creation and ancestor rename while allowing sibling
+  report writes. Broker cleanup also terminates owned background descendants
+  before response and closes an idle owned connection without deadline waits.
+  Scope/context/cleanup checks: 34 passed in 2.84s. One initial fixture used
+  relative sibling path under wrong cwd; corrected to absolute target. No
+  production activation. Short background fixture delay/bound is a judgment
+  (0.2s child delay, 0.4s observation); a slow valid host falsifies that check.

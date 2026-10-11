@@ -68,3 +68,38 @@ def test_shell_cannot_signal_another_owned_fixture_process(tmp_path):
         assert cp.returncode!=0 and 'PermissionError' in cp.stderr
         assert process.poll() is None
     finally:process.terminate();process.wait()
+
+
+def test_idle_owned_client_does_not_hold_broker_cleanup(tmp_path):
+    import socket,threading
+    ctx,temporary,_=fixtures.fixture(tmp_path)
+    ctx.update(run_id='idle-client',iteration=1,worker_tmp_dir=str(temporary))
+    broker=ShellBroker(ctx,deadline=time.monotonic()+10).start()
+    with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as connection:
+        connection.connect(str(broker.path))
+        # Synchronize acceptance without sleeping or touching foreign processes.
+        accepted=threading.Event()
+        def observe():
+            while broker._connection is None and broker._thread.is_alive():
+                accepted.wait(0.001)
+            accepted.set()
+        watcher=threading.Thread(target=observe);watcher.start()
+        assert accepted.wait(10)
+        broker.close();watcher.join()
+    assert not broker._thread.is_alive()
+
+
+def test_shell_completion_kills_its_background_descendants(tmp_path):
+    ctx,temporary,_=fixtures.fixture(tmp_path)
+    ctx.update(run_id='background',iteration=1,worker_tmp_dir=str(temporary))
+    marker=Path(ctx['exec_tree'])/'late-write'
+    import shlex
+    child="import time;from pathlib import Path;time.sleep(0.2);Path('late-write').write_text('bad')"
+    with ShellBroker(ctx,deadline=time.monotonic()+10) as broker:
+        result=broker._execute('/usr/bin/python3 -c '+shlex.quote(child)+' &')
+        assert result['exit_code']==0
+    # 0.4 seconds is a test judgment, twice the intentional fixture delay;
+    # a valid host that cannot schedule within that interval falsifies it.
+    import threading
+    threading.Event().wait(0.4)
+    assert not marker.exists()

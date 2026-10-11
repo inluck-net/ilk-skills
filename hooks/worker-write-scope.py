@@ -47,6 +47,11 @@ def classify(event,context):
             if name in {'data','runtime'} and inside(root,protected_root):
                 continue
             if inside(path,protected_root): row['scope']=name;break
+        kernel=context.get('kernel_list') or {}
+        if row['scope']=='worktree' and kernel.get('loop_kernel_policy')=='owner-only':
+            sys.path.insert(0,str(Path(context['code_root'])/'skills/ilk-loop/scripts'))
+            from safety_kernel import touches_kernel
+            if touches_kernel(str(path.relative_to(root)),kernel=kernel):row['scope']='owner-kernel'
         row['target_sha256']=hashlib.sha256(str(path).encode()).hexdigest()
     elif tool=='Bash':
         command=payload.get('command','')
