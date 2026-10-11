@@ -996,12 +996,8 @@ def _parse_failing_node_ids(output_path: Path) -> list[str]:
         text = output_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
-    ids: list[str] = []
-    for line in text.splitlines():
-        if line.startswith(("FAILED ", "ERROR ")):
-            rest = line.split(" ", 1)[1]
-            ids.append(rest.split(" - ", 1)[0].strip())
-    return ids
+    from red_owner import _parse_pytest_nodes
+    return _parse_pytest_nodes(text)
 
 
 def _undeclared_failures(node_ids: list[str], baseline_red: list) -> list[str]:

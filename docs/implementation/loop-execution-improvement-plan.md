@@ -2348,3 +2348,25 @@ anchors at the time of inspection and can move as integration changes code.
   installed v0.9.193. Scheduler 53206 has a sleep child; reaper 28564 has a
   live Python child. No remote files, services or worker state were changed.
   Do not treat sleeping scheduler alone as a safe host activation boundary.
+
+
+### Complete IDs through legacy record and opt-in batch readers
+
+- Five negatives reproduced before edits (5 failed in 0.67s): record IDs
+  truncated at parameter spaces, batch IDs truncated at a reason delimiter
+  inside brackets, malformed selectors retained, and actual failing pytest
+  parameter reruns incorrectly reported passed/0-red because shell splitting
+  caused a non-test exit. No routine final verifier was run to reproduce this.
+- verification_record and batch_gate now use the complete-ID parser already
+  checked in red_owner. All verification_record node invocations quote each
+  literal selector on the supported POSIX shell path. Invalid batched output
+  falls back to per-node at-base measurement; unknown head reruns cannot settle
+  a red, and unknown head-alone output cannot claim passed.
+- Caller contracts: 49 focused parsing/settled-rerun/record checks passed in
+  4.91s. Actual parameterized head and Git-base runs, unknown-exit negative,
+  baseline declarations and timeout/non-waiver callers: 40 passed in 10.32s.
+  These are local Python/pytest fixtures with no agent model dispatched.
+- Final verification stays opt-in. This fixes a reader when explicitly used;
+  it adds no suite invocation, baseline run, threshold or production default.
+  Native Windows literal-selector/lifecycle evidence remains open. Candidate
+  source only; live installed pointer is still 053678a0.

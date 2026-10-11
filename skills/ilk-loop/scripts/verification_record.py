@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import shlex
 import hashlib
 import json
 import re
@@ -39,6 +40,7 @@ from pathlib import Path
 # Sibling module — bounded subprocess execution with process-group cleanup.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from bounded_run import run as _bounded_run  # noqa: E402
+from red_owner import _parse_pytest_nodes
 
 
 # ── Contention measurement ────────────────────────────────────────────────
@@ -605,7 +607,6 @@ RECORD_WRITER = "verification_record.py"
 _SUMMARY_RE = re.compile(
     r"^=*\s*(\d.*?)\sin\s[\d.]+s.*?=*$", re.MULTILINE)
 _COUNT_RE = re.compile(r"(\d+)\s+(passed|failed|error|errors|skipped|xfailed|xpassed)")
-_NODE_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)", re.MULTILINE)
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 # Patterns for parse_collect_count — reads every form pytest prints with
@@ -787,7 +788,7 @@ def parse_pytest_output(out: str) -> dict:
     # Strip ANSI color escapes BEFORE matching: pytest on some hosts emits
     # color into pipes (measured 2026-09-20 on chad-mbp: the banner line
     # opens with \x1b[32m before the ==== rule), and both _SUMMARY_RE's
-    # ^=+ anchor and _NODE_RE's ^FAILED anchor then never match — the tool
+    # ^=+ anchor and the node parser’s FAILED prefix then never match — the tool
     # parsed its own captured suite as "no summary" and left the unmeasured
     # stub on every attempt of the selfmod-merge-visibility batch.
     out = _ANSI_RE.sub("", out)
@@ -805,7 +806,7 @@ def parse_pytest_output(out: str) -> dict:
         counts[key] = int(n)
     # dict.fromkeys preserves first-seen order and de-duplicates: a node id
     # reported as both FAILED and ERROR is one failing test, not two.
-    nodes = list(dict.fromkeys(_NODE_RE.findall(out)))
+    nodes = list(dict.fromkeys(_parse_pytest_nodes(out)))
     counts["total"] = (counts["passed"] + counts["failed"] + counts["skipped"]
                        + counts["xfailed"] + counts["xpassed"])
     return {"counts": counts, "failing_nodes": nodes}
@@ -1133,7 +1134,7 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
         if _is_vitest(runner):
             for nid in node_ids:
                 rc, stdout, stderr, timed_out = _bounded_run(
-                    f"{runner} {nid}", shell=True, cwd=str(wt),
+                    f"{runner} {shlex.quote(nid)}", shell=True, cwd=str(wt),
                     timeout=timeout, env=env,
                 )
                 verdicts[nid] = _classify_single_at_base_verdict(
@@ -1142,7 +1143,7 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
         else:
             # Run all ids in one process.
             rc, stdout, stderr, timed_out = _bounded_run(
-                f"{runner} {' '.join(node_ids)}", shell=True, cwd=str(wt),
+                f"{runner} {' '.join(shlex.quote(nid) for nid in node_ids)}", shell=True, cwd=str(wt),
                 timeout=timeout, env=env,
             )
             blob = (stdout or "") + (stderr or "")
@@ -1155,17 +1156,18 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
                 # collection error, pytest's output uses file paths in the
                 # summary (e.g. "ERROR tests/test_broken.py") while node
                 # ids carry the test name ("tests/test_broken.py::test_foo").
-                # _NODE_RE matches the file path, not the node id, so
+                # The node parser returns the file path, not the node id, so
                 # classification is unreliable.  Fall back to per-id for
                 # ALL ids when collection errors are present.
-                has_collection_errors = (
-                    rc == 4 and "error: not found:" not in blob.lower()
-                )
+                failed_ids = set(_parse_pytest_nodes(blob))
+                has_collection_errors = (rc not in (0, 1) or
+                    (rc == 1 and (not failed_ids or
+                                  not failed_ids.issubset(node_ids))))
                 if has_collection_errors:
                     fallback_ids = list(node_ids)
                 else:
                     # Classify from the batched output.
-                    failed_ids = set(_NODE_RE.findall(blob))
+                    failed_ids = set(_parse_pytest_nodes(blob))
                     # Only ids explicitly named in "ERROR: not found:" are
                     # definitively absent.  Mark absent ONLY from the
                     # explicit message; everything else unclassified goes
@@ -1198,7 +1200,7 @@ def run_at_base(project: Path, base_sha: str, node_ids: list[str],
             # Per-id fallback for ambiguous ids.
             for nid in fallback_ids:
                 rc, stdout, stderr, timed_out = _bounded_run(
-                    f"{runner} {nid}", shell=True, cwd=str(wt),
+                    f"{runner} {shlex.quote(nid)}", shell=True, cwd=str(wt),
                     timeout=timeout, env=env,
                 )
                 verdicts[nid] = _classify_single_at_base_verdict(
@@ -1426,7 +1428,7 @@ def run_at_adding_commit(
             env = _base_env(wt)
             for nid in nids:
                 r = subprocess.run(
-                    f"{runner} {nid}", shell=True, cwd=wt,
+                    f"{runner} {shlex.quote(nid)}", shell=True, cwd=wt,
                     capture_output=True, text=True,
                     encoding="utf-8", errors="replace", timeout=timeout,
                     env=env)
@@ -1552,7 +1554,9 @@ def run_head_reruns(project: Path, node_ids: list[str], invocation: str,
 
     Returns ``(results, bound_hit)`` where *results* is
     ``{node_id: (red_count, runs)}`` and *bound_hit* is ``True`` when the
-    budget was exhausted before all passes completed.
+    budget was exhausted before all passes completed. Unreadable/non-test
+    exits raise SubprocessError; callers retain blocking attribution rather
+    than interpreting missing failed-node output as a passing rerun.
     """
     if not node_ids:
         return {}, False
@@ -1576,14 +1580,17 @@ def run_head_reruns(project: Path, node_ids: list[str], invocation: str,
         pass_timeout = max(1, int(remaining_budget))
         try:
             r = subprocess.run(
-                f"{runner} {' '.join(remaining)}", shell=True,
+                f"{runner} {' '.join(shlex.quote(nid) for nid in remaining)}", shell=True,
                 cwd=project, capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=pass_timeout)
         except subprocess.TimeoutExpired:
             bound_hit = True
             break
         blob = (r.stdout or "") + (r.stderr or "")
-        failed_this_run = set(_NODE_RE.findall(blob))
+        failed_this_run = set(_parse_pytest_nodes(blob))
+        if r.returncode not in (0, 1) or (r.returncode == 1 and
+                (not failed_this_run or not failed_this_run.issubset(remaining))):
+            raise subprocess.SubprocessError('HEAD rerun did not produce a known outcome')
         still_remaining: list[str] = []
         for nid in remaining:
             runs[nid] += 1
@@ -1602,8 +1609,9 @@ def run_head_alone(project: Path, node_ids: list[str], invocation: str,
     """Run each failing node id alone at HEAD and return {node_id: result}.
 
     Each id is run in its own pytest process with xdist flags stripped (as in
-    ``run_at_base``).  The result is ``"passed"``, ``"failed"``, or
-    ``"skipped-cap"`` when more than ``AT_BASE_CAP`` ids are given.
+    ``run_at_base``). The result is ``"passed"``, ``"failed"``,
+    ``"unmeasured"`` for an unreadable/non-test exit, or ``"skipped-cap"``
+    when more than ``AT_BASE_CAP`` ids are given.
 
     For vitest the id is a file path, so run that file alone.
     """
@@ -1614,12 +1622,17 @@ def run_head_alone(project: Path, node_ids: list[str], invocation: str,
     runner = re.sub(r"\s-n\s+\S+|\s--dist\s+\S+", "", invocation)
     results: dict[str, str] = {}
     for nid in node_ids:
-        r = subprocess.run(f"{runner} {nid}", shell=True,
+        r = subprocess.run(f"{runner} {shlex.quote(nid)}", shell=True,
                            cwd=project, capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=timeout)
         blob = (r.stdout or "") + (r.stderr or "")
-        failed = bool(_NODE_RE.findall(blob))
-        results[nid] = "failed" if failed else "passed"
+        failed = _parse_pytest_nodes(blob)
+        if r.returncode == 0:
+            results[nid] = 'passed'
+        elif r.returncode == 1 and nid in failed:
+            results[nid] = 'failed'
+        else:
+            results[nid] = 'unmeasured'
     return results
 
 
