@@ -132,6 +132,8 @@ def bind_context(destination: Path, context_path: Path) -> Path:
         raise InputPinError('nested Mac sandbox is unavailable; brokered shell required')
     if context.get('worker_sandbox_adapter')!='macos-brokered-shell':
         raise InputPinError('explicit brokered OS boundary required')
+    if context.get('private_worker_home')!=manifest['worker_home'] or context.get('worker_inputs_dir')!=str(destination):
+        raise InputPinError('private CLI input roles contradict prepared home')
     broker_path=context.get('shell_broker_path')
     if not isinstance(broker_path,str) or not Path(broker_path).is_socket():
         raise InputPinError('owned shell broker is not ready')

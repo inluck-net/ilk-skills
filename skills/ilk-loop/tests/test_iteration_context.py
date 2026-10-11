@@ -39,6 +39,21 @@ def test_live_clone_and_wrong_plan_refused(tmp_path):
         resolve_context(**dict(args,dispatch={'subplan_path':str(other)}))
 
 
+def test_recovery_identity_survives_registry_progress_but_not_contract_changes(tmp_path):
+    args=fixture(tmp_path)
+    master=Path(args['plans_dir'])/'MASTER-selected.md'
+    master.write_text('---\nstatus: active\n---\n# Work\n## Sub-plan registry\n'
+                      '| File | Status |\n|---|---|\n| step.md | pending |\n'
+                      '## Progress log\nold progress\n## Contract\nkeep this\n')
+    args['dispatch'].update(master_path=str(master),batch_base_sha='frozen-base')
+    initial=resolve_context(**args)['recovery_dir']
+    master.write_text(master.read_text().replace('status: active','status: shipped')
+                      .replace('| pending |','| shipped |').replace('old progress','new progress'))
+    assert resolve_context(**dict(args,run_id='relaunch',iteration=2))['recovery_dir']==initial
+    master.write_text(master.read_text().replace('keep this','changed contract'))
+    assert resolve_context(**args)['recovery_dir']!=initial
+
+
 def test_release_without_git_has_unknown_toolkit_sha(tmp_path):
     args=fixture(tmp_path);release=tmp_path/'release';release.mkdir()
     ctx=resolve_context(**dict(args,code_root=release))

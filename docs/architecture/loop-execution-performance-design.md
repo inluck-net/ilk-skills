@@ -462,3 +462,24 @@ are candidate authority changes, not proof of completed ownership migration.
 No full suite, deployment, measured consumer improvement or gate-outcome reuse
 is claimed. The watchdog restarted the old installed runner; it is waiting at
 the existing pause flag. Activation still requires fresh lifecycle checks.
+
+### Candidate boundary evidence (manual owner implementation, 2026-10-11)
+
+Independent Mac profiles were insufficient: nested `sandbox-exec` measured
+exit 71 (`sandbox_apply: Operation not permitted`). The binding API refuses
+that adapter. New candidate `skills/ilk-loop/scripts/worker_broker.py:23`
+keeps shell execution outside the CLI sandbox and accepts only shell requests;
+`worker_shell.py` is the immutable IPC entry, not a state/commit/proof API.
+Actual composition fixtures deny plan writes, network and foreign signals.
+The observer admits exact wrapper quoting and binds context/mode explicitly.
+Per-context settings are additive; the prepared base home stays immutable.
+This exists in the owner candidate, not the installed runner. Lifecycle
+registry, background descendant cleanup, actual CLI enforcement and interrupted
+resume are still prerequisites for rollout. No batch speed claim follows from
+these fixtures. Test process bounds of ten seconds are judgment calls based
+on subsecond fixtures; a valid slow host would show the bound is wrong.
+
+Recovery keys now use the existing `plan_fingerprint.surface` normalizer,
+including master registry Status and Progress log exclusions. Ordinary driver
+state updates retain counts; real plan contract edits change identity. This
+stores diagnostic history only, never reuses a green gate outcome.

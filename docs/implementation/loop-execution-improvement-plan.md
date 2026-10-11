@@ -16,16 +16,16 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: complete kernel admission and caller checks, then finish
-C2/C3 driver ownership and the actual-provider resume prerequisite. Old run
-`20261011-102057` ended at 12:53 after its own timeout, PID/PGID gone.
-The watchdog subsequently relaunched old run `20261011-130246`; PID 1016
-is idling at the existing pause flag before dispatch. Integration/activation
-requires a fresh verified quiescent boundary, not the old terminal record.
-Owner checkpoints are rebased onto main `5081038b`; implementation bytes match
-the pre-rebase tested candidate. Do not restart the pending overlapping batch.
-PowerShell function parity passed on macOS; full Windows entry remains untested.
-No new installation or consumer benchmark has occurred.
+Current next action: validate the brokered boundary with actual provider/copied
+hooks in a disposable fixture, then finish C3 driver ownership and interrupted
+resume. Candidate broker/profile/hook/binding and canonical recovery identity:
+36 focused checks passed in 2.66s. The master registry/progress normalizer is
+now shared with amendment detection; ordinary status updates retain retry caps.
+Old run `20261011-102057` timed out by itself. Watchdog restarted old run
+`20261011-130246`, last observed idling at the pause flag before dispatch.
+Integration requires fresh PID/start/phase checks and a quiescent boundary.
+Owner checkpoints preserve main `5081038b` WIP prose ancestry. No new install,
+consumer benchmark, full suite, or production enforcement has occurred.
 
 ## Authorization and invariants
 
@@ -443,3 +443,18 @@ No completion/ship/proof markers are inferred from this human tracker.
   shell execution; identity/deadline/cleanup remain driver-owned. No no-sandbox
   exemption or silent unsandboxed fallback. This finding changes the design
   before activation, as Chad required measurement over assumptions.
+
+- Broker composition candidate: driver-owned `worker_broker.py` accepts only
+  scoped shell execution through an immutable context descriptor. Actual Mac
+  parent sandbox -> wrapper IPC -> separately sandboxed shell passes; plan
+  writes/network/foreign signals deny. Full outputs and diagnostic attempt
+  spans are retained outside worker scope. Per-context settings bind explicit
+  hook mode/context without changing the prepared base settings. These and
+  recovery identity checks: 36 passed in 2.66s. Broker lifecycle registry,
+  interrupted CLI, background descendants and production activation remain
+  open; no complete C2/I4 claim. New broker is owner-kernel protected.
+- Recovery identity correction: inspection of `plan_fingerprint.surface`
+  confirmed the older candidate duplicated normalization and included mutable
+  master registry Status/Progress log. Reused canonical surface; a regression
+  verifies relaunch/status/progress preserve the key while contract edits
+  change it. This is not gate-outcome reuse and creates no green evidence.

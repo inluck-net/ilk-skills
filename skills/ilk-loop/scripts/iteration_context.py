@@ -71,17 +71,13 @@ def git_value(root: Path, name: str) -> str | None:
 def plan_snapshot(path: Path) -> dict:
     from plan_status import parse_frontmatter
     from plan_slug import strip_date_prefix
+    from plan_fingerprint import surface
     try:
         text=path.read_text(encoding='utf-8-sig')
     except OSError as exc:
         return {'path':str(path),'error':type(exc).__name__}
     fm=parse_frontmatter(text)
-    immutable=re.split(r'^## Findings\b',text,maxsplit=1,flags=re.MULTILINE)[0]
-    if immutable.startswith('---'):
-        parts=immutable.split('---',2)
-        if len(parts)==3:
-            parts[1]=re.sub(r'^(?:current_step|status|last_updated):[^\n]*\n?', '',parts[1],flags=re.MULTILINE)
-            immutable='---'.join(parts)
+    immutable=surface(text,master=path.name.startswith('MASTER-'))
     return dict(path=str(path),slug=strip_date_prefix(path.stem),
                 status=fm.get('status'),step=fm.get('current_step'),repo=fm.get('repo'),estimated_steps=fm.get('estimated_steps'),
                 fingerprint=hashlib.sha256(immutable.encode()).hexdigest())

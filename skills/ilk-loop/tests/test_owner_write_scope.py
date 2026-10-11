@@ -75,7 +75,7 @@ def test_full_hook_requires_canonical_shell_even_when_worker_env_is_shed(tmp_pat
     import test_iteration_context as fixtures
     ctx=resolve_context(**fixtures.fixture(tmp_path));ctx['code_root']=str(ROOT)
     temporary=tmp_path/'private-tmp';temporary.mkdir()
-    ctx.update(worker_sandbox_adapter='macos-two-layer',worker_shell_python=sys.executable,worker_tmp_dir=str(temporary))
+    ctx.update(worker_sandbox_adapter='macos-brokered-shell',worker_shell_python=sys.executable,worker_tmp_dir=str(temporary))
     frozen=tmp_path/'ctx.json';write_context(frozen,ctx)
     env=dict(os.environ);env.pop('ILK_WORKER_SESSION',None);env.pop('ILK_ITER_CONTEXT',None)
     command=[sys.executable,str(ROOT/'hooks/worker-write-scope.py'),'--mode','enforce','--context',str(frozen)]

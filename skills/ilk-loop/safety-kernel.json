@@ -2,61 +2,274 @@
   "schema": 1,
   "loop_kernel_policy": "owner-only",
   "rules": [
-    {"path": "tests/invariants/", "why": "the invariant suite that judges all improvement builds", "may_be_absent": true},
-    {"path": "skills/ilk-loop/safety-kernel.json", "why": "the single machine-readable safety kernel"},
-    {"path": "skills/ilk-loop/scripts/safety_kernel.py", "why": "the kernel reader every guard imports"},
-    {"path": "skills/ilk-loop/scripts/teeth.py", "why": "mutation harness that proves invariants bite", "may_be_absent": true},
-    {"path": "skills/ilk-loop/scripts/safety_case.py", "why": "aggregator that runs invariants + golden + teeth at release", "may_be_absent": true}
+    {
+      "path": "tests/invariants/",
+      "why": "the invariant suite that judges all improvement builds",
+      "may_be_absent": true
+    },
+    {
+      "path": "skills/ilk-loop/safety-kernel.json",
+      "why": "the single machine-readable safety kernel"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/safety_kernel.py",
+      "why": "the kernel reader every guard imports"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/teeth.py",
+      "why": "mutation harness that proves invariants bite",
+      "may_be_absent": true
+    },
+    {
+      "path": "skills/ilk-loop/scripts/safety_case.py",
+      "why": "aggregator that runs invariants + golden + teeth at release",
+      "may_be_absent": true
+    },
+    {
+      "path": "skills/ilk-loop/scripts/worker_broker.py",
+      "guard": "owner",
+      "why": "driver-owned scoped shell execution and cleanup authority"
+    }
   ],
   "kernel": [
-    {"path": "skills/ilk-loop/scripts/run_local_checks.py", "guard": "gates", "why": "the local gate runner"},
-    {"path": "skills/ilk-loop/scripts/blocking_checks.py", "guard": "gates", "why": "blocking gate checks"},
-    {"path": "skills/ilk-loop/scripts/verify_step_integrity.py", "guard": "gates", "why": "step integrity verifier"},
-    {"path": "skills/ilk-loop/scripts/run_ilk_loop_claude.sh", "guard": "gates", "why": "the bash runner"},
-    {"path": "skills/ilk-loop/scripts/run_ilk_loop_claude.ps1", "guard": "gates", "why": "the PowerShell runner"},
-    {"path": "skills/ilk-loop/scripts/_ilk_marker.sh", "guard": "gates", "why": "iteration marker"},
-    {"path": "skills/ilk-loop/scripts/ship_audit.py", "guard": "proof", "why": "ship audit"},
-    {"path": "skills/ilk-loop/scripts/ship_transition.py", "guard": "proof", "why": "ship transition"},
-    {"path": "skills/ilk-loop/scripts/ship_integrity.py", "guard": "proof", "why": "ship integrity"},
-    {"path": "skills/ilk-loop/scripts/verification_record.py", "guard": "proof", "why": "verification record"},
-    {"path": "skills/ilk-loop/scripts/verify_attribution.py", "guard": "proof", "why": "attribution verifier"},
-    {"path": "skills/ilk-loop/scripts/batch_gate.py", "guard": "proof", "why": "batch gate"},
-    {"path": "skills/ilk-loop/scripts/red_owner.py", "guard": "proof", "why": "red owner attribution"},
-    {"path": "skills/ilk-loop/scripts/suite_ledger.py", "guard": "proof", "why": "suite ledger"},
-    {"path": "skills/ilk-loop/scripts/selfmod_worktree.py", "guard": "landing", "why": "selfmod worktree manager"},
-    {"path": "skills/ilk-ship/scripts/release_train.py", "guard": "landing", "why": "the release train", "may_be_absent": true},
-    {"path": "skills/ilk-ship/scripts/phase1_verify.py", "guard": "landing", "why": "phase 1 verify"},
-    {"path": "skills/ilk-upgrade/scripts/ilk_release.py", "guard": "landing", "why": "ilk release"},
-    {"path": "skills/ilk-loop/scripts/plan_lint.py", "guard": "qc", "why": "plan linter"},
-    {"path": "skills/ilk-loop/scripts/plan_preflight.py", "guard": "qc", "why": "plan preflight"},
-    {"path": "skills/ilk-loop/scripts/ilk_audit.py", "guard": "audit", "why": "ilk audit"},
-    {"path": "skills/ilk-watchdog/scripts/triage_apply.py", "guard": "triage", "why": "triage apply"},
-    {"path": "skills/ilk-self-improve/scripts/autoplan.py", "guard": "autoplan", "why": "auto-planner", "may_be_absent": true},
-    {"path": "skills/ilk-self-improve/scripts/autoplan_rails.py", "guard": "autoplan", "why": "auto-planner rails", "may_be_absent": true},
-    {"path": "hooks/worker-write-scope.py", "guard": "hooks", "why": "frozen worker scope observer and native write guard"},
-    {"path": "hooks/no-live-clone-edit.py", "guard": "hooks", "why": "live clone edit guard"},
-    {"path": "hooks/no-sealed-read.py", "guard": "hooks", "why": "sealed held-out slice guard (RSI design point 2)"},
-    {"path": "hooks/no-foreign-plan-edit.py", "guard": "hooks", "why": "foreign plan edit guard"},
-    {"path": "hooks/no-full-suite.sh", "guard": "hooks", "why": "full suite guard"},
-    {"path": "pytest.ini", "guard": "test-infra", "why": "pytest configuration"},
-    {"path": ".ilk-launch.json", "guard": "test-infra", "why": "launch configuration"},
-    {"path": "install.sh", "guard": "owner", "why": "toolkit installation"},
-    {"path": "skills/ilk-watchdog/scripts/bounce_daemons.sh", "guard": "owner", "why": "daemon activation"},
-    {"path": "skills/ilk-ship/scripts/host_deploy_status.py", "guard": "owner", "why": "deployment identity"},
-    {"path": "skills/ilk-loop/scripts/iteration_context.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
-    {"path": "skills/ilk-loop/scripts/iteration_record.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
-    {"path": "skills/ilk-loop/scripts/ship_proof_ledger.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
-    {"path": "skills/ilk-loop/scripts/selfmod_state.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
-    {"path": "skills/ilk-loop/scripts/dispatch_target.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
-    {"path": "skills/ilk-loop/scripts/worker_shell.py", "guard": "owner", "why": "canonical scoped Bash entry"},
-    {"path": "skills/ilk-loop/scripts/worker_sandbox.py", "guard": "owner", "why": "OS worker write and shell network boundaries"},
-    {"path": "skills/ilk-loop/scripts/run_inputs.py", "guard": "owner", "why": "private run input snapshot preparation"},
-    {"path": "skills/ilk-loop/scripts/plan_state.py", "guard": "owner", "why": "driver compare-and-set authority"},
-    {"path": "skills/ilk-loop/scripts/gate_retry.py", "guard": "owner", "why": "driver retry policy"},
-    {"path": "skills/ilk-loop/scripts/recovery.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
-    {"path": "skills/ilk-loop/scripts/emit_jsonl_record.py", "guard": "owner", "why": "driver context, evidence or recovery authority"}
+    {
+      "path": "skills/ilk-loop/scripts/run_local_checks.py",
+      "guard": "gates",
+      "why": "the local gate runner"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/blocking_checks.py",
+      "guard": "gates",
+      "why": "blocking gate checks"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/verify_step_integrity.py",
+      "guard": "gates",
+      "why": "step integrity verifier"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/run_ilk_loop_claude.sh",
+      "guard": "gates",
+      "why": "the bash runner"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/run_ilk_loop_claude.ps1",
+      "guard": "gates",
+      "why": "the PowerShell runner"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/_ilk_marker.sh",
+      "guard": "gates",
+      "why": "iteration marker"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/ship_audit.py",
+      "guard": "proof",
+      "why": "ship audit"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/ship_transition.py",
+      "guard": "proof",
+      "why": "ship transition"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/ship_integrity.py",
+      "guard": "proof",
+      "why": "ship integrity"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/verification_record.py",
+      "guard": "proof",
+      "why": "verification record"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/verify_attribution.py",
+      "guard": "proof",
+      "why": "attribution verifier"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/batch_gate.py",
+      "guard": "proof",
+      "why": "batch gate"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/red_owner.py",
+      "guard": "proof",
+      "why": "red owner attribution"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/suite_ledger.py",
+      "guard": "proof",
+      "why": "suite ledger"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/selfmod_worktree.py",
+      "guard": "landing",
+      "why": "selfmod worktree manager"
+    },
+    {
+      "path": "skills/ilk-ship/scripts/release_train.py",
+      "guard": "landing",
+      "why": "the release train",
+      "may_be_absent": true
+    },
+    {
+      "path": "skills/ilk-ship/scripts/phase1_verify.py",
+      "guard": "landing",
+      "why": "phase 1 verify"
+    },
+    {
+      "path": "skills/ilk-upgrade/scripts/ilk_release.py",
+      "guard": "landing",
+      "why": "ilk release"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/plan_lint.py",
+      "guard": "qc",
+      "why": "plan linter"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/plan_preflight.py",
+      "guard": "qc",
+      "why": "plan preflight"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/ilk_audit.py",
+      "guard": "audit",
+      "why": "ilk audit"
+    },
+    {
+      "path": "skills/ilk-watchdog/scripts/triage_apply.py",
+      "guard": "triage",
+      "why": "triage apply"
+    },
+    {
+      "path": "skills/ilk-self-improve/scripts/autoplan.py",
+      "guard": "autoplan",
+      "why": "auto-planner",
+      "may_be_absent": true
+    },
+    {
+      "path": "skills/ilk-self-improve/scripts/autoplan_rails.py",
+      "guard": "autoplan",
+      "why": "auto-planner rails",
+      "may_be_absent": true
+    },
+    {
+      "path": "hooks/worker-write-scope.py",
+      "guard": "hooks",
+      "why": "frozen worker scope observer and native write guard"
+    },
+    {
+      "path": "hooks/no-live-clone-edit.py",
+      "guard": "hooks",
+      "why": "live clone edit guard"
+    },
+    {
+      "path": "hooks/no-sealed-read.py",
+      "guard": "hooks",
+      "why": "sealed held-out slice guard (RSI design point 2)"
+    },
+    {
+      "path": "hooks/no-foreign-plan-edit.py",
+      "guard": "hooks",
+      "why": "foreign plan edit guard"
+    },
+    {
+      "path": "hooks/no-full-suite.sh",
+      "guard": "hooks",
+      "why": "full suite guard"
+    },
+    {
+      "path": "pytest.ini",
+      "guard": "test-infra",
+      "why": "pytest configuration"
+    },
+    {
+      "path": ".ilk-launch.json",
+      "guard": "test-infra",
+      "why": "launch configuration"
+    },
+    {
+      "path": "install.sh",
+      "guard": "owner",
+      "why": "toolkit installation"
+    },
+    {
+      "path": "skills/ilk-watchdog/scripts/bounce_daemons.sh",
+      "guard": "owner",
+      "why": "daemon activation"
+    },
+    {
+      "path": "skills/ilk-ship/scripts/host_deploy_status.py",
+      "guard": "owner",
+      "why": "deployment identity"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/iteration_context.py",
+      "guard": "owner",
+      "why": "driver context, evidence or recovery authority"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/iteration_record.py",
+      "guard": "owner",
+      "why": "driver context, evidence or recovery authority"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/ship_proof_ledger.py",
+      "guard": "owner",
+      "why": "driver context, evidence or recovery authority"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/selfmod_state.py",
+      "guard": "owner",
+      "why": "driver context, evidence or recovery authority"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/dispatch_target.py",
+      "guard": "owner",
+      "why": "driver context, evidence or recovery authority"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/worker_shell.py",
+      "guard": "owner",
+      "why": "canonical scoped Bash entry"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/worker_sandbox.py",
+      "guard": "owner",
+      "why": "OS worker write and shell network boundaries"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/run_inputs.py",
+      "guard": "owner",
+      "why": "private run input snapshot preparation"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/plan_state.py",
+      "guard": "owner",
+      "why": "driver compare-and-set authority"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/gate_retry.py",
+      "guard": "owner",
+      "why": "driver retry policy"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/recovery.py",
+      "guard": "owner",
+      "why": "driver context, evidence or recovery authority"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/emit_jsonl_record.py",
+      "guard": "owner",
+      "why": "driver context, evidence or recovery authority"
+    }
   ],
   "kernel_basenames": [
-    {"name": "conftest.py", "why": "test infrastructure shared fixture file"}
+    {
+      "name": "conftest.py",
+      "why": "test infrastructure shared fixture file"
+    }
   ]
 }

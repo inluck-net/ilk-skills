@@ -95,8 +95,20 @@ def main():
             print('Worker native write is outside its code scope: '+row['scope'],file=sys.stderr)
             return 2
         if mode=='enforce':
-            if context.get('worker_sandbox_adapter')!='macos-two-layer':
+            if context.get('worker_sandbox_adapter')!='macos-brokered-shell':
                 print('Frozen OS boundary required for write-scope enforcement',file=sys.stderr);return 2
+            if event.get('tool_name') in {'Read','Grep','Glob','LS'}:
+                payload=event.get('tool_input') or {}
+                target=payload.get('file_path') or payload.get('path')
+                if target:
+                    path=Path(os.path.expanduser(target))
+                    if not path.is_absolute():path=Path(event.get('cwd') or context['exec_tree'])/path
+                    path=path.resolve()
+                    private=[]
+                    if context.get('private_worker_home'):private.append(Path(context['private_worker_home']).resolve())
+                    if context.get('worker_inputs_dir'):private.append(Path(context['worker_inputs_dir']).resolve()/'settings')
+                    if any(inside(path,root) for root in private):
+                        print('Worker authentication settings are private CLI inputs',file=sys.stderr);return 2
             allowed={'Read','Grep','Glob','LS','Bash'} | FILE_WRITES
             if event.get('tool_name') not in allowed:
                 print('Tool has no worker scope adapter',file=sys.stderr);return 2

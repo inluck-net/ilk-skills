@@ -41,9 +41,13 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
     if common.returncode==0:
         raw=Path(common.stdout.strip());protected.append(raw.resolve() if raw.is_absolute() else (root/raw).resolve())
     rules=['(version 1)','(allow default)','(deny file-write*)',
-           _rule('allow','file-write*',root),_rule('allow','file-write*',temporary)]
+           _rule('allow','file-write*',root),_rule('allow','file-write*',temporary),'(deny signal)']
     if shell:
         rules.append('(deny network*)')
+        if context.get('private_worker_home'):
+            rules.append(_rule('deny','file-read*',Path(context['private_worker_home']).resolve()))
+        if context.get('worker_inputs_dir'):
+            rules.append(_rule('deny','file-read*',Path(context['worker_inputs_dir']).resolve()/'settings'))
     elif private_home:
         home=Path(private_home).resolve(strict=True)
         if _inside(home,root) or any(_inside(home,path) or _inside(path,home) for path in protected

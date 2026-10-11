@@ -76,3 +76,25 @@ def test_known_nested_sandbox_failure_cannot_activate_enforcement(tmp_path):
         bind_context(destination,path)
     assert base.read_bytes()==before
     assert 'context_bindings' not in json.loads((destination/'inputs.json').read_text())
+
+
+def test_brokered_binding_is_immutable_and_leaves_base_home_unchanged(tmp_path):
+    import sys,time
+    from run_inputs import bind_context
+    from iteration_context import write_context
+    from worker_broker import ShellBroker
+    repo,home,_=fixture(tmp_path);destination=tmp_path/'run';manifest=prepare(repo,home,destination,observe_scope=True)
+    base=destination/'worker-home/settings.json';before=base.read_bytes()
+    work=tmp_path/'consumer';work.mkdir();temporary=tmp_path/'private-tmp';temporary.mkdir()
+    context=dict(schema_version=1,run_id='test',iteration=1,clone=str(work),exec_tree=str(work),
+                 code_root=manifest['code_root'],plans_dir=str(tmp_path/'plans'),runtime_dir=str(tmp_path/'runtime'),
+                 data_root=str(tmp_path/'data'),mode='none',worker_tmp_dir=str(temporary),
+                 worker_shell_python=sys.executable,private_worker_home=manifest['worker_home'],worker_inputs_dir=str(destination))
+    with ShellBroker(context,deadline=time.monotonic()+10) as broker:
+        context.update(broker.descriptor());path=tmp_path/'ctx.json';write_context(path,context)
+        bound=bind_context(destination,path)
+        assert base.read_bytes()==before and bound.stat().st_mode & 0o777==0o400
+        settings=json.loads(bound.read_text());full=[entry for entry in settings['hooks']['PreToolUse'] if entry['matcher']=='*']
+        assert len(full)==1 and '--mode enforce --context' in full[0]['hooks'][0]['command']
+        assert 'private-token' not in (destination/'inputs.json').read_text()
+        with pytest.raises(FileExistsError):bind_context(destination,path)
