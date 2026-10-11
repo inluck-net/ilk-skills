@@ -24,6 +24,7 @@ from plan_status import parse_frontmatter
 from plan_state import transition
 _deadline=ContextVar('driver_step_deadline',default=None)
 _operation_context=ContextVar('driver_step_context',default=None)
+_prior_attempts=ContextVar('driver_step_prior_attempts',default=())
 
 
 def remaining():
@@ -114,6 +115,40 @@ def gate_contract(root,path,selected):
     return sub,step
 
 
+def attempt_verdict(record, prior):
+    """Use every observed attempt on this exact tree and frozen dispatch.
+
+    Different repaired trees remain distinct measurements. Missing identities
+    or capped/error attempts cannot establish green. This grants no waiver,
+    strike attribution, gate reuse, or permission to advance an unproven step.
+    """
+    identity=('run_id','iteration','slug','step','base_commit')
+    relevant=[]
+    for row in prior:
+        if any(row.get(key)!=record.get(key) for key in identity):
+            raise ContextError('prior gate attempt belongs to another frozen dispatch')
+        if row.get('working_tree')==record['working_tree']:relevant.append(row)
+    relevant.append(record)
+    rows=[]
+    for current in record['check_observations']:
+        key=(current.get('scope'),current.get('command'))
+        observations=[check for attempt in relevant for check in attempt.get('check_observations',[])
+                      if (check.get('scope'),check.get('command'))==key]
+        outcomes=[check.get('outcome') for check in observations]
+        if not outcomes or any(value not in {'pass','fail'} for value in outcomes):verdict='inconclusive'
+        elif 'pass' in outcomes and 'fail' in outcomes:verdict='flaky'
+        elif all(value=='pass' for value in outcomes):verdict='green'
+        else:verdict='red'
+        rows.append(dict(scope=key[0],command=key[1],verdict=verdict,
+                         attempts=[check.get('attempt_id') for check in observations],outcomes=outcomes))
+    verdicts={row['verdict'] for row in rows}
+    if not record['gate_tree_unchanged'] or not rows or 'inconclusive' in verdicts:overall='inconclusive'
+    elif 'red' in verdicts:overall='red'
+    elif 'flaky' in verdicts:overall='flaky'
+    else:overall='green'
+    return overall,rows
+
+
 def gate(context,root,path,selected,*,default_timeout):
     from run_local_checks import build_mention_gate_inventory,run_one,_read_declared_reds
     tree=working_tree(root);sub,step=gate_contract(root,path,selected)
@@ -155,6 +190,9 @@ def gate(context,root,path,selected,*,default_timeout):
         check_observations=[asdict(result) for result in results],gate_tree_unchanged=unchanged,
         all_passed=bool(results) and all(result.passed for result in results) and unchanged,
         diagnostic_only=True)
+    record['raw_all_passed']=record['all_passed']
+    record['verdict'],record['check_verdicts']=attempt_verdict(record,_prior_attempts.get())
+    record['all_passed']=record['raw_all_passed'] and record['verdict']=='green'
     artifact=directory/'attempt.json'
     with artifact.open('x') as stream:
         json.dump(record,stream,indent=2);stream.write('\n');stream.flush();os.fsync(stream.fileno())
@@ -164,14 +202,16 @@ def gate(context,root,path,selected,*,default_timeout):
     return record
 
 
-def accept_step(context,*,default_timeout,deadline):
+def accept_step(context,*,default_timeout,deadline,prior_attempts=()):
     """Use the caller's existing iteration deadline, including commit hooks."""
     token=_deadline.set(deadline)
     owner_token=_operation_context.set(context)
+    history_token=_prior_attempts.set(tuple(prior_attempts))
     try:
         remaining()
         return _accept_step(context,default_timeout=default_timeout)
     finally:
+        _prior_attempts.reset(history_token)
         _operation_context.reset(owner_token);_deadline.reset(token)
 
 
@@ -322,7 +362,7 @@ def _accept_step(context,*,default_timeout):
     if git(root,'rev-parse','HEAD')!=context['base_commit']:raise ContextError('worker changed HEAD')
     if git(root,'diff','--cached','--name-only'):raise ContextError('worker changed real index')
     attempt=gate(context,root,path,selected,default_timeout=default_timeout)
-    if not attempt['all_passed']:return dict(accepted=False,attempts=[attempt])
+    if not attempt['all_passed']:return dict(accepted=False,attempts=list(_prior_attempts.get())+[attempt])
     # Revalidate holds/contracts/pointer after gates, before accepting code.
     validate(context)
     if git(root,'rev-parse','HEAD')!=context['base_commit'] or git(root,'diff','--cached','--name-only'):
@@ -334,14 +374,14 @@ def _accept_step(context,*,default_timeout):
             from safety_kernel import touches_kernel
             if any(touches_kernel(name,kernel=kernel) for name in git(root,'diff','--name-only',context['base_commit'],tree).splitlines()):
                 raise ContextError('worker changed frozen owner kernel')
-        _save_acceptance(context,dict(accepted=False,commits=[],attempts=[attempt],
+        _save_acceptance(context,dict(accepted=False,commits=[],attempts=list(_prior_attempts.get())+[attempt],
             head_commit=context['base_commit'],tree=tree,gate_timeout=default_timeout,
             commit_started_monotonic=commit_started,proof_provisional=True),'commit-intent')
         git(root,'add','-A','--','.')
         if git(root,'write-tree')!=tree:raise ContextError('tree changed between gate and commit')
         git(root,'commit','-m',_commit_message(selected))
         commits=[git(root,'rev-parse','HEAD')]
-    commit_ended=monotonic();attempts=[attempt]
+    commit_ended=monotonic();attempts=list(_prior_attempts.get())+[attempt]
     committed_tree=git(root,'rev-parse','HEAD^{tree}')
     kernel=context.get('kernel_list') or {}
     if kernel.get('loop_kernel_policy')=='owner-only':

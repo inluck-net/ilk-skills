@@ -209,8 +209,8 @@ def run(context,path,prompt,*,claude,model,budget,mcp,gate_timeout,turn=worker_t
         if session and outcome['session_id']!=session:raise ContextError('resume changed provider session identity')
         session=outcome['session_id']
         phase(context,'gate')
-        accepted=accept_step(context,default_timeout=gate_timeout,deadline=context['iteration_deadline_monotonic'])
-        attempts.extend(accepted['attempts'])
+        accepted=accept_step(context,default_timeout=gate_timeout,deadline=context['iteration_deadline_monotonic'],prior_attempts=attempts)
+        attempts=accepted['attempts']
         if accepted['accepted']:
             if outcome.get('findings'):
                 from plan_state import append_findings
@@ -222,6 +222,9 @@ def run(context,path,prompt,*,claude,model,budget,mcp,gate_timeout,turn=worker_t
             return accepted
         if accepted.get('commits'):
             return dict(accepted=False,attempts=attempts,worker_turns=turns,stop_reason='code_only_commit_hook_red')
+        if attempts[-1].get('verdict') in {'flaky','inconclusive'}:
+            return dict(accepted=False,attempts=attempts,worker_turns=turns,
+                        stop_reason='local_checks_inconclusive')
         latest=attempts[-1];checks=latest['check_observations'];failures=set()
         # Full capture, never a display tail, supplies retry identity. Missing
         # IDs stay unknown rather than proving progress.

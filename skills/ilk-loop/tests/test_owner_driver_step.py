@@ -170,3 +170,32 @@ def test_misplaced_gate_first_refuses_before_worker_instead_of_ignoring_option(t
     plan.write_text(plan.read_text().replace('status: pending','status: pending\ngate_first: true'))
     with pytest.raises(ContextError,match='step YAML'):
         gate_contract(root,plan,context['dispatch'])
+
+
+def test_same_tree_red_then_green_is_flaky_without_commit_or_step_advance(tmp_path,monkeypatch):
+    import shlex
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    signal=tmp_path/'external-gate-signal'
+    context,root,plan=fixture(tmp_path,'test -f '+shlex.quote(str(signal)))
+    (root/'counter.py').write_text('def f(value): return value + 2\n')
+    first=_accept_step(context,default_timeout=10,deadline=monotonic()+10)
+    assert not first['accepted']
+    signal.write_text('gate environment changed; shipping tree unchanged')
+    second=_accept_step(context,default_timeout=10,deadline=monotonic()+10,prior_attempts=first['attempts'])
+    assert not second['accepted']
+    assert second['attempts'][-1]['verdict']=='flaky'
+    assert second['attempts'][-1]['raw_all_passed'] is True
+    assert 'current_step: 0' in plan.read_text()
+    assert git(root,'rev-parse','HEAD')==context['base_commit']
+
+
+def test_repaired_tree_green_retains_prior_red_without_inheriting_its_verdict(tmp_path,monkeypatch):
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    context,root,plan=fixture(tmp_path)
+    first=_accept_step(context,default_timeout=10,deadline=monotonic()+10)
+    (root/'counter.py').write_text('def f(value): return value + 2\n')
+    second=_accept_step(context,default_timeout=10,deadline=monotonic()+10,prior_attempts=first['attempts'])
+    assert second['accepted'] and len(second['attempts'])==2
+    assert second['attempts'][0]['verdict']=='red'
+    assert second['attempts'][1]['verdict']=='green'
+    assert second['attempts'][0]['working_tree']!=second['attempts'][1]['working_tree']

@@ -167,6 +167,21 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- Supported code-only all-attempt correction: accept_step accepts retained
+  driver history; exact run/iteration/slug/step/base/tree and scope/command
+  identify the measurement. Same-tree red then green is flaky, errors/caps
+  inconclusive; a changed repaired tree gets its own verdict. Raw attempts and
+  artifact IDs remain, no gate reuse or waivers. Mixed/unknown stops without
+  commit, step advance, red counter, strike or park. This conservative owned
+  path does not implement legacy flaky escalation or baseline-red advancement.
+  Two history-admission RED checks failed in 0.57s; 13 driver checks passed in
+  6.91s, including actual same-tree external-condition change and real code
+  repair. Broader caller/recovery checks initially 28 passed/2 failed: the
+  identity unit fixture's fictitious PID had no subprocess seam after owned
+  Git execution was added. Fix its owned-command seam, retaining mocked owner
+  loss and separate real native ownership checks.
+
+
 - PowerShell public provider provenance now calls the same protected sanitizer
   as Bash, preserves the configured URL privately, and writes only origin plus
   the explicit `configured URL; actual provider unobserved` basis on open/close.

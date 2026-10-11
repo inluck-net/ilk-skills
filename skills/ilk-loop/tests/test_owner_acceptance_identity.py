@@ -10,6 +10,11 @@ from test_owner_driver_step import fixture
 @pytest.mark.parametrize('loss',['before-gate','after-gate','after-commit','recycled'])
 def test_owning_runner_loss_never_advances_pointer(tmp_path,monkeypatch,loss):
     monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    # Unit authority-loss seam: fictitious PID identity cannot be inherited by
+    # a real owned-command child. Native registration is exercised by the
+    # archived caller tests; here keep process execution behind this seam.
+    import owned_command
+    monkeypatch.setattr(owned_command,'wrap_command',lambda argv,context:argv)
     context,root,plan=fixture(tmp_path);base=driver_step.git(root,'rev-parse','HEAD')
     (root/'counter.py').write_text('def f(value): return value + 2\n')
     registry=tmp_path/'registry';(registry/'runs').mkdir(parents=True)

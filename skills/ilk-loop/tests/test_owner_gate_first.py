@@ -35,3 +35,29 @@ def test_gate_first_accepts_head_or_repairs_with_one_worker(tmp_path,monkeypatch
     assert len(result['attempts'])==(1 if already_green else 2)
     assert len(result['commits'])==(0 if already_green else 1)
     assert 'current_step: 1' in plan.read_text()
+
+
+def test_same_tree_flaky_gate_stops_without_retry_strike_or_state_change(tmp_path,monkeypatch):
+    import shlex
+    from driver_step import git
+    monkeypatch.delenv('ILK_WORKER_SESSION',raising=False)
+    signal=tmp_path/'external-environment-signal'
+    context,root,plan=fixture(tmp_path,'test -f '+shlex.quote(str(signal)))
+    plan.write_text(plan.read_text().replace('local_checks:','gate_first: true\nlocal_checks:'))
+    context['plans'][plan.name]=plan_snapshot(plan)
+    context['iteration_deadline_monotonic']=monotonic()+10
+    path=tmp_path/'context.json';write_context(path,context)
+    monkeypatch.setenv('ILK_ITER_CONTEXT',str(path));monkeypatch.setattr(worker_iteration,'phase',lambda *args:None)
+    calls=[]
+    def turn(context,path,prompt,**kwargs):
+        calls.append(prompt)
+        signal.write_text('environment transition; no worker code change')
+        return dict(completed=True,session_id='fixture',exit_code=0)
+    result=worker_iteration.run(context,path,'implement',claude='unused',model='',budget=0,mcp=None,
+        gate_timeout=10,turn=turn)
+    assert not result['accepted'] and result['stop_reason']=='local_checks_inconclusive'
+    assert len(calls)==1 and len(result['attempts'])==2
+    assert result['attempts'][-1]['verdict']=='flaky'
+    assert 'current_step: 0' in plan.read_text() and 'status: pending' in plan.read_text()
+    assert git(root,'rev-parse','HEAD')==context['base_commit']
+    assert not (Path(context['recovery_dir'])/'gate-red-counts.json').exists()
