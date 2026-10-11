@@ -13,7 +13,8 @@ pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='Mac production entr
 ROOT=Path(__file__).resolve().parents[3]
 
 
-def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path):
+@pytest.mark.parametrize('human_hold_during_gate',[False,True])
+def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,human_hold_during_gate):
     spec=importlib.util.spec_from_file_location('entry_fixture',Path(__file__).with_name('test_pre_loop_exit_sentinel.py'))
     fixtures=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixtures)
     world=fixtures._build_world_shipped(tmp_path,with_steps=True);work=world['project']
@@ -22,6 +23,14 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path):
     (work/'counter.py').write_text('def f(value): return value + 1\n');git('add','.');git('commit','-qm','fixture counter')
     plan=world['plans']/(fixtures.STEM+'.md')
     plan.write_text('---\nplan: '+fixtures.SLUG+'\nstatus: pending\ncurrent_step: 0\nestimated_steps: 1\nverification_tier: loop-verified\n---\n# Counter\n## Steps\n### Step 0: fix counter\n```yaml\nlocal_checks:\n  - command: python3 -I -c "from pathlib import Path;exec(Path(\'counter.py\').read_text());assert f(4)==6"\n```\n')
+    master=world['plans']/'MASTER-2026-08-29-execution-plan.md'
+    if human_hold_during_gate:
+        # Driver-owned gate seam models an external coordinator's hold during
+        # the turn. A worker cannot write this path under the CLI policy.
+        import shlex
+        action='from pathlib import Path;p=Path('+repr(str(master))+');p.write_text(p.read_text().replace("status: active","status: blocked\\nhold: human"))'
+        plan.write_text(plan.read_text().replace('python3 -I -c "from pathlib',
+            'python3 -I -c '+shlex.quote(action)+'; python3 -I -c "from pathlib'))
     home=tmp_path/'source-home';home.mkdir()
     (home/'settings.json').write_text(json.dumps({'env':{'ANTHROPIC_BASE_URL':'https://example.invalid','ANTHROPIC_MODEL':'fixture-model','ANTHROPIC_AUTH_TOKEN':'fixture-token'}}))
     original=(home/'settings.json').read_bytes()
@@ -56,6 +65,17 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         stdout,stderr=process.communicate(timeout=40)
         (tmp_path/'entry.stdout').write_text(stdout);(tmp_path/'entry.stderr').write_text(stderr)
         terminal=json.loads((runtime/'last-exit.json').read_text())
+        runs=world['data_home']/'projects'/world['key']/'logs/runs'
+        assert not list(runs.glob('*/master-snapshot-*.json'))
+        assert not list(runs.glob('*/subplan-status-snapshot-*.json'))
+        assert not list(runs.glob('*/gates-snapshot-*.json'))
+        if human_hold_during_gate:
+            assert terminal['state']!='all-shipped'
+            assert 'status: blocked' in master.read_text() and 'hold: human' in master.read_text()
+            assert 'current_step: 0' in plan.read_text() and 'status: shipped' not in plan.read_text()
+            assert (home/'settings.json').read_bytes()==original
+            assert not project_status(runtime)['busy']
+            return
         assert terminal['state']=='all-shipped',(terminal,stdout[-4500:],stderr[-4500:])
         assert process.returncode==0,(stdout[-4500:],stderr[-4500:])
         assert 'current_step: 1' in plan.read_text() and 'status: shipped' in plan.read_text()

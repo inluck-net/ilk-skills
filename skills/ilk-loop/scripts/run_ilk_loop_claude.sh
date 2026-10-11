@@ -6489,7 +6489,7 @@ if cmds:
     # that deletes, weakens or edits a gate triggers a
     # ship_integrity_violation and the file is restored.
     local _gate_snap_file="" _gates_tampered=0
-    if [[ -n "${PRE_ITER_TARGET:-}" ]]; then
+    if [[ "${ILK_WORKER_MODE:-}" != "code-only" && -n "${PRE_ITER_TARGET:-}" ]]; then
       local _gs_slug="${PRE_ITER_TARGET%% *}"
       local _gs_plans_dir
       _gs_plans_dir=$(get_plans_dir 2>/dev/null) || _gs_plans_dir=""
@@ -6739,7 +6739,10 @@ print(json.dumps(d))
     # on a resolver key gh-resolve's daemons legitimately pause, un-park and
     # create them while this runner is live (gh-resolve-59, 2026-09-29).
     local _master_snap_file="" _master_tampered=0 _snap_master="" _status_snap_file=""
-    if [[ "$GATE_FIRST_GREEN" -eq 0 && "$GATE_FIRST_NO_DISPATCH" -eq 0 ]]; then
+    # Enforced code-only workers cannot write plan state. Frozen-contract
+    # validation/CAS and journal audit refuse changes without restoring a
+    # legitimate external human hold from an obsolete snapshot.
+    if [[ "${ILK_WORKER_MODE:-}" != "code-only" && "$GATE_FIRST_GREEN" -eq 0 && "$GATE_FIRST_NO_DISPATCH" -eq 0 ]]; then
       # Capture, then parse: loop_status exits 1 when work is pending (its
       # normal answer), which under pipefail would wipe a piped result.
       local _snap_json=""
@@ -6774,7 +6777,10 @@ print(json.dumps(d))
     local _amend_pgid_file="${RUN_LOG_DIR}/agent-pgid-${i}.txt"
     local _amend_stop_file="${RUN_LOG_DIR}/watcher-stop-${i}.flag"
     rm -f "$_amend_flag" "$_amend_pgid_file" "$_amend_stop_file"
-    if [[ "$GATE_FIRST_GREEN" -eq 0 && "$GATE_FIRST_NO_DISPATCH" -eq 0 ]]; then
+    # Admission proves the OS boundary before dispatch; the driver revalidates
+    # the immutable contract before committing. No polling/killing watcher is
+    # needed on that path. Legacy worker-write callers retain their guard.
+    if [[ "${ILK_WORKER_MODE:-}" != "code-only" && "$GATE_FIRST_GREEN" -eq 0 && "$GATE_FIRST_NO_DISPATCH" -eq 0 ]]; then
       local _amend_plans_dir
       _amend_plans_dir=$(get_plans_dir 2>/dev/null) || _amend_plans_dir=""
       if [[ -n "$_amend_plans_dir" && -n "${PRE_ITER_TARGET:-}" ]]; then

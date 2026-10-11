@@ -779,3 +779,14 @@ No completion/ship/proof markers are inferred from this human tracker.
   including off-branch marker and duplicate-slug regressions. Next: full Bash
   caller check at committed receipt/report/ship checkpoint, then cross-launch
   recovery and remaining caller/readers before activation.
+- Full Bash caller at `ce53adb8` passed: 1 focused entry fixture in 6.06s
+  after acceptance-receipt and ship-reader changes. No provider/API re-run was
+  needed for these driver-only changes; previous actual-provider capability
+  remains separately identified at `4e50a9f7`.
+- C6 candidate: enforced code-only path skips the legacy master/status/gate
+  snapshot restore guards and 50ms amendment polling watcher. Existing callers
+  retain them. Replacement authority is OS plan protection, frozen-contract
+  validation, guarded CAS and journal audit; external holds must be preserved,
+  not restored away. Pending exact-archive caller check: successful accepted
+  step plus a coordinator hold introduced during the gate. Do not activate or
+  claim the retirement verified until that caller evidence passes.
