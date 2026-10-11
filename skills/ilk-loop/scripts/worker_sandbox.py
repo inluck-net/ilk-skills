@@ -55,7 +55,10 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
            _rule('allow','file-write*',root),_rule('allow','file-write*',temporary),
            # CLI shell setup and ordinary redirection need the null device;
            # this grants no writes to filesystem/control-plane artifacts.
-           '(allow file-write-data (literal "/dev/null"))','(deny signal)']
+           '(allow file-write-data (literal "/dev/null"))','(deny signal)',
+           # A test/tool may terminate its own inherited sandbox children;
+           # independent driver/peer processes remain outside this target.
+           '(allow signal (target same-sandbox))']
     if shell:
         rules.append('(deny network*)')
         if context.get('private_worker_home'):

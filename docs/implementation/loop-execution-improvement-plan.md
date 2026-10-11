@@ -153,6 +153,18 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- 2026-10-11 C2 measured gate proxy gap: registered-driver fixture accepted
+  code while the test child wrote into the external proof directory (3.31s
+  reproducing failure). Code-only gate children now receive OS control-plane
+  protection and private scratch; driver output capture/Git/state remain
+  outside that boundary. Their provider credential environment is stripped.
+  Native signals permit inherited children and deny independent peers. Eleven
+  OS/dispatch checks passed in 6.69s. A human-hold fixture now coordinates from
+  outside a green gate. New network/nested-sandbox adapters remain unbuilt;
+  no silent weakening. Archived caller checks are next.
+  B4 archived normal entry at `9bffb325`: passed in 6.33s with gate, commit,
+  integrity and completed-cleanup intervals; ordinary consumer landing unknown.
+
 - 2026-10-11 B4 phase observation candidate: additive close fields separate
   authoritative gate, commit/hooks, integrity/state audit, selfmod landing and
   verified owned-group cleanup intervals. Shared host clock; intervals may

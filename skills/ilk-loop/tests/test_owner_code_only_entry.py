@@ -37,10 +37,13 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
             '  - command: python3 -I -c "from pathlib import Path;assert Path(\'later.txt\').read_text()==\'accepted\'"\n```\n')
         master.write_text(master.read_text()+'\n| '+later.name+' |\n')
     if human_hold_during_gate:
-        # Driver-owned gate seam models an external coordinator's hold during
-        # the turn. A worker cannot write this path under the CLI policy.
+        # The coordinator lives outside the gate's write boundary. An ignored
+        # readiness file synchronizes it without changing the accepted tree.
         import shlex
-        action='from pathlib import Path;p=Path('+repr(str(master))+');p.write_text(p.read_text().replace("status: active","status: blocked\\nhold: human"))'
+        (work/'.gitignore').write_text('gate-ready\n');git('add','.gitignore');git('commit','-qm','fixture coordination')
+        # 0.8s is a fixture coordination judgment over ~20ms host readiness
+        # polling, not a production delay. Missed valid holds falsify this gap.
+        action='from pathlib import Path;import threading;Path("gate-ready").write_text("ready");threading.Event().wait(0.8)'
         plan.write_text(plan.read_text().replace('python3 -I -c "from pathlib',
             'python3 -I -c '+shlex.quote(action)+'; python3 -I -c "from pathlib'))
     home=tmp_path/'source-home';home.mkdir()
@@ -102,6 +105,16 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         '--mcp-config-path',str(inputs/'mcp.json')],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
         start_new_session=True)
     try:
+        if human_hold_during_gate:
+            from iteration_clock import monotonic
+            import threading
+            # Fixture startup judgment: observed gates begin within ~12s;
+            # 20s stays below the caller's existing 40s outer fixture bound.
+            deadline=monotonic()+20
+            while not (work/'gate-ready').exists():
+                assert process.poll() is None and monotonic()<deadline
+                threading.Event().wait(.02)
+            master.write_text(master.read_text().replace('status: active','status: blocked\nhold: human'))
         # 40s fixture judgment for sampled ~12s launch/close, below the
         # deliberately supplied 60s iteration budget; slower valid startup
         # falsifies this test bound, not a production limit.
@@ -118,6 +131,8 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             assert 'current_step: 0' in plan.read_text() and 'status: shipped' not in plan.read_text()
             assert (home/'settings.json').read_bytes()==original
             assert not project_status(runtime)['busy']
+            attempts=list((runtime/'driver-step').glob('*/attempt.json'))
+            assert any(json.loads(path.read_text())['all_passed'] for path in attempts)
             return
         if case.startswith('pending-'):
             assert terminal['state']=='already-shipped',(terminal,stdout[-4500:],stderr[-4500:])

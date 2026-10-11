@@ -45,6 +45,17 @@ def test_shell_network_is_denied_before_connecting(tmp_path):
     assert cp.returncode!=0 and 'PermissionError' in cp.stderr
 
 
+def test_tools_can_stop_their_own_children_but_not_independent_peers(tmp_path):
+    ctx,temporary,_=fixture(tmp_path);policy=profile(ctx,temporary=temporary,shell=True)
+    child='import subprocess,sys;p=subprocess.Popen([sys.executable,"-c","import threading;threading.Event().wait()"]);p.terminate();assert p.wait()==-15'
+    assert run(policy,'/usr/bin/python3','-I','-c',child).returncode==0
+    peer=subprocess.Popen(['/usr/bin/python3','-I','-c','import threading;threading.Event().wait()'])
+    try:
+        denied=run(policy,'/usr/bin/python3','-I','-c',f'import os,signal;os.kill({peer.pid},signal.SIGTERM)')
+        assert denied.returncode!=0 and peer.poll() is None
+    finally:peer.terminate();peer.wait()
+
+
 def test_cli_and_shell_can_redirect_to_null_without_broadening_scope(tmp_path):
     ctx,temporary,home=fixture(tmp_path)
     for policy in (profile(ctx,temporary=temporary,shell=True),

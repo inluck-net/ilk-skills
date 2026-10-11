@@ -262,3 +262,23 @@ and no network. The broker may execute only that operation; it never exposes
 commit, state or proof mutation. Its identity/deadline/cleanup must be owned by
 the driver and recorded in frozen context/lifecycle evidence. This mechanism
 is new and unbuilt at this point; no sandbox escape exemption is proposed.
+
+### Gate child boundary (owner candidate, 2026-10-11)
+
+An actual registered-driver fixture accepted code while its test child wrote a
+file into the external proof directory. Protecting only the model CLI/shell
+does not prevent worker-authored tests from proxying writes through a gate.
+The candidate `run_local_checks.py` / `bounded_run.py` now starts code-only
+gate children under the same OS control-plane write restrictions, separately
+from the CLI. Output capture, Git acceptance and state updates stay in the
+driver. Gate temporary files use the private scratch directory; provider
+credential environment variables are absent. This is new, candidate-only.
+Legacy and supervised hand checks retain their existing entry path.
+
+The Mac profile permits a tool/test to signal children inheriting its own
+sandbox, while independent driver/peer processes remain denied. Native tests
+exercise both permissions. Network-dependent and nested-sandbox gate adapters
+remain unbuilt; unsupported gates must refuse rather than broaden permissions.
+The hold fixture now uses an external coordinator during a green gate, so gate
+code no longer impersonates a human writing protected state. Focused scope and
+dispatch checks passed; the archived runner caller check precedes activation.

@@ -14,8 +14,17 @@ pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='explicit Mac owners
 ROOT=Path(__file__).resolve().parents[3]
 
 
-def test_owned_prepare_freezes_once_binds_settings_and_registers_shell(tmp_path):
+@pytest.mark.parametrize('scope_probe',[False,True])
+def test_owned_prepare_freezes_once_binds_settings_and_registers_shell(tmp_path,scope_probe):
     context,work,plan=fixtures.fixture(tmp_path)
+    forged=Path(context['runtime_dir'])/'forged-proof.txt'
+    if scope_probe:
+        import re,shlex
+        attempt='try:\n Path('+repr(str(forged))+').write_text("forged")\nexcept PermissionError:\n pass'
+        command='python3 -I -c '+shlex.quote('from pathlib import Path;exec('+repr(attempt)+');exec(Path("counter.py").read_text());assert f(4)==6')
+        plan.write_text(re.sub(r'(?m)^  - command:.*$',lambda _: '  - command: '+command,plan.read_text()))
+        from iteration_context import plan_snapshot
+        context['plans'][plan.name]=plan_snapshot(plan)
     toolkit=tmp_path/'toolkit';(toolkit/'skills/ilk-loop').mkdir(parents=True)
     shutil.copytree(ROOT/'skills/ilk-loop/scripts',toolkit/'skills/ilk-loop/scripts',ignore=shutil.ignore_patterns('__pycache__'))
     (toolkit/'hooks').mkdir();shutil.copy(ROOT/'hooks/worker-write-scope.py',toolkit/'hooks/worker-write-scope.py')
@@ -111,6 +120,7 @@ result.write_text(json.dumps({'accepted':accepted['accepted'],'children':len(reg
     assert 'current_step: 1' in plan.read_text()
     assert '> ## Keep this diagnostic heading quoted' in plan.read_text()
     assert (home/'settings.json').read_text()=='{"env":{}}'
+    assert not forged.exists(), 'gate child wrote outside the execution worktree'
 
 
 def test_unowned_preparation_refuses_before_spawning(tmp_path):

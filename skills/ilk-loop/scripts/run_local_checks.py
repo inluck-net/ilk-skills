@@ -1628,8 +1628,13 @@ def run_one(check: dict, scope: str, project: Path,
         # every gate errored and the loop shipped unverified. See the memory
         # autonomous-gates-not-enforced-windows.
         # Use bounded_run to kill the whole process group on timeout.
+        from iteration_context import read_context
+        context=read_context();scope_args={}
+        if context and context.get('worker_sandbox_adapter')=='macos-brokered-shell' and context.get('run_registry_dir'):
+            scope_args['protect_control_plane']=True
         rc, stdout, stderr, timed_out = _bounded_run(
             [bash, "-c", effective_cmd], cwd=str(project), timeout=timeout,
+            **scope_args,
         )
         dur = monotonic() - t0
         stderr_full = stderr or ""
