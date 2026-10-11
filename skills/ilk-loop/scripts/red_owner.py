@@ -734,6 +734,22 @@ def attribute_red(repo, iteration_base, batch_base, head, cmd, stdout_tail='', b
                         reason='original attribution budget exhausted',nodes=[])
 
 
+def _cli_budget(requested):
+    """Legacy calls use their cap; frozen iterations retain their original cap."""
+    from iteration_context import read_context
+    from iteration_clock import monotonic
+    context = read_context()
+    if context and context.get('iteration_deadline_monotonic') is not None:
+        deadline = float(context['iteration_deadline_monotonic'])
+        if not math.isfinite(deadline):
+            raise ValueError('invalid original iteration deadline')
+        if context.get('worker_sandbox_adapter') == 'macos-brokered-shell':
+            from run_registry import require_driver
+            require_driver(context)
+        return min(requested, max(0, deadline-monotonic()))
+    return requested
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1].strip())
     ap.add_argument("--repo", type=Path, required=True)
@@ -786,18 +802,8 @@ def main(argv: list[str]) -> int:
                         reason='named complete gate output unavailable')))
                     return 0
 
-        budget = args.budget_s
         try:
-            from iteration_context import read_context
-            from iteration_clock import monotonic
-            context = read_context()
-            if context and context.get('iteration_deadline_monotonic') is not None:
-                deadline = float(context['iteration_deadline_monotonic'])
-                if not math.isfinite(deadline):raise ValueError('invalid original iteration deadline')
-                if context.get('worker_sandbox_adapter') == 'macos-brokered-shell':
-                    from run_registry import require_driver
-                    require_driver(context)
-                budget = min(budget, max(0, deadline-monotonic()))
+            budget = _cli_budget(args.budget_s)
         except (ValueError, RuntimeError, OSError):
             print(json.dumps(dict(verdict='unmeasured',owner_sha=None,owner_slug=None,
                                   reason='original attribution context unavailable',nodes=[])))
@@ -830,8 +836,14 @@ def main(argv: list[str]) -> int:
         print("red_owner: --cmd is empty; nothing to bisect", file=sys.stderr)
         return 2
 
+    try:
+        budget = _cli_budget(args.budget_s)
+    except (ValueError, RuntimeError, OSError):
+        print(json.dumps(dict(first_red=None, first_red_subject=None,
+                              base_green=None, reason='unmeasured')))
+        return 0
     result = bisect_red_owner(
-        args.repo, args.base, args.head, args.cmd, args.nodes, args.budget_s,
+        args.repo, args.base, args.head, args.cmd, args.nodes, budget,
     )
     print(json.dumps(result, ensure_ascii=False))
     return 0

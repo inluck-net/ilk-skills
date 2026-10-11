@@ -23,7 +23,7 @@ request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: close remaining legacy reader/recovery/parity requirements
-and delivery documentation in this isolated worktree. Toolkit preview 11e5a9c0
+and delivery documentation in this isolated worktree. Toolkit preview 053678a0
 and consumer compatibility 2cb713ae are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -2329,3 +2329,22 @@ anchors at the time of inspection and can move as integration changes code.
   contracts: 30 passed/1 deselected in 18.99s. Whole-repository/full-suite
   verification was not run. All cleanup/reset operations targeted temporary
   attribution worktrees, not the running controller or its execution tree.
+
+
+### Original deadline on the legacy bisect CLI
+
+- Reproduced two negatives: the bisect entry granted 300 seconds with only
+  0.5 seconds remaining, and a NaN original deadline still dispatched the
+  bisect. Both tests failed before the fix (2 failed/4 deselected in 0.05s).
+- Shared red_owner._cli_budget now clips both attribution and bisect CLI
+  calls to the original deadline and retains owned-driver authorization.
+  Invalid context returns unmeasured, with no owner or invented base green.
+  No new numeric defaults or thresholds were introduced.
+- Focused shared-budget and historical bisect caller checks: 10 passed in
+  4.00s. These Python fixtures dispatch no agent/model and establish deadline
+  correctness, not batch throughput. Candidate source only until next safe
+  activation; installed local pointer remains 053678a0.
+- Rezmac read-only probe: clean toolkit 3e935f4f, clean consumer 8d079263,
+  installed v0.9.193. Scheduler 53206 has a sleep child; reaper 28564 has a
+  live Python child. No remote files, services or worker state were changed.
+  Do not treat sleeping scheduler alone as a safe host activation boundary.

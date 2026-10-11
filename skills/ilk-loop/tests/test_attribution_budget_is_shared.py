@@ -52,3 +52,30 @@ def test_unknown_bisect_sample_cannot_become_a_first_red_commit(tmp_path,monkeyp
 def test_capped_sample_is_unknown_rather_than_red(tmp_path,monkeypatch):
     monkeypatch.setattr(red_owner,'_bounded_run',lambda *a,**k:(None,'','',True))
     assert red_owner._run_test(tmp_path,'focused-check',[]) is None
+
+
+def test_bisect_cli_obeys_original_deadline(tmp_path, monkeypatch, capsys):
+    import iteration_context, iteration_clock
+    monkeypatch.setattr(iteration_context, 'read_context', lambda: {
+        'iteration_deadline_monotonic': 123.5})
+    monkeypatch.setattr(iteration_clock, 'monotonic', lambda: 123.)
+    seen = []
+    def bisect(*args):
+        seen.append(args[-1])
+        return {'first_red': None, 'reason': 'unmeasured'}
+    monkeypatch.setattr(red_owner, 'bisect_red_owner', bisect)
+    assert red_owner.main(['--repo', str(tmp_path), '--base', 'a'*40,
+        '--head', 'b'*40, '--cmd', 'focused-check', '--budget-s', '300']) == 0
+    assert seen == [.5]
+
+
+def test_bisect_cli_refuses_invalid_original_deadline(tmp_path, monkeypatch, capsys):
+    import iteration_context
+    monkeypatch.setattr(iteration_context, 'read_context', lambda: {
+        'iteration_deadline_monotonic': float('nan')})
+    monkeypatch.setattr(red_owner, 'bisect_red_owner',
+                        lambda *a: __import__('pytest').fail('invalid deadline started bisect'))
+    assert red_owner.main(['--repo', str(tmp_path), '--base', 'a'*40,
+        '--head', 'b'*40, '--cmd', 'focused-check']) == 0
+    result = __import__('json').loads(capsys.readouterr().out)
+    assert result['first_red'] is None and result['reason'] == 'unmeasured'
