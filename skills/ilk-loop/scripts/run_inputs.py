@@ -301,9 +301,17 @@ def pin_launch_resources(destination, *, project, mcp=None, executables=None):
     return manifest
 
 
-def verify_launch_resources(destination):
+def launch_fingerprint(manifest):
+    """Freeze launch inputs independently of additive per-context bindings."""
+    stable={key:value for key,value in manifest.items() if key!='context_bindings'}
+    return hashlib.sha256(json.dumps(stable,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+
+
+def verify_launch_resources(destination, *, expected=None):
     destination=Path(destination).resolve()
     manifest=json.loads((destination/'inputs.json').read_text())
+    if expected is not None and launch_fingerprint(manifest)!=expected:
+        raise InputPinError('pinned launch descriptor changed after dispatch freeze')
     for key,name in (('code_root','code'),('worker_home','worker-home')):
         if Path(manifest[key]).resolve()!=destination/name:
             raise InputPinError('private run input root contradicts prepared manifest')

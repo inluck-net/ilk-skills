@@ -113,3 +113,30 @@ During a frozen iteration, status uses the recorded master, plans directory,
 runtime and execution root. It cannot switch to another queue candidate through
 an ambient master setting. Invalid or missing frozen identity returns an error;
 status outside an iteration retains existing queue selection.
+
+
+## Opt-in progress with a measured unrelated red
+
+For the supported owned Mac launch, `ILK_MEASURED_RED_PROGRESS=1` enables
+fresh attribution of the selected focused gate. It measures failed node IDs
+against the exact recorded batch and step bases within the existing deadline;
+it does not obtain a full-suite baseline. Complete unchanged failures present
+at the required bases can allow durable progress. New, mixed or unmeasured
+failures refuse. Such progress stays `shipped-unproven`, with accepted:false
+and green_accepted:false; consumers cannot treat it as green verification.
+The actual disposable gh-resolve repair exercised this opt-in path with the
+production provider and hooks. Final verification remains separately opt-in.
+
+Prepared plain global instructions and rule files are explicit bootstrap reads
+because owned print mode disables automatic setting sources. Repository
+instruction references are inventoried with cycle detection. Global imports
+requiring source-home rebasing refuse preparation until an adapter exists.
+Managed policy and external runtime upgrades still need explicit coordination;
+private toolkit snapshots do not freeze host libraries or remote policy.
+
+Multi-owner explicit verification red returns are recoverable per owner. An
+interrupted operation recognizes each exact journaled plan revision and resumes
+unfinished owners without duplicate checks or findings. Initially human-held
+owners refuse before any revision. Human edits after a partial return require
+owner handling; the operation does not claim atomic replacement across files.
+This path is a recovery adapter, not permission to run final verification.

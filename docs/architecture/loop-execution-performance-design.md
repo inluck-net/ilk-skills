@@ -816,7 +816,7 @@ Historical manifests without the additive inventory protocol keep their prior
 behavior. No shared active home is rewritten.
 
 This closes a concrete omitted input category, not exhaustive hermeticity.
-Arbitrary `@` imports, managed policy/remote settings and system library upgrade
+Global `@` import rebasing, managed policy/remote settings and system library upgrade
 coordination remain open. Four inventory negatives plus the OS write negative
 failed before the correction; inventory/OS checks passed 20 in 3.19s,
 additional inventory/native checks passed 23 in 2.28s, run-input/OS checks passed
@@ -848,3 +848,28 @@ The implementation is locally installed in immutable preview 524fedca. Fifty-fou
 focused inventory/preparation/OS checks passed in 29.17s; archived shell/native
 entry checks passed two in 17.00s. Default profiles remain opt-in, final verification
 remains opt-in, and running workers retain their original pins.
+
+
+### Acceptance rechecks all prepared launch resources (new candidate)
+
+`driver_step.validate` now verifies launch resources alongside code inventory
+before and after gates. This closes the measured gap where hooks, settings,
+MCP or executable changes after a provider turn were missed by acceptance.
+Four generated mutation negatives reproduced the gap. Failure is a refused
+context, not green proof, and cannot advance the pointer. Historical contexts
+without a prepared code fingerprint retain their earlier capability.
+
+[Managed settings documentation](https://code.claude.com/docs/en/managed-settings)
+states that managed sources have higher precedence than supplied settings and
+may apply even when ordinary setting sources are excluded. The named system
+managed root and managed preferences file were absent on this Mac during the
+read-only check. Absence is a current observation, not a frozen policy adapter;
+managed and remote policy coordination remains explicitly open.
+
+
+The subsequent descriptor negative also changed an input's manifest hash and
+reproduced acceptance. New dispatches freeze `launch_inputs_sha256` independently
+of the current manifest. Worker binding and acceptance compare the stable launch
+descriptor to it; additive per-context bindings can grow without rebinding launch
+inputs. Historical contexts without this fingerprint remain historical. No new
+gate outcome reuse, threshold or automatic final verifier is introduced.

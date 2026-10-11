@@ -5,8 +5,8 @@ Gates run against a captured working-tree object. Only the driver commits and
 CAS-advances one step. Changed commit-hook output is gated again; an unchanged
 commit does not rerun the same gates. Unknown/red/mutating gates never advance.
 Exact closed driver-red diffs have a retained-entry adapter. Arbitrary dirt,
-timeout diffs, baseline-red waivers and multi-repo dispatch require migration
-adapters. Baseline declarations may exist; this path grants no waiver.
+timeout diffs and multi-repo dispatch require migration adapters. The separate
+opt-in measured-red protocol records fresh non-green progress, never a waiver.
 """
 from __future__ import annotations
 from dataclasses import asdict
@@ -162,7 +162,10 @@ def validate(context):
     from instruction_inputs import verify
     verify(context)
     if context.get('toolkit_code_inventory_sha256') is not None:
-        from run_inputs import verify_code_snapshot
+        from run_inputs import verify_code_snapshot,verify_launch_resources,InputPinError
+        try:verify_launch_resources(context['worker_inputs_dir'],expected=context.get('launch_inputs_sha256'))
+        except (InputPinError,OSError,ValueError) as exc:
+            raise ContextError('pinned run input unavailable or changed: '+str(exc)) from exc
         verify_code_snapshot(context['worker_inputs_dir'],expected=context['toolkit_code_inventory_sha256'],deadline=_deadline.get())
     state=parse_frontmatter(path.read_text())
     if state.get('current_step')!=str(selected['step']):raise ContextError('step changed since dispatch')

@@ -3384,3 +3384,16 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
   fetch named an unexported branch and refused without mutation; corrected to
   the actual advertised HEAD ref after bundle verification. Shared rezmac
   pointer remains v0.9.193. No public release or active-worker replacement.
+
+
+- D2/C3 acceptance-input closure candidate: four generated mutation negatives
+  showed driver acceptance missed changed private hooks/settings/MCP/executable
+  after a worker turn. `driver_step.validate` now checks launch resources before
+  and after gates as well as code/instruction inventory. Forty-six affected
+  preparation/driver checks passed in 32.91s. A further descriptor mutation
+  reproduced acceptance after updating the changed input's manifest hash.
+  New frozen `launch_inputs_sha256` independently binds the stable descriptor;
+  only additive per-context bindings are excluded. Worker-turn binding and
+  acceptance require that hash when present. Eight descriptor/binding checks
+  passed in 1.14s. Historical contexts without this additive fingerprint retain
+  earlier capability. Next: archived normal/measured-red entry, then delivery.

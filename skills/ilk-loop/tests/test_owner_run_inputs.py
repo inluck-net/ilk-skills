@@ -261,6 +261,33 @@ def test_global_imports_require_rebasing_adapter_before_preparation(tmp_path):
     assert not destination.exists()
 
 
+@pytest.mark.parametrize('changed',['hook','settings','mcp','executable','manifest'])
+def test_driver_acceptance_rechecks_non_code_launch_inputs(tmp_path,monkeypatch,changed):
+    from test_owner_driver_step import fixture as driver_fixture
+    from driver_step import validate
+    from iteration_context import ContextError
+    from run_inputs import pin_launch_resources
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    pins=tmp_path/'pins';pins.mkdir();work=tmp_path/'work';work.mkdir()
+    repo,home,_=fixture(pins);destination=pins/'run';manifest=prepare(repo,home,destination)
+    executable=pins/'fixture-bin';executable.write_text('fixture binary')
+    manifest=pin_launch_resources(destination,project=repo,executables={'fixture':str(executable)})
+    context,root,plan=driver_fixture(work)
+    context.update(code_root=manifest['code_root'],worker_inputs_dir=str(destination),
+        toolkit_code_inventory_sha256=manifest['code_inventory_sha256'])
+    import hashlib
+    context['launch_inputs_sha256']=hashlib.sha256(json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    validate(context)
+    paths=dict(hook=Path(manifest['hooks'][0]['pinned_script']),settings=Path(manifest['worker_home'])/'settings.json',
+        mcp=Path(manifest['mcp']['path']),executable=executable)
+    target=paths['mcp' if changed=='manifest' else changed];target.chmod(0o600);target.write_text('changed launch input')
+    if changed=='manifest':
+        manifest['mcp']['sha256']=digest(target)
+        (destination/'inputs.json').write_text(json.dumps(manifest))
+    with pytest.raises(ContextError,match='pinned run input'):validate(context)
+    assert 'current_step: 0' in plan.read_text()
+
+
 @pytest.mark.parametrize('mutation',['edit','add','manifest'])
 def test_complete_code_inventory_detects_changed_or_added_runtime_inputs(tmp_path,mutation):
     from run_inputs import verify_code_snapshot

@@ -18,7 +18,7 @@ import time
 from iteration_clock import monotonic
 import uuid
 from iteration_context import ContextError,read_context,write_context
-from run_inputs import bind_context,verify_launch_resources,pin_context_policy
+from run_inputs import bind_context,verify_launch_resources,pin_context_policy,launch_fingerprint
 from run_registry import process_identity,register_child,liveness
 
 
@@ -46,6 +46,7 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
                  measured_red_progress_protocol=manifest.get('measured_red_progress_protocol'),
                  private_worker_home=manifest['worker_home'],worker_inputs_dir=str(inputs),
                  toolkit_code_inventory_sha256=manifest.get('code_inventory_sha256'),
+                 launch_inputs_sha256=launch_fingerprint(manifest),
                  worker_sandbox_adapter='macos-brokered-shell',run_registry_dir=str(registry),
                  runner_owner_pid=owner_pid,iteration_deadline_monotonic=deadline)
     from instruction_inputs import inventory
@@ -169,7 +170,7 @@ def close(context_path):
 
 def binding(context_path,*,with_manifest=False):
     context_path=Path(context_path);context=read_context(context_path);inputs=Path(context['worker_inputs_dir'])
-    manifest=verify_launch_resources(inputs);fingerprint=hashlib.sha256(context_path.read_bytes()).hexdigest()
+    manifest=verify_launch_resources(inputs,expected=context.get('launch_inputs_sha256'));fingerprint=hashlib.sha256(context_path.read_bytes()).hexdigest()
     bindings=[row for row in manifest.get('context_bindings',[]) if row['context_sha256']==fingerprint]
     if len(bindings)!=1:raise ContextError('exact settings binding unavailable')
     row=bindings[0];settings=Path(row['settings_path'])
