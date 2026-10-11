@@ -632,7 +632,7 @@ start_ilk_window() {
       echo "[ilk] scheduler master contradicts drained master; refusing activation" >&2
       return 1
     fi
-    master_override="$upgrade_master"
+    master_override="$(basename "$upgrade_master")"
     max_iterations=$(jq -r '.launch_contract.max_iterations' <<<"$upgrade_selection")
     timeout_min=$(jq -r '.launch_contract.iteration_timeout_min' <<<"$upgrade_selection")
     run_local_checks=true
@@ -864,7 +864,7 @@ Options:
   --disable-mcp NAMES          Comma-separated blacklist of MCP servers.
   --enable-mcp NAMES           Comma-separated whitelist of MCP servers.
   --all                        Launch every project in projects.json.
-  --force                      Skip the "already running" check.
+  --force                      Legacy scheduling flag; never bypasses busy ownership.
   --dry-run                    Print resolved plan but do not spawn.
   --engine ENGINE              Worker engine: claude (default) or codex.
   --worker-home PATH           Override worker home for claude-worker engine

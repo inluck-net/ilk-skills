@@ -6334,9 +6334,9 @@ a=sys.argv
 context=resolve_context(clone=a[2],exec_tree=a[3],plans_dir=a[4],runtime_dir=a[5],
  code_root=Path(a[1]).parent,data_root=ilk_data_root(),mode=a[6],run_id=a[7],
  iteration=int(a[8]),dispatch=identity,observe_tree=dict(zip(a[10::2],a[11::2])))
-context['launch_contract']=dict(max_iterations=int(os.environ['_ILK_CONTEXT_MAX_ITERATIONS']),
- iteration_timeout_min=int(os.environ['_ILK_CONTEXT_TIMEOUT_MIN']),run_local_checks=os.environ['_ILK_CONTEXT_RUN_LOCAL_CHECKS']=='true',
- max_budget_usd=float(os.environ['_ILK_CONTEXT_MAX_BUDGET']))
+context["launch_contract"]=dict(max_iterations=int(os.environ["_ILK_CONTEXT_MAX_ITERATIONS"]),
+ iteration_timeout_min=int(os.environ["_ILK_CONTEXT_TIMEOUT_MIN"]),run_local_checks=os.environ["_ILK_CONTEXT_RUN_LOCAL_CHECKS"]=="true",
+ max_budget_usd=float(os.environ["_ILK_CONTEXT_MAX_BUDGET"]))
 if os.environ.get("ILK_WORKER_MODE")=="code-only":
  from worker_dispatch import prepare
  from iteration_clock import monotonic

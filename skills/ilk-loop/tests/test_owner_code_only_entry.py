@@ -164,6 +164,36 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             assert (home/'settings.json').read_bytes()==original
             assert not project_status(runtime)['busy']
             assert not (runtime/'running.pid').exists()
+            # Activate through the same launcher entry the scheduler calls.
+            # Deliberately supplied 99/99 limits must not replace the frozen
+            # original 1 iteration / 1 minute contract.
+            activation_env=dict(env,ILK_SKIP_MAIN='1')
+            launch=ROOT/'skills/ilk-launcher/scripts/launch.sh'
+            argv=['bash','-c','source "$1"; start_ilk_window "$2" fixture 99 99 true false "" claude "" false ""',
+                'fixture',str(launch),str(work)]
+            started=subprocess.run(argv,env=activation_env,capture_output=True,text=True,timeout=20)
+            assert started.returncode==0,(started.stdout,started.stderr)
+            metadata=json.loads((runtime/'last-launch.json').read_text())
+            assert metadata['toolkit_sha']==target_manifest['toolkit_sha']
+            assert metadata['max_iterations']==1 and metadata['iteration_timeout_min']==1
+            assert metadata['run_local_checks'] is True
+            # 20s fixture judgment over observed ~7s stub launch; a valid
+            # slower startup falsifies this bound, not production defaults.
+            deadline=monotonic()+20
+            while monotonic()<deadline:
+                next_exit=json.loads((runtime/'last-exit.json').read_text())
+                if next_exit.get('run_id')!=terminal['run_id'] and next_exit.get('state')!='running':break
+                threading.Event().wait(.02)
+            assert next_exit['state']=='all-shipped',(next_exit,started.stdout,started.stderr)
+            assert next_exit['toolkit_sha']==target_manifest['toolkit_sha']
+            assert next_exit['run_id']!=terminal['run_id']
+            assert 'status: shipped' in later.read_text() and 'status: shipped' in master.read_text()
+            assert not (runtime/'upgrade-drain-request.json').exists()
+            assert (runtime/('upgrade-drain-consumed-'+terminal['run_id']+'.json')).exists()
+            # Exit sentinel precedes EXIT-trap registry cleanup by a brief
+            # interval. Wait for actual release rather than infer it.
+            while project_status(runtime)['busy'] and monotonic()<deadline:threading.Event().wait(.02)
+            assert not project_status(runtime)['busy']
             return
         if case.startswith('pending-'):
             assert terminal['state']=='already-shipped',(terminal,stdout[-4500:],stderr[-4500:])
