@@ -3554,3 +3554,20 @@ queue that a relaunch observes is not the queue that dispatched the dead run.
 3. **The reader tolerates the string form.** `"true"` / `"false"` / `"1"` /
    `"0"` are accepted alongside the boolean, so a hand-edited record does not
    silently become "absent".
+
+
+### Confirmed-red attribution annotation (local preview, 2026-10-12)
+
+`blocking_checks.py --attribute` is a new shared measurement transport used by
+PowerShell before its measured strike reader. It accepts confirmed red rows,
+uses only frozen `iteration_context.red_inputs`, and requires complete stdout
+and stderr paths for each failing check. Missing paths, malformed input,
+unknown base, mixed owners or capped work cannot name a strike. Attribution
+does not clear an outcome or provide green proof. All attempts remain recorded.
+The existing legacy 300-second attribution cap is shared across records and
+commands. Its value remains an existing judgment over bounded local at-base
+checks; measurement showing valid focused checks routinely need more, or
+excessive diagnostic delay dominates batches, would invalidate that cap. Owned
+contexts additionally clip it to the existing original iteration deadline.
+The PowerShell function is checked with actual disposable Git at-base runs
+on Mac; native Windows lifecycle/process-group support is still unbuilt.

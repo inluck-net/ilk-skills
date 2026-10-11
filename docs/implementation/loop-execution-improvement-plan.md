@@ -23,7 +23,7 @@ request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: close remaining legacy reader/recovery/parity requirements
-and delivery documentation in this isolated worktree. Toolkit preview f40c8aaa
+and delivery documentation in this isolated worktree. Toolkit preview 11e5a9c0
 and consumer compatibility 2cb713ae are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -2233,3 +2233,31 @@ anchors at the time of inspection and can move as integration changes code.
   refusal, same-tree flaky history, restart, changed input, corrupt history).
   Additional retained-entry negatives including live registered child and
   changed toolkit identity: 9 passed/1 deselected in 2.19s.
+
+
+### Local recovery activation and PowerShell measurement parity
+
+- Local main/current installed 11e5a9c0. delivery-preview-20261012c retains
+  before/installed evidence. Exact pinned controller 94556 and its original
+  4de1eb06 private inputs stayed alive and unchanged; 769 protected hashes
+  were preserved. Only the verified sleep-only scheduler restarted.
+- New shared blocking_checks.attribute_records / `--attribute` annotates
+  confirmed red rows using frozen roots/bases and each complete failing check
+  capture. It never clears outcomes, supplies proof, or selects a victim from
+  the current plan. Missing evidence and differing owners are unmeasured.
+- PowerShell Set-LocalCheckAttribution now invokes this before its existing
+  measured strike reader. Portable PowerShell actually ran disposable Git
+  at-base/bisect measurements: inherited failure named `actual-owner`; selected
+  `counter` remained red. Missing capture, incomplete output, wrong frozen step
+  and absent context produced no strike. Original first fixture used step.md
+  while invoking slug counter and correctly refused; renamed to the canonical
+  dated counter filename without relaxing identity checks.
+- 15 shared measurement/strike-reader checks passed in 2.50s, including actual
+  PowerShell invocation and shared-budget model. Whole PowerShell runner syntax
+  parsed successfully. Native Windows entry/process-group ownership is still
+  unbuilt/unverified; portable function evidence does not establish it.
+- Uses the existing 300s legacy attribution judgment, shared across rows/checks,
+  clipped to an owned context's existing original deadline. Basis/falsifier
+  are recorded in detached-component-contracts.md; no new routine suite gate.
+- Next: commit and check the changed legacy caller contract, prepare the
+  candidate for the next safe activation; continue remaining whole-plan gaps.

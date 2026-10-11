@@ -653,6 +653,23 @@ function Update-LocalCheckHistory {
   } finally { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
 }
 
+function Set-LocalCheckAttribution {
+  param([object[]]$Records)
+  $path = [IO.Path]::GetTempFileName()
+  try {
+    $rows = @($Records | ForEach-Object { ConvertTo-Json -InputObject $_ -Depth 40 -Compress })
+    [IO.File]::WriteAllLines($path, [string[]]$rows)
+    $null = & python (Join-Path $SkillRoot 'ilk-loop/scripts/blocking_checks.py') $path --attribute
+    if ($LASTEXITCODE -ne 0) { throw 'at-base measurement unavailable' }
+    return @(Get-Content -LiteralPath $path | ForEach-Object { $_ | ConvertFrom-Json -ErrorAction Stop })
+  } catch {
+    foreach ($row in $Records) {
+      $row | Add-Member -Force attribution ([PSCustomObject]@{verdict='unmeasured';reason='at-base measurement unavailable'})
+    }
+    return $Records
+  } finally { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+}
+
 function Get-MeasuredStrikeTargets {
   param([object[]]$Records)
   $path = [IO.Path]::GetTempFileName()
@@ -2606,8 +2623,8 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
           # stopping the whole loop (L4: bypass, don't wedge).
           $quarantineScript = Join-Path $SkillRoot "ilk-loop\scripts\quarantine_subplan.py"
           $quarantined = $false
-          # This adapter does not yet measure at-base ownership. Until that
-          # evidence exists, retain the red and stop without inventing strikes.
+          # Measurement annotates exact frozen inputs; it never clears a red.
+          $localChecksRun = @(Set-LocalCheckAttribution -Records $localChecksRun)
           $strikeTargets = @(Get-MeasuredStrikeTargets -Records $localChecksRun)
           if ($strikeTargets.Count -eq 0) {
             Write-Host '[red-owner] red remains blocking; no measured commit owner grants a strike' -ForegroundColor Yellow

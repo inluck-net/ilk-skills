@@ -113,6 +113,68 @@ def strike_targets(path: Path) -> list[str]:
     return sorted(targets)
 
 
+def attribute_records(path, *, context=None, budget_s=300):
+    """Measure confirmed reds; ownership alone cannot excuse or advance them.
+
+    Use frozen roots and complete captures. The existing 300s legacy cap is
+    shared across rows/checks; owned contexts also retain their original cap.
+    """
+    import subprocess
+    from iteration_context import read_context,red_inputs
+    import red_owner
+    from iteration_clock import monotonic
+    rows=[]
+    for line in Path(path).read_text(encoding='utf-8-sig').splitlines():
+        if line.strip():
+            row=json.loads(line)
+            if not isinstance(row,dict):raise ValueError('invalid check record')
+            rows.append(row)
+    context=context or read_context()
+    if context and context.get('worker_sandbox_adapter'):
+        from run_registry import require_driver
+        require_driver(context)
+        if not context.get('iteration_deadline_monotonic'):raise ValueError('owned attribution deadline absent')
+    if context and context.get('iteration_deadline_monotonic') is not None:
+        budget_s=min(budget_s,max(0,context['iteration_deadline_monotonic']-monotonic()))
+    with red_owner._budget_scope(budget_s):
+        for row in rows:
+            if row.get('verdict')!='red' or row.get('outcome') not in BLOCKING_OUTCOMES:continue
+            attrs=[]
+            try:
+                if not context:raise ValueError('frozen attribution context unavailable')
+                frozen=red_inputs(context,row['slug'],int(row['step']))
+                root=Path(frozen['exec_tree'])
+                head=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True,timeout=red_owner._remaining(30)).strip()
+                observations=row.get('check_observations') or (row.get('raw') or {}).get('results')
+                if not observations:raise ValueError('complete check observations unavailable')
+                for check in observations:
+                    if check.get('outcome') not in BLOCKING_OUTCOMES:continue
+                    if check.get('output_complete') is not True:raise ValueError('check output incomplete')
+                    output=[]
+                    for channel in ('stdout','stderr'):
+                        capture=check.get(channel+'_path')
+                        if not capture:raise ValueError('complete capture path unavailable')
+                        output.append(Path(capture).read_text(errors='replace'))
+                    attr=red_owner.attribute_red(root,frozen['iteration_base'],frozen.get('batch_base'),head,
+                        check['command'],'\n'.join(output),red_owner._remaining(budget_s))
+                    attrs.append(dict(attr,command=check['command'],scope=check.get('scope')))
+                if not attrs:raise ValueError('confirmed failing check unavailable')
+                identities={(a.get('verdict'),a.get('owner_sha'),a.get('owner_slug'),a.get('batch_base_green')) for a in attrs}
+                if len(identities)!=1:raise ValueError('check owners differ; no row-wide strike')
+                row['attribution']=dict(attrs[0],checks=attrs)
+            except Exception as error:
+                row['attribution']=dict(verdict='unmeasured',reason=type(error).__name__+': '+str(error),checks=attrs)
+    import tempfile,os
+    with tempfile.NamedTemporaryFile(mode='w',dir=Path(path).parent,delete=False,encoding='utf-8') as stream:
+        temporary=Path(stream.name)
+        for row in rows:stream.write(json.dumps(row)+'\n')
+        stream.flush();os.fsync(stream.fileno())
+    try:temporary.replace(path)
+    finally:temporary.unlink(missing_ok=True)
+    return dict(measured=sum(row.get('attribution',{}).get('verdict') in {'owned','inherited','pre-existing'} for row in rows),
+                diagnostic_only=True)
+
+
 def confirm_rerun(first_path: Path, rerun_path: Path) -> dict[str, Any]:
     """B2 confirm-before-block, recorded in the first-pass file itself.
 
@@ -222,6 +284,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("results_file", type=Path,
                     help="the local_checks JSONL written by emit_jsonl_record.py")
     mode = ap.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--attribute', action='store_true', help='measure confirmed reds from frozen context; never waive a gate')
     mode.add_argument("--any", action="store_true",
                       help="exit 0 if any attributable record is fail/error, else 1 "
                            "(an anonymous record is not a verdict about any sub-plan)")
@@ -251,6 +314,10 @@ def main(argv: list[str] | None = None) -> int:
                       help="print each attributable blocking record as a JSON object, "
                            "one per line (for red-owner attribution)")
     args = ap.parse_args(argv)
+
+    if args.attribute:
+        print(json.dumps(attribute_records(args.results_file)))
+        return 0
 
     if args.any:
         return 0 if attributable_records(args.results_file) else 1
