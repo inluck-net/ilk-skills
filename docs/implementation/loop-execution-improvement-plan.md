@@ -299,3 +299,14 @@ No completion/ship/proof markers are inferred from this human tracker.
   entry checks: 19 passed in 10.21s; Bash and PowerShell syntax and diff checks
   passed. This covers the close/projection interruption gap, not death before a
   close record or the full lifecycle registry (D1).
+
+- Retry-state durability increment: strict whole-history validation plus
+  private atomic replacement/fsync for canonical count/ID files. Corrupt counts,
+  wrong ID types and invalid values cannot be overwritten or reset; write
+  failures stop the iteration. Frozen-context callers use this shared helper;
+  historical no-context behavior remains compatible. Missing current/prior
+  failing IDs no longer imply progress beyond the existing initial allowance.
+  Numeric retry limits and terminal reason vocabulary remain unchanged.
+  Retry policy helper added to the protected kernel list. Focused recovery,
+  existing retry callers and production entry: 59 passed in 10.73s; Bash syntax
+  and diff checks passed. PowerShell retry recovery parity remains open.

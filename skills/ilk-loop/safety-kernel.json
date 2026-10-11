@@ -47,6 +47,7 @@
     {"path": "skills/ilk-loop/scripts/ship_proof_ledger.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
     {"path": "skills/ilk-loop/scripts/selfmod_state.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
     {"path": "skills/ilk-loop/scripts/dispatch_target.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
+    {"path": "skills/ilk-loop/scripts/gate_retry.py", "guard": "owner", "why": "driver retry policy"},
     {"path": "skills/ilk-loop/scripts/recovery.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
     {"path": "skills/ilk-loop/scripts/emit_jsonl_record.py", "guard": "owner", "why": "driver context, evidence or recovery authority"}
   ],

@@ -52,6 +52,7 @@ def decide_gate_retry(
     is_environment_fault: bool = False,
     is_no_commits: bool = False,
     same_failing_set: bool = False,
+    progress_known: bool = True,
 ) -> GateRetryDecision:
     """Decide whether to retry or stop after a confirmed-red gate.
 
@@ -70,6 +71,12 @@ def decide_gate_retry(
         the previous red gate for this (slug, step).  When True and
         ``red_count >= 2``, the run stops (no progress).  When False and
         ``red_count >= 2``, the run retries (the worker made progress).
+
+    progress_known:
+        False when failure identities cannot establish progress. Beyond the
+        existing initial retry allowance, unknown progress stops conservatively.
+        Default True preserves callers that explicitly supply a failing-set
+        comparison; no retry count or timeout default changes.
 
     Returns
     -------
@@ -100,6 +107,11 @@ def decide_gate_retry(
             write_gate_red=True,
             append_prompt_line=True,
         )
+
+    # Missing failure identity is not evidence of progress. Keep the existing
+    # red-count bound; do not grant additional retries from an empty ID list.
+    if not progress_known:
+        return GateRetryDecision(True, "local_checks_failed", False, False)
 
     # Bullet 2: second red → stop only if same failing set (no progress).
     # If the failing set changed, the worker made progress → retry.
@@ -146,6 +158,8 @@ def main() -> None:
         "--same-failing-set", type=str, default="false",
         help="True if current red has same failing ids as previous red.",
     )
+    parser.add_argument("--progress-known", type=str, default="true",
+                        help="False when current or prior failure identity is unknown.")
     args = parser.parse_args()
 
     d = decide_gate_retry(
@@ -153,6 +167,7 @@ def main() -> None:
         is_environment_fault=args.is_env_fault.lower() == "true",
         is_no_commits=args.is_no_commits.lower() == "true",
         same_failing_set=args.same_failing_set.lower() == "true",
+        progress_known=args.progress_known.lower() == "true",
     )
     print(json.dumps({
         "should_stop": d.should_stop,

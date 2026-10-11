@@ -171,3 +171,30 @@ def test_replay_does_not_make_failed_integrity_green(tmp_path,monkeypatch):
     log=tmp_path/'loop.jsonl';log.write_text(json.dumps(dict(close,stop_reason='ship_integrity_violation'))+'\n')
     assert replay_closed_records(log,ledger)==1
     assert not ledger_record_is_reachable(read_records(ledger)[0],Path(ctx['clone']))
+
+
+@pytest.mark.parametrize('kind,value',[('count',-1),('count',True),('ids','node'),('ids',[None])])
+def test_invalid_retry_history_is_never_overwritten(tmp_path,kind,value):
+    import json
+    from recovery import update_retry_state
+    path=tmp_path/'retry.json';original=json.dumps({'step:0':value});path.write_text(original)
+    with pytest.raises(ValueError):
+        update_retry_state(path,'step:0',kind,[] if kind=='ids' else None)
+    assert path.read_text()==original
+
+
+def test_retry_state_updates_keep_existing_identity_and_private_atomic_file(tmp_path):
+    import json
+    from recovery import update_retry_state
+    path=tmp_path/'retry.json';path.write_text(json.dumps({'other:0':3}))
+    assert update_retry_state(path,'step:0','count')==1
+    assert json.loads(path.read_text())=={'other:0':3,'step:0':1}
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert list(tmp_path.iterdir())==[path]
+
+
+def test_missing_failure_identity_cannot_extend_retry_budget():
+    from gate_retry import decide_gate_retry
+    assert not decide_gate_retry(red_count=1,progress_known=False).should_stop
+    assert decide_gate_retry(red_count=2,progress_known=False).should_stop
+    assert not decide_gate_retry(red_count=2,progress_known=True,same_failing_set=False).should_stop

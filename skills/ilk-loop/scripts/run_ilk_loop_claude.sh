@@ -2020,6 +2020,17 @@ _read_gate_red_count() {
     echo 0
     return 0
   fi
+  if [[ -n "${ILK_ITER_CONTEXT:-}" ]]; then
+    python3 -c "import json,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from recovery import read_retry_state,update_retry_state
+path=Path(sys.argv[2]);key=sys.argv[3]+':'+sys.argv[4]
+value=read_retry_state(path,'count').get(key,0)
+print(value)
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$f" "$slug" "$step"
+    return $?
+  fi
   python3 -c "
 import json, sys, os
 try:
@@ -2043,6 +2054,17 @@ _increment_gate_red_count() {
   local step="$2"
   local f
   f="$(_gate_red_count_file)" || return 0
+  if [[ -n "${ILK_ITER_CONTEXT:-}" ]]; then
+    python3 -c "import json,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from recovery import read_retry_state,update_retry_state
+path=Path(sys.argv[2]);key=sys.argv[3]+':'+sys.argv[4]
+value=update_retry_state(path,key,'count')
+print(value)
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$f" "$slug" "$step"
+    return $?
+  fi
   python3 -c "
 import json, sys
 path = sys.argv[1]
@@ -2079,6 +2101,17 @@ _read_gate_red_ids() {
     echo "[]"
     return 0
   fi
+  if [[ -n "${ILK_ITER_CONTEXT:-}" ]]; then
+    python3 -c "import json,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from recovery import read_retry_state,update_retry_state
+path=Path(sys.argv[2]);key=sys.argv[3]+':'+sys.argv[4]
+value=read_retry_state(path,'ids').get(key,[])
+print(json.dumps(sorted(set(value))))
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$f" "$slug" "$step"
+    return $?
+  fi
   python3 -c "
 import json, sys, os
 try:
@@ -2102,6 +2135,16 @@ _write_gate_red_ids() {
   local ids_json="$3"
   local f
   f="$(_gate_red_ids_file)" || return 0
+  if [[ -n "${ILK_ITER_CONTEXT:-}" ]]; then
+    python3 -c "import json,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from recovery import read_retry_state,update_retry_state
+path=Path(sys.argv[2]);key=sys.argv[3]+':'+sys.argv[4]
+value=update_retry_state(path,key,'ids',json.loads(sys.argv[5]))
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$f" "$slug" "$step" "$ids_json"
+    return $?
+  fi
   python3 -c "
 import json, sys
 path = sys.argv[1]
@@ -7488,11 +7531,15 @@ print('false')
               # Extract failing ids and compare with previous red.
               local _current_failing_ids="[]"
               local _same_failing_set="false"
+              local _progress_known="false"
               if [[ -n "$local_checks_results" && -s "$local_checks_results" ]]; then
                 _current_failing_ids=$(_extract_failing_ids "$local_checks_results")
                 if [[ "$_gate_red_count" -ge 1 ]]; then
                   local _previous_failing_ids
                   _previous_failing_ids=$(_read_gate_red_ids "${_iter_slug:-}" "$_gate_retry_step") || _recovery_invalid=1
+                  if [[ "$_current_failing_ids" != "[]" && "$_previous_failing_ids" != "[]" ]]; then
+                    _progress_known="true"
+                  fi
                   if [[ "$_current_failing_ids" == "$_previous_failing_ids" && \
                         "$_current_failing_ids" != "[]" ]]; then
                     _same_failing_set="true"
@@ -7505,7 +7552,8 @@ print('false')
                 --red-count "$_gate_red_count" \
                 --is-env-fault "$_is_env_fault" \
                 --is-no-commits "$_is_no_commits" \
-                --same-failing-set "$_same_failing_set" 2>/dev/null) || _retry_json=""
+                --same-failing-set "$_same_failing_set" \
+                --progress-known "$_progress_known" 2>/dev/null) || _retry_json=""
               if [[ "$_recovery_invalid" -eq 1 ]]; then
                 _retry_json='{"should_stop":true,"stop_reason":"recovery_history_invalid"}'
               fi
@@ -7533,9 +7581,11 @@ print('false')
                 echo "Loop stopped: $_retry_stop_reason (B2 confirmed)" >&2
               else
                 # Red gate → retry next iteration.
-                _increment_gate_red_count "${_iter_slug:-}" "$_gate_retry_step"
-                # Save failing ids for next iteration's comparison.
-                _write_gate_red_ids "${_iter_slug:-}" "$_gate_retry_step" "$_current_failing_ids"
+                if ! _increment_gate_red_count "${_iter_slug:-}" "$_gate_retry_step" ||
+                   ! _write_gate_red_ids "${_iter_slug:-}" "$_gate_retry_step" "$_current_failing_ids"; then
+                  iter_stop_reason="recovery_history_invalid"
+                  echo "  ! [runner] cannot persist retry history; stopping without resetting budget" >&2
+                fi
                 # Write gate-red-<iteration>.txt with failing checks' tail.
                 local _gate_red_file="${RUN_LOG_DIR}/gate-red-${i}.txt"
                 if [[ -n "$local_checks_results" && -s "$local_checks_results" ]]; then
