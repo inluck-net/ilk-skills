@@ -17,8 +17,10 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: finish representative consumer acceptance after measured discovery
-timeout, then selfmod recovery and remaining state/lifecycle adapters. Prepared-pin
+Current next action: wire selfmod recovery and remaining state/lifecycle adapters,
+then safe first-increment integration. One actual native-tool consumer step now
+has closed acceptance and a completed zero-model recovery; controlled comparisons
+and production install remain open. Prepared-pin
 drain/relaunch has archived native caller evidence; production activation is still open. D1 POSIX callers and D2 private launch
 inputs now have production-entry candidate evidence. C3 preparation/acceptance/
 repair is wired but remains disabled by default. Actual-base provenance and
@@ -152,6 +154,21 @@ output/context work; verify current state at the actual landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- `bec678df` optional automatic final gate: harmless marker reproduced old
+  default invocation (1 failed in 6.79s; no full suite). Four archived normal,
+  native, explicit-opt-in-marker and drain/activation checks passed in 44.21s.
+  Six existing reporting/drain checks passed in 0.78s. Actual already accepted
+  consumer resumed under the fixed pin in 1.320s: terminal already-shipped,
+  zero provider streams and idle registry; no final suite. This completes one
+  real consumer capability sample, not controlled speed/default evidence.
+- Saved [consumer profile observations](../verification/consumer-step-profile-baseline-2026-10-11.md)
+  plus CSV. Actual native API/model/test/driver phase clocks have explicit
+  denominators and overlap limits. Reporter v5 excludes native writes from
+  bootstrap indicators and strips the supplied execution-root prefix, preserving
+  raw counts. Unicode-root regression plus existing report checks: 6 passed
+  in 0.03s under isolated HOME/data. An earlier ambient invocation's observer
+  noticed real-root byte changes; that invocation is not isolation evidence.
 
 - Actual native consumer model session succeeded in 135.569s, 31 turns,
   10 Bash / 3 Grep / 13 Read / 4 Edit calls, no tool errors. Authoritative

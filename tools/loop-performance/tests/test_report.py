@@ -97,3 +97,24 @@ def test_broker_paths_do_not_turn_every_shell_call_into_bootstrap(tmp_path):
     assert report['foreground_test_calls']==1
     assert not report['first_edit_observed']
     assert 'Bash edits are not inferred' in report['first_edit_observation_basis']
+
+
+def test_runtime_location_does_not_make_native_edits_bootstrap(tmp_path):
+    import shlex
+    root=tmp_path/'任务/.ilk-data/fixture/project'
+    p=tmp_path/'iter.log.jsonl'
+    tools=[('Read',{'file_path':str(root/'tools/reap.py')}),
+           ('Edit',{'file_path':str(root/'tools/reap.py'),'old_string':'before','new_string':'after'}),
+           ('Read',{'file_path':str(tmp_path/'.ilk-data/plans/selected.md')}),
+           ('Bash',{'command':shlex.join(['/usr/bin/python3',str(tmp_path/'.ilk-data/code/worker_shell.py'),
+                 '--context',str(tmp_path/'.ilk-data/logs/ctx.json'),'--command',
+                 'cat '+shlex.quote(str(root/'tests/test_reap.py'))])})]
+    rows=[{'type':'assistant','message':{'id':str(i),'content':[
+        {'type':'tool_use','id':str(i),'name':name,'input':payload}]}} for i,(name,payload) in enumerate(tools)]
+    p.write_text('\n'.join(json.dumps(row) for row in rows))
+    r=mod.report(p,exec_tree=root)
+    assert r['parser_version']==5
+    assert r['bootstrap_path_indicator_calls_raw']==4
+    assert r['bootstrap_path_indicator_calls']==1
+    assert r['bootstrap_indicator_before_first_edit']==0
+    assert r['first_edit_observed']

@@ -1,0 +1,5 @@
+sample,toolkit_sha,model,tool_profile,fixture_wall_seconds,cli_completed_seconds,api_overlapping_seconds,root_unique_message_turns,cli_reported_turns,root_tool_calls,bootstrap_indicator_adjusted,bootstrap_indicator_raw,thinking_completed_seconds,worker_diagnostic_test_seconds,driver_gate_child_seconds,accepted_step,run_completed,parser_version
+consumer-provider-upgrade-invalid,357ddc1c5aed93dd5394944f6b7fbdf18fbace43,mimo-v2.6-pro,shell,123.071,,,14,,14,3,14,,0,,False,False,5
+consumer-provider-explicit-implementation-root,0657df35078232a78b41636ef55feec2bad9f848,mimo-v2.6-pro,shell,123.226,,,15,,14,1,1,,0,,False,False,5
+consumer-provider-valid-task-bound,0657df35078232a78b41636ef55feec2bad9f848,mimo-v2.6-pro,shell,243.227,,,28,,38,9,9,,0,,False,False,5
+consumer-provider-native-tools,8c884dc130b2ce322ceed3469e2143677225f8e4,mimo-v2.6-pro,native,300.038,135.569,125.771,24,31,30,8,30,,7.05,0.75,True,False,5

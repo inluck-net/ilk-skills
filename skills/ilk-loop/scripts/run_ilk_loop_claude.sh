@@ -8158,7 +8158,7 @@ if last:
     local _worker_cost_json=""
     local _worker_cost_report="${_SKILL_ROOT}/../tools/loop-performance/report.py"
     if [[ -f "${iter_log}.jsonl" && -f "$_worker_cost_report" ]]; then
-      _worker_cost_json=$(python3 "$_worker_cost_report" "${iter_log}.jsonl" 2>/dev/null) || _worker_cost_json=""
+      _worker_cost_json=$(python3 "$_worker_cost_report" "${iter_log}.jsonl" --exec-tree "$ILK_EXEC_TREE" 2>/dev/null) || _worker_cost_json=""
     fi
     PROJECT_PATH="$PROJECT_PATH" \
     MODEL="$MODEL" \

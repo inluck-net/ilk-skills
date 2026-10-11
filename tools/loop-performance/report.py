@@ -17,7 +17,7 @@ import shlex
 from datetime import datetime
 from pathlib import Path
 
-PARSER_VERSION = 4
+PARSER_VERSION = 5
 BOOTSTRAP = re.compile(r'\.claude[^/\s]*/|\.ilk-data|\.ilk/|plans/|MASTER-|loop_status|find ~')
 TEST = re.compile(r'\b(?:pytest|unittest|vitest|jest|playwright)\b|\bnpm\s+(?:run\s+)?test\b')
 THINK = re.compile(r'\[thinking\] \d+ chars in ([\d.]+)s')
@@ -40,7 +40,21 @@ def observed_input(tool):
     return payload
 
 
-def report(path: Path) -> dict:
+def bootstrap_input(tool,exec_tree=None):
+    # An edit is a write observation, not bootstrap discovery. Strip only an
+    # explicitly supplied execution-root prefix; a repo living under .ilk-data
+    # does not turn every native read into toolkit/bootstrap work.
+    if tool.get('name') in {'Edit','Write','MultiEdit','NotebookEdit'}:return ''
+    prefix=str(Path(exec_tree).resolve()).rstrip('/')+'/' if exec_tree is not None else None
+    def relative(value):
+        if isinstance(value,str):return value.replace(prefix,'') if prefix else value
+        if isinstance(value,dict):return {key:relative(item) for key,item in value.items()}
+        if isinstance(value,list):return [relative(item) for item in value]
+        return value
+    return json.dumps(relative(observed_input(tool)))
+
+
+def report(path: Path, *, exec_tree=None) -> dict:
     rendered = Path(str(path).removesuffix('.jsonl'))
     text = rendered.read_text(errors='replace') if rendered.exists() else None
     thoughts = [float(x) for x in THINK.findall(text or '')]
@@ -126,8 +140,9 @@ def report(path: Path) -> dict:
                and math.isfinite(value) and value>=0]
         complete=bool(results) and len(valid)==len(values) and len(results)>=root_initializations
         return sum(valid)/1000 if complete else None
+    bootstrap_raw = sum(bool(BOOTSTRAP.search(json.dumps(observed_input(tool)))) for tool in tools.values())
     bootstrap_ids = {identity for identity, tool in tools.items()
-                     if BOOTSTRAP.search(json.dumps(observed_input(tool)))}
+                     if BOOTSTRAP.search(bootstrap_input(tool,exec_tree))}
     bootstrap = len(bootstrap_ids)
     first_edit = next((identity for identity in root_tool_order
                        if tools[identity].get('name') in {'Edit', 'Write', 'MultiEdit'}), None)
@@ -160,6 +175,9 @@ def report(path: Path) -> dict:
         'root_assistant_events': assistant_events,
         'turn_identity_missing': root_messages,
         'root_tool_calls': len(tools), 'bootstrap_path_indicator_calls': bootstrap,
+        'bootstrap_path_indicator_calls_raw':bootstrap_raw,
+        'bootstrap_indicator_basis':'read/command path-pattern after broker-envelope removal and optional explicit execution-root prefix removal; not a waste verdict',
+        'bootstrap_execution_root':str(Path(exec_tree).resolve()) if exec_tree is not None else None,
         'bootstrap_indicator_before_first_edit': before_edit,
         'first_edit_observed': first_edit is not None,
         'first_edit_observation_basis': 'native Edit/Write/MultiEdit tool use only; Bash edits are not inferred',
@@ -196,8 +214,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('streams', type=Path, nargs='+')
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--exec-tree',type=Path)
     args = parser.parse_args()
-    payload = json.dumps([report(p) for p in args.streams], indent=2) + '\n'
+    payload = json.dumps([report(p,exec_tree=args.exec_tree) for p in args.streams], indent=2) + '\n'
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(payload)
