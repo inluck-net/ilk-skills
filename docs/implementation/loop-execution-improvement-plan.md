@@ -23,7 +23,7 @@ request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: close remaining legacy reader/recovery/parity requirements
-and delivery documentation in this isolated worktree. Toolkit preview d95493d6
+and delivery documentation in this isolated worktree. Toolkit preview abbadf8a
 and consumer compatibility 2cb713ae are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -2613,3 +2613,37 @@ anchors at the time of inspection and can move as integration changes code.
 - Text banner now uses the already-resolved master. Status/text/JSON callers:
   17 passed in 0.49s. This display-only correction does not require repeating
   the archived audit entries. No model or routine suite.
+
+
+### Latest checked local activation
+
+- Immutable abbadf8a includes checked audit 12097352 and the text-status
+  correction. Activated at the freshly proved paused/undispatched controller
+  boundary: exact PID/PGID/start 94556 and all 1,891 protected hashes stayed
+  unchanged; idle scheduler restored. No private input, plan, pause or worker
+  changed. Evidence: toolkit-delivery-preview-20261012i/installed.json.
+- Remote installed pointer remains v0.9.193. Its private standby was subsequently
+  updated to abbadf8a without touching shared clones/services. Consumer installed
+  main 2cb713ae remains unchanged. Compatibility results are recorded below.
+
+
+### Consumer compatibility and remote standby closure for this increment
+
+- Installed Mac toolkit source/pointer abbadf8a with consumer 2cb713ae:
+  28 focused pin, drain, claim/reconciliation and cleanup checks passed in
+  0.43s. Explicit toolkit fixture snapshot was used; no network/model and no
+  skips. This is the selected compatibility surface, not the 8,096-test suite.
+- Rezmac private independent toolkit checkout/immutable standby abbadf8a:
+  11 selected audit/status/rollback checks passed in 2.25s (20 deselected).
+  Installed pointer v0.9.193 and shared clones/services remain unchanged.
+- Pending scope clarification for native Windows/member adapters has received
+  no answer. They remain open requirements; do not count explicit unsupported
+  refusal as implementation or silently remove them from whole completion.
+- Next requirement reconciliation: owned pre-existing-red advancement remains
+  open. Ownership design §6 requires measured pre-existing red to advance with
+  explicitly unproven proof, while the delivered code-only path intentionally
+  retains strict raw-green acceptance until a transaction/landing/result/
+  consumer adapter exists. Implementing a declaration waiver or carrying
+  green proof would violate both the review and the delivered invariant.
+  Hermetic gate-eligibility lint and remaining platform/readers also remain
+  open; avoid new speculative mechanisms before checking existing contracts.
