@@ -11,6 +11,17 @@ def fixture(tmp_path):
     return runtime,identity
 
 
+@pytest.mark.parametrize('state,alive',[('S',True),('R+',True),('Z',False),('Z+',False),('X',False)])
+def test_zombie_or_exited_owner_is_not_a_live_identity(monkeypatch,state,alive):
+    import run_registry as rr
+    from types import SimpleNamespace
+    monkeypatch.setattr(rr.subprocess,'run',lambda *a,**k:SimpleNamespace(returncode=0,
+        stdout='271 271 '+state+' Sun Oct 11 13:02:46 2026\n'))
+    identity=rr.process_identity(271)
+    assert bool(identity)==alive
+    if alive:assert identity=={'pid':271,'pgid':271,'lstart':'Sun Oct 11 13:02:46 2026'}
+
+
 def test_launch_gap_expiry_and_running_identity(tmp_path):
     runtime,identity=fixture(tmp_path)
     assert scan(runtime,now=150)[0]['liveness']=='launching'

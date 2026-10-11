@@ -142,6 +142,9 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
     from iteration_context import read_context
     context=read_context()
     if context:
+        if actor!='human' and context.get('worker_sandbox_adapter')=='macos-brokered-shell':
+            from run_registry import require_driver
+            require_driver(context)
         allowed={Path(row['path']).resolve() for row in context.get('plans',{}).values()}
         master=(context.get('dispatch') or {}).get('master_path')
         if master: allowed.add(Path(master).resolve())
@@ -155,6 +158,8 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
             raise TransitionError('state values must be single-line scalars')
     log=path.parent/'state-transitions.jsonl'
     with _lock(path.parent/'.state-transitions.lock'):
+        if context and actor!='human' and context.get('worker_sandbox_adapter')=='macos-brokered-shell':
+            require_driver(context)
         for guard,expected in guards.items():
             raw=guard.read_bytes();_recover(log,guard,raw)
             observed=parse_frontmatter(raw.decode('utf-8-sig'))

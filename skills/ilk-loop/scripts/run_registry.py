@@ -15,10 +15,46 @@ import signal
 import subprocess
 import tempfile
 import time
+from contextvars import ContextVar
+from contextlib import contextmanager
 from plan_state import _lock,_sync_parent
 
 
 class RegistryError(RuntimeError):pass
+
+_active_driver=ContextVar('ilk_active_driver',default=None)
+
+
+def driver_authority(context):
+    """An explicit current driver may finish an older frozen transaction."""
+    return _active_driver.get() or context
+
+
+def require_driver(context):
+    """Refuse control-plane mutation after the owning runner dies or changes.
+
+    Supervised hand APIs have no runner roles; production dispatch preparation
+    requires both roles before freezing. Partial roles never grant authority.
+    """
+    _owner()
+    owner=driver_authority(context)
+    if not owner:return None
+    runtime=owner.get('run_registry_dir');pid=owner.get('runner_owner_pid')
+    if runtime is None and pid is None:return None
+    if runtime is None or pid is None:raise RegistryError('driver ownership roles incomplete')
+    row=read(_path(runtime,owner['run_id']));observed=process_identity(pid)
+    if row['state']!='running' or row['pid']!=pid or observed!={key:row[key] for key in ('pid','pgid','lstart')}:
+        raise RegistryError('owning runner identity is no longer live')
+    return observed
+
+
+@contextmanager
+def as_driver(context):
+    token=_active_driver.set(context)
+    try:
+        require_driver(context)
+        yield
+    finally:_active_driver.reset(token)
 
 
 def code_sha(root):
@@ -44,11 +80,11 @@ def code_sha(root):
 def process_identity(pid):
     if os.name=='nt':raise RegistryError('Windows process identity adapter not built')
     if isinstance(pid,bool) or not isinstance(pid,int) or pid<=0:raise RegistryError('invalid process PID')
-    cp=subprocess.run(['ps','-p',str(pid),'-o','pid=','-o','pgid=','-o','lstart='],capture_output=True,text=True,env=dict(os.environ,LC_ALL='C'))
+    cp=subprocess.run(['ps','-p',str(pid),'-o','pid=','-o','pgid=','-o','stat=','-o','lstart='],capture_output=True,text=True,env=dict(os.environ,LC_ALL='C'))
     if cp.returncode:return None
-    fields=cp.stdout.strip().split(None,2)
-    if len(fields)!=3:return None
-    return {'pid':int(fields[0]),'pgid':int(fields[1]),'lstart':fields[2]}
+    fields=cp.stdout.strip().split(None,3)
+    if len(fields)!=4 or fields[2].startswith(('Z','X')):return None
+    return {'pid':int(fields[0]),'pgid':int(fields[1]),'lstart':fields[3]}
 
 
 def _path(runtime,run_id):

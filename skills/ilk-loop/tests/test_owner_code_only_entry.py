@@ -13,8 +13,9 @@ pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='Mac production entr
 ROOT=Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize('human_hold_during_gate',[False,True])
-def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,human_hold_during_gate):
+@pytest.mark.parametrize('case',['normal','hold','pending-advance'])
+def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,monkeypatch,case):
+    human_hold_during_gate=case=='hold'
     spec=importlib.util.spec_from_file_location('entry_fixture',Path(__file__).with_name('test_pre_loop_exit_sentinel.py'))
     fixtures=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixtures)
     world=fixtures._build_world_shipped(tmp_path,with_steps=True);work=world['project']
@@ -48,6 +49,26 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
     inputs=tmp_path/'inputs';manifest=prepare(ROOT,home,inputs)
     pin_launch_resources(inputs,project=work,executables={'python':sys.executable,'claude':str(cli)})
     code=Path(manifest['code_root'])
+    if case=='pending-advance':
+        from iteration_context import resolve_context,write_context
+        from iteration_clock import monotonic
+        import driver_step
+        context=resolve_context(clone=work,exec_tree=work,observe_tree={str(work):str(work)},
+            code_root=code,plans_dir=world['plans'],runtime_dir=world['data_home']/'projects'/world['key']/'runtime',
+            data_root=world['data_home'],run_id='prior-interrupted',iteration=1,mode='none',
+            dispatch={'slug':fixtures.SLUG,'step':0,'subplan_path':str(plan),'master_path':str(master)})
+        context.update(worker_sandbox_adapter='macos-brokered-shell',toolkit_sha=manifest['toolkit_sha'])
+        frozen=tmp_path/'prior-ctx.json';write_context(frozen,context)
+        (work/'counter.py').write_text('def f(value): return value + 2\n')
+        real=driver_step.transition
+        def crash(*args,**kwargs):
+            real(*args,**kwargs)
+            raise RuntimeError('fixture lost caller after advancement')
+        with monkeypatch.context() as patch:
+            patch.setenv('ILK_ITER_CONTEXT',str(frozen));patch.setattr(driver_step,'transition',crash)
+            with pytest.raises(RuntimeError):
+                driver_step.accept_step(context,default_timeout=10,deadline=monotonic()+10)
+        assert 'current_step: 1' in plan.read_text() and 'status: shipped' not in plan.read_text()
     env=dict(os.environ,HOME=str(tmp_path),ILK_DATA_HOME=str(world['data_home']),ILK_DATA_DIR=str(world['data_home']),
         ILK_SKILL_HOME=str(code/'skills'),ILK_CODE_ROOT=str(code),ILK_RUN_INPUTS=str(inputs),
         CLAUDE_CONFIG_DIR=manifest['worker_home'],ILK_CLAUDE_BIN=str(cli),ILK_WORKER_MODE='code-only',
@@ -75,6 +96,17 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             assert 'current_step: 0' in plan.read_text() and 'status: shipped' not in plan.read_text()
             assert (home/'settings.json').read_bytes()==original
             assert not project_status(runtime)['busy']
+            return
+        if case=='pending-advance':
+            assert terminal['state']=='already-shipped',(terminal,stdout[-4500:],stderr[-4500:])
+            assert process.returncode==0
+            assert 'status: shipped' in plan.read_text()
+            assert not list(runs.glob('*/iter-*.log.jsonl')) # zero provider dispatches
+            records=[json.loads(line) for line in (world['data_home']/'projects'/world['key']/'logs/.ilk-loop.log').read_text().splitlines()]
+            recovered=[row for row in records if row.get('acceptance_recovered_by_driver')]
+            assert len(recovered)==1 and recovered[0]['run_id']=='prior-interrupted'
+            assert recovered[0]['driver_integrity_passed'] and recovered[0]['state_audit']['explained']
+            assert (home/'settings.json').read_bytes()==original and not project_status(runtime)['busy']
             return
         assert terminal['state']=='all-shipped',(terminal,stdout[-4500:],stderr[-4500:])
         assert process.returncode==0,(stdout[-4500:],stderr[-4500:])

@@ -23,6 +23,7 @@ from iteration_context import read_dispatch,plan_snapshot,root_for_plan,ContextE
 from plan_status import parse_frontmatter
 from plan_state import transition
 _deadline=ContextVar('driver_step_deadline',default=None)
+_operation_context=ContextVar('driver_step_context',default=None)
 
 
 def remaining():
@@ -34,6 +35,10 @@ def remaining():
 
 
 def git(root,*args,env=None):
+    context=_operation_context.get()
+    if context:
+        from run_registry import require_driver
+        require_driver(context)
     timeout=remaining()
     if timeout is None:
         cp=subprocess.run(['git','-C',str(root),*args],capture_output=True,text=True,env=env)
@@ -58,6 +63,8 @@ def working_tree(root: Path) -> str:
 
 def validate(context):
     if os.environ.get('ILK_WORKER_SESSION','').strip():raise ContextError('worker cannot accept a step')
+    from run_registry import require_driver
+    require_driver(context)
     if context.get('worker_sandbox_adapter')!='macos-brokered-shell':
         raise ContextError('enforced worker adapter required')
     if context.get('entry_dirty') is not False:raise ContextError('clean frozen entry required')
@@ -138,10 +145,12 @@ def gate(context,root,path,selected,*,default_timeout):
 def accept_step(context,*,default_timeout,deadline):
     """Use the caller's existing iteration deadline, including commit hooks."""
     token=_deadline.set(deadline)
+    owner_token=_operation_context.set(context)
     try:
         remaining()
         return _accept_step(context,default_timeout=default_timeout)
-    finally:_deadline.reset(token)
+    finally:
+        _operation_context.reset(owner_token);_deadline.reset(token)
 
 
 def _acceptance_receipt(context):
@@ -171,19 +180,24 @@ def _save_acceptance(context,result,phase):
 
 def recover_acceptance(context,*,deadline):
     token=_deadline.set(deadline)
+    owner_token=_operation_context.set(context)
     try:
         remaining()
         return _recover_acceptance(context)
-    finally:_deadline.reset(token)
+    finally:
+        _operation_context.reset(owner_token);_deadline.reset(token)
 
 
 def _recover_acceptance(context):
     """Finish only this frozen transaction's commit-to-CAS/receipt crash gap.
 
     No provider dispatch, different tree, fresh context or general gate reuse.
-    The launcher still needs its cross-launch transaction selection adapter.
+    Ordinary consumer startup selects this original frozen transaction;
+    selfmod/member landing adapters remain separate.
     """
     if os.environ.get('ILK_WORKER_SESSION','').strip():raise ContextError('worker cannot recover acceptance')
+    from run_registry import require_driver
+    require_driver(context)
     target=_acceptance_receipt(context)
     if not target.exists():return None
     row=json.loads(target.read_text())

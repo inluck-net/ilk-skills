@@ -17,8 +17,8 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: finish acceptance crash recovery through cross-launch
-caller selection; then consumer checks, remaining
+Current next action: close earlier commit and post-marker recovery gaps,
+owner-death child cleanup and selfmod/consumer recovery adapters; then remaining
 state/lifecycle adapters and activation. D1 POSIX callers and D2 private launch
 inputs now have production-entry candidate evidence. C3 preparation/acceptance/
 repair is wired but remains disabled by default. Actual-base provenance and
@@ -810,3 +810,19 @@ No completion/ship/proof markers are inferred from this human tracker.
   precise refusal rather than weakening validation. Pending archived full
   startup caller checks. Selfmod/member/declared-worktree closure adapters,
   post-marker interruptions and earlier commit crash gaps remain open.
+- Real startup at `8e88ba72`: normal/hold caller checks passed (2 in 9.45s).
+  New interruption fixture then passed (1 in 1.82s): creates a durable commit
+  and CAS advancement, loses the caller, launches the actual pinned Bash entry,
+  observes original transaction closure and truthful `already-shipped` with
+  zero provider dispatches, positive integrity/journal and no busy registry.
+  This is a consumer startup fixture, not selfmod landing or speed comparison.
+- Driver authority candidate: fresh registry PID/PGID/start identity is checked
+  before acceptance Git operations and guarded plan mutations. An explicitly
+  verified current driver can close the original older frozen transaction;
+  workers cannot acquire this authority. Runner loss/reuse before gates,
+  after gates or after commit refuses advancement. 9 focused acceptance/
+  dispatch/recovery checks passed in 4.26s. Process identity now treats ps
+  zombie/exited states as dead without changing published identity fields;
+  26 focused registry/authority checks passed in 1.59s. Pending archived caller
+  checks for this authority migration. Earlier commit crash recovery and prompt
+  cancellation/child cleanup still need completion; installed loops untouched.

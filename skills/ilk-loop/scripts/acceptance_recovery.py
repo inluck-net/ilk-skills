@@ -34,7 +34,13 @@ def original_context(path):
             else:os.environ[key]=value
 
 
-def recover_pending(*,runtime,project,log,deadline):
+def recover_pending(*,runtime,project,log,deadline,owner_context=None):
+    from run_registry import as_driver
+    with as_driver(owner_context):
+        return _recover_pending(runtime=runtime,project=project,log=log,deadline=deadline)
+
+
+def _recover_pending(*,runtime,project,log,deadline):
     if os.environ.get('ILK_WORKER_SESSION','').strip():raise ContextError('worker cannot recover pending acceptance')
     runtime=Path(runtime).resolve();project=Path(project).resolve();log=Path(log)
     ledger=runtime/'launcher/ship-proof.jsonl'
@@ -102,6 +108,8 @@ def recover_pending(*,runtime,project,log,deadline):
                 driver_integrity_passed=True,state_audit=audit,merge_outcome='not-applicable',
                 stop_reason=None,local_checks=projected,acceptance_recovered_by_driver=True,
                 recovery_scope='finish original accepted transaction; no worker dispatch or new gate')
+            from run_registry import require_driver
+            require_driver(context)
             log.parent.mkdir(parents=True,exist_ok=True)
             with log.open('a') as stream:
                 stream.write(json.dumps(close,separators=(',',':'))+'\n');stream.flush();os.fsync(stream.fileno())
@@ -127,7 +135,9 @@ def main():
         # recovery write, rather than racing the parent's post-spawn probe.
         register_child(args.runtime/'launcher',args.registry_run_id,
                        pid=os.getpgrp(),owner_pid=args.owner_pid)
-        result=recover_pending(runtime=args.runtime,project=args.project,log=args.log,deadline=monotonic()+args.timeout)
+        result=recover_pending(runtime=args.runtime,project=args.project,log=args.log,deadline=monotonic()+args.timeout,
+            owner_context=dict(run_registry_dir=str(args.runtime/'launcher'),run_id=args.registry_run_id,
+                               runner_owner_pid=args.owner_pid))
     except Exception as exc:
         print('Pending acceptance recovery refused: '+type(exc).__name__+': '+str(exc),file=sys.stderr)
         return 1
