@@ -145,10 +145,10 @@ and worker-gate-notice moves already point.
 
 These terms have one meaning, and it is the one in code:
 `skills/ilk-loop/safety-kernel.json`, read by `safety_kernel.py`.
-`check_range` applies it to a batch's commits when they land. Counts were read
-on 2026-10-10.
+`check_range` applies it to a batch's commits when they land. The following table is the historical 2026-10-10 snapshot, retained to
+explain the policy change; it does not describe the current owner candidate.
 
-| Tier | Contents | Who may change it today |
+| Historical tier | Historical contents | Historical permission |
 |---|---|---|
 | **Rules** (5 paths) | `tests/invariants/` (the suite that judges every improvement build), `safety-kernel.json` itself, its reader `safety_kernel.py`, the mutation harness `teeth.py`, and the release aggregator `safety_case.py` | Owner hand commits only. Any loop-built commit is refused (`rules-edit-by-loop-build`). |
 | **Kernel** (30 paths, plus every `conftest.py`) | **gates:** the runner (sh and ps1), `run_local_checks.py`, `blocking_checks.py`, `verify_step_integrity.py`, `_ilk_marker.sh`<br>**proof:** `ship_audit`, `ship_transition`, `ship_integrity`, `verification_record`, `verify_attribution`, `batch_gate`, `red_owner`, `suite_ledger`<br>**landing:** `selfmod_worktree`, `release_train`, `phase1_verify`, `ilk_release`<br>**qc:** `plan_lint`, `plan_preflight`<br>**audit:** `ilk_audit`<br>**triage:** `triage_apply`<br>**autoplan:** `autoplan`, `autoplan_rails`<br>**hooks:** the 4 worker hooks<br>**test-infra:** `pytest.ini`, `.ilk-launch.json` | An unattended (`auto_planned`) batch is refused (`kernel-edit-by-unattended-build`). A session-planned batch is allowed on the slow path, since MASTER-2026-10-04m (`test_a_session_batch_may_edit_the_kernel.py`). |
@@ -169,7 +169,8 @@ on 2026-10-10.
      phase-1 verify and `ilk_release` are inside.
 
 **Accepted freeze scope.** Proposed 2026-10-10, confirmed by Chad 2026-10-11
-(“go as you recommend”). Enforcement migration remains to be implemented:
+(“go as you recommend”). The owner candidate implements this scope for new
+owner-only bases; historical base policy is preserved. Accepted requirements:
 - Refuse kernel-tier edits from **every** loop-built commit, not only
   unattended ones. This reverses the slow path from MASTER-2026-10-04m.
 - Add `bounce_daemons.sh`, `install.sh` and `host_deploy_status.py` to the
@@ -292,3 +293,26 @@ legacy default remains available with its existing authority model. Portable
 PowerShell 7.6.6 on Mac exercised parser/dispatch/context, canonical execution
 observation and all four refusals; that does not establish native Windows
 write enforcement. An unsupported owned profile must never silently downgrade.
+
+### Current checked implementation of the freeze and code-only path
+
+New bases whose safety-kernel.json says `loop_kernel_policy: owner-only` refuse
+kernel writes by every loop build, including session-planned builds. The list
+includes install/deployment and the new context/state/registry/provenance/input
+helpers. `safety_kernel.check_range` judges the list and policy at the frozen
+base, so a historical session batch is not retroactively declared invalid.
+Current declared-write admission uses `check_plan_admission`; Mac code-only
+OS scope and driver diff/committed-tree checks enforce the frozen inventory.
+The supervised owner builds here remain hand builds. Existing runtime-tier
+scheduler/watchdog/launcher work remains eligible for loop improvements.
+
+The checked Mac code-only profile stays explicit opt-in. It owns commits,
+gates, state and shipping; actual provider same-session red repair succeeded.
+Dirty entry and member repositories refuse that profile because their adapters
+are not built, and raw red gates cannot be waived by a baseline-red declaration.
+The PowerShell runner explicitly refuses new code-only/native/thinking/drain
+profiles before launch instead of silently claiming their support. Legacy
+profiles retain historical semantics; they do not acquire code-only proof.
+See the durable implementation tracker for candidate/installed distinctions,
+actual checks and remaining rollout. The currently running legacy batch is
+left untouched; future integration must reconcile its completed changes first.

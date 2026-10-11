@@ -221,7 +221,7 @@ the implementation):
 - **Plan-lint rule:** an acceptance criterion of the form "the runner
   contains string X" is not a runtime check.
 
-## 7. Current divergence (HEAD `90513da`)
+## 7. Historical divergence snapshot (HEAD `90513da`)
 
 **D1, context (I1):**
 

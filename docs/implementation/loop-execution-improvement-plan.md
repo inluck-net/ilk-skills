@@ -18,25 +18,26 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: finish consumer compatibility activation and controlled
-installed-profile comparisons, then remaining lifecycle/caller adapters.
-Fresh-base selfmod normal and zero-provider recovery have archived Mac evidence. One actual native-tool consumer step now
-has closed acceptance and a completed zero-model recovery; controlled comparisons
-and production install remain open. Prepared-pin
-drain/relaunch has archived native caller evidence; production activation is still open. D1 POSIX callers and D2 private launch
-inputs now have production-entry candidate evidence. C3 preparation/acceptance/
-repair is wired but remains disabled by default. Actual-base provenance and
-Windows/member/dirty-entry adapters remain open. Continue here per Chad:
-“no more handover, until the whole thing done”. Overall estimate 58% is a
-judgment against delivered/installed/measured scope, not a checkbox count.
+Current next action: finish remaining supported lifecycle/caller requirements
+in this isolated worktree, continue controlled performance analysis, and wait
+for the live batch's normal completion before overlap comparison/integration.
+Consumer compatibility is locally installed at 8472771f; toolkit installed
+preview is 2ed78097. New owner candidates are committed but uninstalled.
+Fresh-base selfmod, declared worktree, accepted-transaction recovery, native
+file tools, phase observations and prepared-pin drain/relaunch have archived
+Mac evidence. Actual provider red then green used the same session; a real
+consumer repair passed and a focused-diagnostics comparison is recorded.
+Windows/member/dirty-entry adapters and controlled shell pairing remain open.
+Continue here per Chad: “no more handover, until the whole thing done”.
+Overall estimate 58% remains a judgment over the whole installed/measured scope,
+not a checkbox count. Do not infer whole completion from capability checks.
 
-Old run `20261011-102057` timed out by itself. Old run `20261011-130246`
-and old scheduler exited at the verified first-preview installation boundary.
-The restored scheduler was PID 94747; the pause flag remains. Re-check current
-identities before any subsequent activation; old PIDs are historical evidence.
-Owner checkpoints preserve main `5081038b` WIP prose ancestry. First local preview installation is recorded below. No published release or
-global code-only enforcement has occurred; controlled consumer comparisons and
-remaining adapters are open.
+Old runs 20261011-102057/130246/212131 and their scheduler identities are
+historical. Latest observed run 20261011-215532 is running under the installed
+2ed78097 launch identity. Do not reuse old pause or PID observations. Chad's
+latest instruction is to leave the progressing live batch alone. Owner
+checkpoints retain original main WIP ancestry and the external preservation
+records. No published release or global code-only enforcement has occurred.
 
 ## Authorization and invariants
 
@@ -161,6 +162,13 @@ an actual safe landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- Documentation consistency: label old ownership/kernel policy snapshots as
+  historical, describe current new-base owner-only admission/range/write guards,
+  and retain explicit legacy/member/dirty/PowerShell limitations. Eighteen
+  focused kernel-policy checks passed 0.74s. Resume instructions now distinguish
+  already installed consumer/toolkit from uninstalled candidates and the
+  actually running batch, instead of repeating stale pause/controller state.
 
 - fea36f7e final capture deadline: an expired-iteration negative first reproduced
   a successful unbounded final Git capture (1 failed in 0.19s). Capture now uses
