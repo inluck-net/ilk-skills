@@ -67,3 +67,21 @@ def test_execution_role_overrides_its_broad_data_parent(tmp_path):
     assert row['scope']=='worktree'
     row=module.classify({'tool_name':'Write','tool_input':{'file_path':str(tmp_path/'plans/step.md')}},ctx)
     assert row['scope']=='plans'
+
+
+def test_full_hook_requires_canonical_shell_even_when_worker_env_is_shed(tmp_path):
+    from iteration_context import resolve_context,write_context
+    from worker_shell import canonical_command
+    import test_iteration_context as fixtures
+    ctx=resolve_context(**fixtures.fixture(tmp_path));ctx['code_root']=str(ROOT)
+    temporary=tmp_path/'private-tmp';temporary.mkdir()
+    ctx.update(worker_sandbox_adapter='macos-two-layer',worker_shell_python=sys.executable,worker_tmp_dir=str(temporary))
+    frozen=tmp_path/'ctx.json';write_context(frozen,ctx)
+    env=dict(os.environ);env.pop('ILK_WORKER_SESSION',None);env.pop('ILK_ITER_CONTEXT',None)
+    command=[sys.executable,str(ROOT/'hooks/worker-write-scope.py'),'--mode','enforce','--context',str(frozen)]
+    for raw,expected in [('git push',2),(canonical_command(ctx,frozen,'git push'),0)]:
+        cp=subprocess.run(command,input=json.dumps({'tool_name':'Bash','tool_input':{'command':raw}}),env=env,capture_output=True,text=True,timeout=10)
+        assert cp.returncode==expected,cp.stderr
+    event={'tool_name':'Write','tool_input':{'file_path':str(tmp_path/'outside.py')}}
+    cp=subprocess.run(command,input=json.dumps(event),env=env,capture_output=True,text=True,timeout=10)
+    assert cp.returncode==2

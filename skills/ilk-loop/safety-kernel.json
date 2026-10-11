@@ -48,6 +48,7 @@
     {"path": "skills/ilk-loop/scripts/ship_proof_ledger.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
     {"path": "skills/ilk-loop/scripts/selfmod_state.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
     {"path": "skills/ilk-loop/scripts/dispatch_target.py", "guard": "owner", "why": "driver context, evidence or recovery authority"},
+    {"path": "skills/ilk-loop/scripts/worker_shell.py", "guard": "owner", "why": "canonical scoped Bash entry"},
     {"path": "skills/ilk-loop/scripts/worker_sandbox.py", "guard": "owner", "why": "OS worker write and shell network boundaries"},
     {"path": "skills/ilk-loop/scripts/run_inputs.py", "guard": "owner", "why": "private run input snapshot preparation"},
     {"path": "skills/ilk-loop/scripts/plan_state.py", "guard": "owner", "why": "driver compare-and-set authority"},

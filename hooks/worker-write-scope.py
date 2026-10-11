@@ -6,6 +6,7 @@ registration is added until run inputs are pinned and consumer observations
 are reviewed. The log contains categories/hashes, never raw shell commands.
 """
 from __future__ import annotations
+import argparse
 import hashlib
 import json
 import os
@@ -71,11 +72,16 @@ def record(path,row):
 
 
 def main():
-    mode=os.environ.get('ILK_WRITE_SCOPE_MODE','observe')
-    raw=os.environ.get('ILK_ITER_CONTEXT')
-    if not raw or not os.environ.get('ILK_WORKER_SESSION','').strip(): return 0
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--mode',choices=['observe','enforce-native','enforce'])
+    parser.add_argument('--context',type=Path)
+    args=parser.parse_args()
+    mode=args.mode or os.environ.get('ILK_WRITE_SCOPE_MODE','observe')
+    raw=str(args.context) if args.context else os.environ.get('ILK_ITER_CONTEXT')
+    if not raw: return 2 if mode=='enforce' else 0
+    if not args.context and not os.environ.get('ILK_WORKER_SESSION','').strip(): return 0
     try:
-        if mode not in {'observe','enforce-native'}: raise ValueError('unknown observation mode')
+        if mode not in {'observe','enforce-native','enforce'}: raise ValueError('unknown observation mode')
         context=json.loads(Path(raw).read_text(encoding='utf-8-sig'))
         sys.path.insert(0,str(Path(context['code_root'])/'skills/ilk-loop/scripts'))
         from iteration_context import read_context
@@ -85,9 +91,19 @@ def main():
         row.update(run_id=context['run_id'],iteration=context['iteration'],mode=mode,
                    monotonic=time.monotonic(),diagnostic_only=True)
         record(Path(raw).parent/f"write-scope-{context['iteration']}.jsonl",row)
-        if mode=='enforce-native' and row['write_observed'] and row['scope']!='worktree':
+        if mode in {'enforce-native','enforce'} and row['write_observed'] and row['scope']!='worktree':
             print('Worker native write is outside its code scope: '+row['scope'],file=sys.stderr)
             return 2
+        if mode=='enforce':
+            if context.get('worker_sandbox_adapter')!='macos-two-layer':
+                print('Frozen OS boundary required for write-scope enforcement',file=sys.stderr);return 2
+            allowed={'Read','Grep','Glob','LS','Bash'} | FILE_WRITES
+            if event.get('tool_name') not in allowed:
+                print('Tool has no worker scope adapter',file=sys.stderr);return 2
+            if event.get('tool_name')=='Bash':
+                from worker_shell import admitted_command
+                if not admitted_command((event.get('tool_input') or {}).get('command'),context,Path(raw)):
+                    print('Use the exact pinned sandboxed Bash entry from the dispatch brief',file=sys.stderr);return 2
         return 0
     except Exception as exc:
         # Observe-only cannot alter the current worker protocol.

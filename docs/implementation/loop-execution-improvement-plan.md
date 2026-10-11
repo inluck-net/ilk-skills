@@ -422,3 +422,14 @@ No completion/ship/proof markers are inferred from this human tracker.
   a slow valid host would falsify them. No production activation. Required
   next: strict pinned Bash wrapper, enforce-mode hook admission, full copied-
   hook CLI check under the parent sandbox, then driver-controller wiring.
+
+- Canonical shell entry candidate: `worker_shell.py` executes shell commands
+  only under the frozen Mac write/network profile, with a frozen private temp
+  directory and actual cwd checked. The enforce-mode hook admits only exact
+  canonical quoting of that pinned entry; extra shell syntax/expansion refuses.
+  Explicit hook arguments pin context/mode so shedding worker environment does
+  not disable enforcement. Native writes remain scoped; unsupported tools
+  refuse in full mode. OS/wrapper/observer checks: 16 passed in 0.88s; hook CLI
+  admission including environment shedding: 12 passed in 0.39s. Production
+  remains observe-only/unregistered; need bound per-context private settings
+  plus actual CLI under the parent profile before C2 enforcement rollout.

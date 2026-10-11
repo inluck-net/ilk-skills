@@ -60,3 +60,25 @@ def test_symlink_cannot_escape_shell_write_scope(tmp_path):
     cp=run(profile(ctx,temporary=temporary,shell=True),'/usr/bin/python3','-c','from pathlib import Path;Path(__import__("sys").argv[1]).write_text("escaped")',str(root/'escape/changed.md'))
     assert cp.returncode!=0
     assert not (Path(ctx['plans_dir'])/'changed.md').exists()
+
+
+def test_pinned_wrapper_denies_shell_expansion_and_control_writes(tmp_path):
+    import json,os
+    from worker_shell import canonical_command,admitted_command
+    from iteration_context import write_context
+    ctx,temporary,_=fixture(tmp_path)
+    root=Path(ctx['exec_tree']);repo=Path(__file__).resolve().parents[3]
+    ctx.update(schema_version=1,run_id='wrapper-fixture',iteration=1,
+        code_root=str(repo),worker_shell_python=sys.executable,
+        worker_sandbox_adapter='macos-two-layer',worker_tmp_dir=str(temporary))
+    path=tmp_path/'ctx.json';write_context(path,ctx)
+    command=canonical_command(ctx,path,'printf fixture > accepted.txt')
+    assert admitted_command(command,ctx,path)
+    assert not admitted_command(command+'; touch escaped',ctx,path)
+    assert not admitted_command(command.replace("'printf fixture > accepted.txt'",'"$(touch escaped)"'),ctx,path)
+    child=[sys.executable,str(repo/'skills/ilk-loop/scripts/worker_shell.py'),'--context',str(path),'--command']
+    cp=subprocess.run(child+['printf fixture > accepted.txt'],cwd=root,capture_output=True,text=True,timeout=10)
+    assert cp.returncode==0 and (root/'accepted.txt').read_text()=='fixture'
+    target=Path(ctx['plans_dir'])/'denied.md'
+    cp=subprocess.run(child+[f'printf bad > {target}'],cwd=root,capture_output=True,text=True,timeout=10)
+    assert cp.returncode!=0 and not target.exists()
