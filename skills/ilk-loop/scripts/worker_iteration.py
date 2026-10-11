@@ -42,10 +42,19 @@ def phase(context,name):
 
 def instructions(context,path):
     selected=read_dispatch(context)
+    inventory=context.get('root_instruction_inventory')
+    reads=[selected['subplan_path']]+[row['path'] for row in inventory or []]
+    bootstrap=canonical_command(context,path,'cat -- '+' '.join(shlex.quote(item) for item in reads))
     return '\n'.join([
         'ILK CODE-ONLY DISPATCH: the driver owns gates, commits, pointers and shipping.',
         f"Execution worktree: {context['exec_tree']}",
-        f"Read repository instructions and this exact subplan: {selected['subplan_path']}",
+        f"Read this exact subplan: {selected['subplan_path']}",
+        ('Root instruction files were inventoried by the driver: '+json.dumps([row['path'] for row in inventory])
+         if inventory is not None else 'Root instruction inventory is unknown; read repository instructions.'),
+        'First group these required independent reads in ONE Bash call:',
+        bootstrap,
+        'Follow referenced instructions and any nested instructions relevant to files you edit.',
+        'After the required reads, implement this step; no queue or toolkit bootstrap discovery is needed.',
         f"Implement only step {selected['step']}; leave the code diff for driver acceptance.",
         'Do not commit, push, change plans/state/proof, or run authoritative gates.',
         'Every Bash tool command MUST use this pinned wrapper. Working example for pwd:',
@@ -66,6 +75,10 @@ def worker_turn(context,path,prompt,*,claude,model,budget,mcp,session=None):
     deadline=context['iteration_deadline_monotonic'];bound=binding(path)
     from run_inputs import verify_launch_resources
     manifest=verify_launch_resources(Path(context['worker_inputs_dir']))
+    import hashlib
+    for row in context.get('root_instruction_inventory',[]):
+        if hashlib.sha256(Path(row['path']).read_bytes()).hexdigest()!=row['sha256']:
+            raise ContextError('repository instructions changed after dispatch freeze')
     pinned=[row for row in manifest['executables'] if row['name']=='claude']
     if len(pinned)!=1 or Path(claude).resolve()!=Path(pinned[0]['path']):
         raise ContextError('worker executable contradicts frozen launch inputs')

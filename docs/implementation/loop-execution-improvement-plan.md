@@ -994,3 +994,32 @@ No completion/ship/proof markers are inferred from this human tracker.
   it is neither rewritten nor supplemented with renewed budget/provider state.
   Recovery-scratch and registered scope/dispatch checks: 4 passed in 6.68s.
   Exact archived normal/recovery callers pending this local checkpoint.
+- `8ff1301d` archived normal plus interrupted staging/commit entry checks:
+  3 passed in 11.76s. Fresh protected gate scratch is independently owned;
+  this does not complete selfmod/member-repo recovery adapters.
+- D3 consumer compatibility is prepared in isolated checkout
+  `/Users/chad/Projects/github/inluck-net/gh-resolve-worktrees/owner-ilk-runtime-compat-20261011`,
+  branch `owner/ilk-runtime-compat-20261011`, local commit `fa0dffb2`.
+  Optional verifier discovery honors explicit ILK_CODE_ROOT and emits an
+  execution-time pin, handles spaces, and refuses a missing explicit pin.
+  Existing no-pin planning keeps the legacy path for older hosts. Two focused
+  emitter/execution checks passed in 0.09s; no suite was invoked. Not landed,
+  pushed, installed or activated; production consumer checkout unchanged.
+- Actual-provider full Bash entry at `8ff1301d` with copied production hooks
+  and empty automatic setting sources: FAILED at original 120s fixture limit,
+  123.079s wall, actual init MiMo v2.6 PRO, four admitted Bash calls, no edit,
+  no authoritative gate/acceptance, pointer 0, no ship, source home unchanged
+  and registry clear. Evidence `full-entry-provider-settings-frozen/` retains
+  raw streams, summary and separate cost-report-v4.json. All four command
+  hashes match enforcement diagnostics; settings/hooks loaded and admission
+  worked. Legacy workflow-conflict hypothesis rejected: Bash replaces that
+  prompt on code-only dispatch. The last call searched for root instructions;
+  observed unfinished thinking then reached deadline. No limit/default change.
+- Bootstrap candidate now freezes known root AGENTS.md/CLAUDE.md/.claude/CLAUDE.md
+  paths/hashes and supplies one exact batched read of plan plus root instructions.
+  It retains referenced/nested instruction obligations and checks hashes before
+  every provider turn. No claim of exhaustive nested/ancestor instruction pinning.
+  Registered dispatch checks passed 3 in 6.22s; command execution fixture passed
+  1 in 0.05s after correcting incomplete test context. Exact archived and actual
+  provider checks pending local commit. This targets measured bootstrap calls;
+  it does not establish a speed improvement or fix model thinking latency.
