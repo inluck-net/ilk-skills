@@ -2107,3 +2107,30 @@ anchors at the time of inspection and can move as integration changes code.
 - Candidate only. Current installed/source main remains 95be4d75; old paused
   controller retains 4de1eb06. Next: canonical frozen baseline/root reader,
   accumulated installation at a fresh safe boundary, then remaining adapters.
+
+### Frozen attribution root and repository-base reader
+
+- Canonical context now records each observed repository's entry HEAD once.
+  Common clone/exec HEAD and dirty observations are reused within preparation,
+  rather than asking Git again for the same role. This is local observation
+  reuse, not gate-outcome reuse or a measured whole-loop speed claim.
+- red_inputs resolves a unique frozen plan/step, its mapped execution root,
+  entry base and original dispatch master/batch base. Bash attribution uses
+  those values and does not rediscover an active master when context exists.
+  An old member context missing a frozen member base refuses; no later HEAD
+  can substitute. The context-free legacy read remains explicit, including
+  correction of its missing sys import. Member owned acceptance is still not
+  built; a correct readonly member attribution root is not that adapter.
+- Changed-HEAD/other-master/member negatives plus context contracts: 27 passed
+  in 2.29s. Actual Bash reader executed with poisoned legacy clone/base defaults
+  and returned the frozen worktree/base. Legacy inconclusive/output controls:
+  6 passed in 0.60s. The first fixture lacked a valid registered master; two
+  fixture-only failures were corrected to an existing master and dated registry
+  filename without relaxing production checks.
+- Read-only live check: original batch base 412df69b has legacy-session kernel
+  policy, matching the explicitly preserved historical interpretation. Its
+  active master and PID 94556 / 4de1eb06 pin remain unchanged, with no worker
+  children. No new worker or verification plan was dispatched.
+- Candidate pending committed archived caller checks and accumulated activation.
+  Still open: dirty/member owned acceptance, full per-node baseline advancement,
+  Windows ownership and broader reader/lint/input closure.

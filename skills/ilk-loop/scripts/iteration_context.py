@@ -64,6 +64,21 @@ def root_for_plan(context: dict, subplan: Path) -> Path:
     return Path(context['exec_tree'])
 
 
+def red_inputs(context: dict, slug: str, step: int) -> dict:
+    """Attribution roots and bases come from this dispatch, never a new queue."""
+    matches=[row for row in context.get('plans',{}).values() if row.get('slug')==slug]
+    if len(matches)!=1:raise ContextError('red target is not unique in frozen registry')
+    row=matches[0]
+    if int(row.get('step') or 0)!=step:raise ContextError('red step differs from frozen dispatch')
+    root=root_for_plan(context,Path(row['path']))
+    base=context.get('repository_bases',{}).get(str(root))
+    if base is None and root==Path(context['exec_tree']):base=context.get('base_commit')
+    if not base:raise ContextError('red execution base was not frozen')
+    selected=context.get('dispatch') or {}
+    return dict(exec_tree=str(root),iteration_base=base,
+                batch_base=selected.get('batch_base_sha'),master_path=selected.get('master_path'))
+
+
 def validate_work_tree_binding(context):
     if context.get('mode')!='work_tree':return
     contract=context.get('work_tree_contract')
@@ -286,20 +301,27 @@ def _resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
         from safety_kernel import load
         kernel_list=load(Path(exec_tree))
     clone_ref=_git_result(clone,'symbolic-ref','-q','HEAD')
+    clone_base=git_value(Path(clone),'HEAD')
+    exec_base=clone_base if clone==exec_tree else git_value(Path(exec_tree),'HEAD')
+    clone_dirty=_git_status(clone) if clone_base else None
+    exec_dirty=clone_dirty if clone==exec_tree else (_git_status(exec_tree) if exec_base else None)
+    bases={exec_tree:exec_base}
+    for root in sorted(set(observed.values())):
+        if root not in bases:bases[root]=clone_base if root==clone else git_value(Path(root),'HEAD')
     return dict(schema_version=1,run_id=run_id,iteration=int(iteration),
-                clone_base_commit=git_value(Path(clone),'HEAD'),
+                clone_base_commit=clone_base,
                 clone_ref=clone_ref.stdout.strip() if clone_ref.returncode==0 else None,
-                clone_entry_dirty=_git_status(clone) if git_value(Path(clone),'HEAD') else None,
-                clone=clone,exec_tree=exec_tree,observe_tree=observed,mode=mode,
+                clone_entry_dirty=clone_dirty,
+                clone=clone,exec_tree=exec_tree,observe_tree=observed,repository_bases=bases,mode=mode,
                 plans_dir=plans_dir,runtime_dir=str(runtime),
                 ledger_path=str(runtime/'launcher/ship-proof.jsonl'),
                 registry_path=str(runtime/'launcher'), # Owning roles are attached before dispatch freeze.
                 recovery_dir=str(runtime/'launcher/recovery'/recovery_key),
                 data_root=str(Path(data_root).resolve()),code_root=code_root,
                 toolkit_sha=git_value(Path(code_root),'HEAD') or os.environ.get('ILK_TOOLKIT_SHA'),
-                base_commit=git_value(Path(exec_tree),'HEAD'),
+                base_commit=exec_base,
                 base_tree=git_value(Path(exec_tree),'HEAD^{tree}'),
-                entry_dirty=_git_status(exec_tree) if git_value(Path(exec_tree),'HEAD') else None,
+                entry_dirty=exec_dirty,
                 dispatch=dispatch or None, plans=snapshots, master_snapshot=master_snapshot,
                 mention_gate_policy=mention_gate_policy,kernel_list=kernel_list,work_tree_contract=work_tree_contract,state_journal_cursor=state_journal_cursor)
 
@@ -321,11 +343,18 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     sources=p.add_mutually_exclusive_group(required=True)
     sources.add_argument('--print-dispatch',action='store_true')
+    sources.add_argument('--print-red-inputs',action='store_true')
     sources.add_argument('--input',type=Path)
     sources.add_argument('--capture',type=Path)
     p.add_argument('--out',type=Path)
+    p.add_argument('--slug')
+    p.add_argument('--step',type=int)
     a=p.parse_args()
-    if a.print_dispatch:
+    if a.print_red_inputs:
+        context=read_context()
+        if not context or not a.slug or a.step is None:p.error('frozen context, slug and step required')
+        print(json.dumps(red_inputs(context,a.slug,a.step)))
+    elif a.print_dispatch:
         context=read_context()
         if not context: p.error('frozen iteration context required')
         print(json.dumps(read_dispatch(context)))

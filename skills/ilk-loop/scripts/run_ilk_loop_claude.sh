@@ -7403,7 +7403,7 @@ print('false' if not d.get('blocked', True) else 'true')
             # Resolve batch base from the master plan.
             local _batch_base=""
             local _master_file_for_base=""
-            if [[ -n "${plans_dir:-}" && -d "${plans_dir:-}" ]]; then
+            if [[ -z "${ILK_ITER_CONTEXT:-}" && -n "${plans_dir:-}" && -d "${plans_dir:-}" ]]; then
               _master_file_for_base=$(python3 -c "
 from pathlib import Path
 import sys
@@ -7418,7 +7418,7 @@ if actives:
     print(chosen)
 " "${_SKILL_ROOT}/ilk-loop/scripts" "${plans_dir:-}" 2>/dev/null) || true
             fi
-            if [[ -n "$_master_file_for_base" && -f "$_master_file_for_base" ]]; then
+            if [[ -z "${ILK_ITER_CONTEXT:-}" && -n "$_master_file_for_base" && -f "$_master_file_for_base" ]]; then
               _batch_base=$(python3 -c "
 import sys
 sys.path.insert(0, sys.argv[1])
@@ -7432,9 +7432,9 @@ except SystemExit:
 " "${_SKILL_ROOT}/ilk-loop/scripts" "$PROJECT_PATH" "$_master_file_for_base" 2>/dev/null) || true
             fi
             # Fallback: read base_sha from the master's frontmatter.
-            if [[ -z "$_batch_base" && -n "$_master_file_for_base" && -f "$_master_file_for_base" ]]; then
+            if [[ -z "${ILK_ITER_CONTEXT:-}" && -z "$_batch_base" && -n "$_master_file_for_base" && -f "$_master_file_for_base" ]]; then
               _batch_base=$(python3 -c "
-import re
+import re, sys
 body = open(sys.argv[1]).read()
 m = re.search(r'^---\s*\n(.*?)\n---', body, re.DOTALL)
 if m:
@@ -7444,7 +7444,7 @@ if m:
             break
 " "$_master_file_for_base" 2>/dev/null) || true
             fi
-            if [[ -n "$_red_owner_script" && -f "$_red_owner_script" && -n "$_iteration_base" ]]; then
+            if [[ -n "$_red_owner_script" && -f "$_red_owner_script" && ( -n "$_iteration_base" || -n "${ILK_ITER_CONTEXT:-}" ) ]]; then
               local _all_inherited_or_preexisting=true
               # Attribute each blocking record.
               while IFS= read -r _blocking_line; do
@@ -7469,11 +7469,27 @@ if m:
                 fi
                 local _effective_repo
                 _effective_repo="$(selfmod_effective_repo "$PROJECT_PATH")"
-                local _attr_args=("--attribute" "--repo" "$_effective_repo" "--iteration-base" "$_iteration_base" "--head" "$(git -C "$_effective_repo" rev-parse HEAD)" "--cmd" "$_b_cmd" "--budget-s" "300")
-                [[ -n "$_batch_base" ]] && _attr_args+=("--batch-base" "$_batch_base")
+                local _attr_iteration_base="$_iteration_base" _attr_batch_base="$_batch_base"
+                local _attr_input_valid=1 _frozen_red_inputs=""
+                if [[ -n "${ILK_ITER_CONTEXT:-}" ]]; then
+                  _frozen_red_inputs=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/iteration_context.py" --print-red-inputs --slug "$_b_slug" --step "$_b_step" 2>/dev/null) || _frozen_red_inputs=""
+                  if [[ -z "$_frozen_red_inputs" ]]; then
+                    _attr_input_valid=0
+                  else
+                    _effective_repo=$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["exec_tree"])' "$_frozen_red_inputs")
+                    _attr_iteration_base=$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["iteration_base"])' "$_frozen_red_inputs")
+                    _attr_batch_base=$(python3 -c 'import json,sys;print(json.loads(sys.argv[1]).get("batch_base") or "")' "$_frozen_red_inputs")
+                  fi
+                fi
+                local _attr_args=("--attribute" "--repo" "$_effective_repo" "--iteration-base" "$_attr_iteration_base" "--head" "$(git -C "$_effective_repo" rev-parse HEAD)" "--cmd" "$_b_cmd" "--budget-s" "300")
+                [[ -n "$_attr_batch_base" ]] && _attr_args+=("--batch-base" "$_attr_batch_base")
                 [[ -n "$_stdout_file" ]] && _attr_args+=("--stdout-file" "$_stdout_file")
                 local _attr_out=""
-                _attr_out=$(python3 "$_red_owner_script" "${_attr_args[@]}" 2>/dev/null) || true
+                if [[ "$_attr_input_valid" -eq 1 ]]; then
+                  _attr_out=$(python3 "$_red_owner_script" "${_attr_args[@]}" 2>/dev/null) || true
+                else
+                  _attr_out='{"verdict":"unmeasured","reason":"frozen attribution identity unavailable"}'
+                fi
                 [[ "$_stdout_temp" -eq 1 && -n "$_stdout_file" ]] && rm -f "$_stdout_file"
                 if [[ -n "$_attr_out" ]]; then
                   local _verdict
@@ -7481,7 +7497,7 @@ if m:
                   local _owner_sha _owner_slug
                   _owner_sha=$(echo "$_attr_out" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('owner_sha','') or '')" 2>/dev/null) || true
                   _owner_slug=$(echo "$_attr_out" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('owner_slug','') or '')" 2>/dev/null) || true
-                  echo "  [red-owner] $_b_slug step $_b_step: $_verdict (base ${_iteration_base:0:7}$([ -n "$_owner_sha" ] && echo ", owner ${_owner_sha:0:7} $_owner_slug" || echo "")) — $(echo "$_attr_out" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('reason',''))" 2>/dev/null)" >&2
+                  echo "  [red-owner] $_b_slug step $_b_step: $_verdict (base ${_attr_iteration_base:0:7}$([ -n "$_owner_sha" ] && echo ", owner ${_owner_sha:0:7} $_owner_slug" || echo "")) — $(echo "$_attr_out" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('reason',''))" 2>/dev/null)" >&2
                   # Write attribution back into the gate results file.
                   python3 -c "
 import json, sys
