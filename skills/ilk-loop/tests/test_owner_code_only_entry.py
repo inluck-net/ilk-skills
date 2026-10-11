@@ -122,7 +122,7 @@ else:
 print(json.dumps({'type':'system','subtype':'init','session_id':'fixture-session','model':'fixture-model'}))
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'fixture-session'}))
 ''');cli.chmod(0o700)
-    inputs=tmp_path/'inputs';manifest=prepare(work if case in {'selfmod','pending-selfmod','measured-red-selfmod'} else ROOT,home,inputs,worker_tools='native' if case.startswith('native-tools') else 'shell',measured_red_progress=measured_red)
+    inputs=tmp_path/'inputs';manifest=prepare(work if case in {'selfmod','pending-selfmod','measured-red-selfmod'} else ROOT,home,inputs,project=declared_root or work,worker_tools='native' if case.startswith('native-tools') else 'shell',measured_red_progress=measured_red)
     pin_launch_resources(inputs,project=work,executables={'python':sys.executable,'claude':str(cli)})
     if upgrading:
         target_inputs=tmp_path/'upgrade-target-inputs'
@@ -130,7 +130,7 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         subprocess.run(['git','clone','-q','--shared',str(ROOT),str(target_source)],check=True,capture_output=True)
         subprocess.run(['git','-C',str(target_source),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid',
             'commit','--allow-empty','-qm','disposable next release identity'],check=True,capture_output=True)
-        target_manifest=prepare(target_source,home,target_inputs)
+        target_manifest=prepare(target_source,home,target_inputs,project=declared_root or work)
         pin_launch_resources(target_inputs,project=work,executables={'python':sys.executable,'claude':str(cli)})
     code=Path(manifest['code_root'])
     if case.startswith('pending-'):

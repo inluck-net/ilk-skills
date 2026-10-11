@@ -70,6 +70,7 @@ def _is_work_tree(path: Path) -> bool:
 def resolve_work_tree(
     plans_dir: Path,
     project_path: Path,
+    *, pinned_master: Path | None = None,
 ) -> dict:
     """Resolve and validate the active master's ``work_tree:`` field.
 
@@ -80,7 +81,7 @@ def resolve_work_tree(
         return {"path": None, "error": "no master plans found"}
 
     try:
-        chosen, _ = pick_active_master(masters, json_mode=True)
+        chosen, _ = pick_active_master(masters, json_mode=True,pinned_master=pinned_master)
     except Exception as e:  # noqa: BLE001
         return {"path": None, "error": f"pick_active_master failed: {e}"}
 

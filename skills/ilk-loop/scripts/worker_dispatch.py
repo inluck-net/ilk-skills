@@ -30,6 +30,11 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
     context_path=Path(context_path).resolve();inputs=Path(inputs).resolve();registry=Path(registry).resolve()
     if context_path.exists():raise ContextError('context already frozen')
     manifest=verify_launch_resources(inputs)
+    source_project=manifest.get('source_project')
+    expected_projects={context['exec_tree']}
+    if context['mode']=='selfmod':expected_projects.add(context['clone'])
+    if source_project is not None and source_project not in expected_projects:
+        raise ContextError('prepared project settings/dependencies differ from execution role')
     from run_inputs import verify_code_snapshot
     verify_code_snapshot(inputs,deadline=deadline)
     if Path(context['code_root']).resolve()!=Path(manifest['code_root']).resolve():

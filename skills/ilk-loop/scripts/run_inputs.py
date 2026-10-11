@@ -250,6 +250,7 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
         manifest={'schema_version':1,'toolkit_sha':sha,'code_root':str(code),'worker_home':str(home),
                   'upgrade_drain_protocol':1 if {'boundary','activation','consume'}<=drain_functions else None,
                   'source_root':str(source_root),'source_repo':str(repo),'source_worker_home':str(worker_home),
+                  'source_project':str(Path(project).resolve()) if project is not None else None,
                   'settings_non_env_sha256':hashlib.sha256(json.dumps(safe,sort_keys=True).encode()).hexdigest(),
                   'provider_configured':configured_provider(env.get('ANTHROPIC_BASE_URL')),
                   'env_keys':sorted(env),'requested_model':env.get('ANTHROPIC_MODEL') or pinned.get('model'),

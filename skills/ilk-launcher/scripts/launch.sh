@@ -815,7 +815,10 @@ start_ilk_window() {
     if [[ -n "$prepared_inputs" ]]; then
       inputs_dir="$prepared_inputs"
     else
-    local pin_args=(--repo "${_SKILL_ROOT}/.." --worker-home "$source_home" --destination "$inputs_dir" --project "$project_path" --observe-scope)
+    local inputs_project
+    inputs_project=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/launch_inputs_root.py" \
+      --project "$project_path" --master "$master_override") || return 1
+    local pin_args=(--repo "${_SKILL_ROOT}/.." --worker-home "$source_home" --destination "$inputs_dir" --project "$inputs_project" --observe-scope)
     if [[ "${ILK_WORKER_TOOLS:-shell}" != shell ]]; then
       if [[ "${ILK_WORKER_MODE:-}" != code-only ]]; then
         echo "Native worker tools require the owned code-only boundary" >&2

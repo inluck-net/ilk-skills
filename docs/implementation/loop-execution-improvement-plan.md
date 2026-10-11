@@ -22,9 +22,9 @@ Delivery target: by 2026-10-12 00:48 Asia/Shanghai (two hours from Chad’s
 request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
-Current next action: wire candidate measured-red progress into opt-in Mac
-worker/loop, close/result and consumer readers, then finish remaining
-legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview c59dccf4
+Current next action: finish declared-worktree settings/dependency root validation,
+then reconcile the remaining accepted design requirements against the implementation
+and evidence map. Toolkit preview 8fc3cf66
 and consumer compatibility 3987a299 are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -37,7 +37,7 @@ Mac evidence. Actual provider red then green used the same session; a real
 consumer repair passed and a focused-diagnostics comparison is recorded.
 Windows/member/dirty-entry adapters remain open. The controlled shell/native pairing is recorded in docs/verification/loop-tools-comparison-2026-10-12.md.
 Continue here per Chad: “no more handover, until the whole thing done”.
-Overall estimate about 75% is a judgment over the whole installed/measured scope,
+Overall estimate about 76% is a judgment over the whole installed/measured scope,
 not a checkbox count. Do not infer whole completion from capability checks.
 
 Old runs 20261011-102057/130246/212131/215532 and their controller identities
@@ -3287,7 +3287,7 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
   journal/encoding checks: 5 passed in 0.05s. All fixture plans disposable.
   Multi-plan atomic return and crash recovery of returned-id bookkeeping remain
   open; a journaled plan revision alone does not establish those capabilities.
-  Overall estimate about 75% remains a judgment over installed/measured scope.
+  Overall estimate about 76% remains a judgment over installed/measured scope.
 
 - B3/C4 legacy return-red crash recovery: focused fault after durable plan
   replacement but before returned IDs duplicated the authored check/finding on
@@ -3465,3 +3465,27 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
   This adds supported Mac declared-worktree lifecycle behavior, not native
   Windows or member-repository ownership. Remaining source/exec settings role
   agreement is under audit before claiming full D1/D2 closure.
+
+
+### Declared execution settings root correction (2026-10-12, candidate)
+
+Initial launch preparation now resolves the exact selected/pinned master and its
+validated execution worktree before copying project settings, dependency inputs
+and MCP resources. Runner clone identity remains separate. Prepared manifests
+record `source_project`; dispatch refuses a declared-worktree launch prepared for
+a different project before creating context or spawning resources. Selfmod accepts
+its source clone or execution role. Historical/user-only manifests without this
+new field preserve their existing semantics. An explicit master without a plans
+root refuses rather than silently falling back.
+
+Evidence: 48 adjacent launch/input/worktree checks passed in 40.05s; after adding
+explicit no-plans and wrong-role negatives, 5 targeted checks passed in 0.37s.
+Bash syntax and diff checks passed. Archived real entry fixtures now prepare
+project resources for the declared execution root; their committed-snapshot
+check and safe installation remain pending. No live plans, worker inputs or
+controller state changed. No full suite ran.
+
+The overall percentage remains a judgment, not a measurement. Compatibility
+requirements must be reconciled against agreed designs instead of silently
+expanding the checklist after each Mac fix. This does not mark unbuilt adapters
+complete or authorize abandoning accepted delivery requirements.
