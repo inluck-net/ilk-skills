@@ -71,7 +71,11 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
             waiter.wait(.02)
         settings=bind_context(inputs,context_path)
         from worker_sandbox import profile
-        policy=profile(context,temporary=scratch,private_home=Path(manifest['worker_home']))
+        diagnostic=context_path.parent/f"write-scope-{context['iteration']}.jsonl"
+        # The hook runs inside this CLI boundary. Permit only its diagnostic
+        # append path, never the surrounding frozen context/proof directory.
+        policy=profile(context,temporary=scratch,private_home=Path(manifest['worker_home']),
+                       diagnostic_log=diagnostic)
         policy_path=context_path.parent/(context_path.stem+'-sandbox.sb')
         with policy_path.open('x') as stream:
             stream.write(policy);stream.flush();os.fsync(stream.fileno())

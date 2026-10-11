@@ -17,13 +17,13 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: exercise the new opt-in code-only path through the real
-Bash runner entry; then actual provider/hook and consumer checks, remaining
+Current next action: exercise the new opt-in code-only path with an actual
+provider and copied production hooks; then consumer checks, remaining
 state/lifecycle adapters and activation. D1 POSIX callers and D2 private launch
 inputs now have production-entry candidate evidence. C3 preparation/acceptance/
 repair is wired but remains disabled by default. Actual-base provenance and
 Windows/member/dirty-entry adapters remain open. Continue here per Chad:
-“no more handover, until the whole thing done”. Overall estimate 37% is a
+“no more handover, until the whole thing done”. Overall estimate 42% is a
 judgment against delivered/installed/measured scope, not a checkbox count.
 
 Old run `20261011-102057` timed out by itself. Old run `20261011-130246`
@@ -704,3 +704,29 @@ No completion/ship/proof markers are inferred from this human tracker.
   supplied original deadline still bounds it. 7 focused owned dispatch/broker
   checks passed in the latest run. Candidate remains uninstalled; next repeat
   the actual Bash caller at this exact checkpoint, then actual-provider probes.
+- Actual full Bash runner entry at checkpoint `6794b72c`: 1 focused disposable
+  fixture passed in 5.93s. The provider stub exercised the real Mac sandbox,
+  driver gate, one commit and CAS advance, ship marker, integrity, explained
+  journal, closed scoped proof, truthful `all-shipped`, and registry cleanup.
+  Source worker home stayed unchanged. This is candidate integration evidence,
+  not actual-provider validation, installed delivery or a measured speedup.
+  Overall estimate raised to 42% against the full delivery scope. Next: repeat
+  this entry with actual provider/copied hooks, then close recovery and input
+  pinning gaps before safe activation. No full suite has run.
+- Actual-provider full entry at `6794b72c` exposed a hook/sandbox integration
+  defect: MiMo v2.6 PRO completed 5 turns (~105s CLI, 109.027s fixture) with no
+  edit because every PreToolUse diagnostic append was denied. The driver
+  refused green/advance, terminal `local_checks_failed_no_commits`, registry
+  clear, source home unchanged. This was not a passing capability check.
+  Dispatch now permits the exact diagnostic file in the generated CLI policy;
+  the regression executes the real hook under that policy and verifies frozen
+  context/adjacent proof writes still fail. 20 focused boundary checks passed
+  in 2.74s. Repeat actual-provider entry at the committed fixed checkpoint.
+- Verified gh-resolve postmortem `20261011-104410` against sentinel, launcher
+  tail and masters: 10b six subplans shipped, 10c human hold remains; one real
+  iteration and a synthetic terminal record, 186s iteration versus 275s run
+  wall clock. Configured model is not execution evidence. No restart or plan
+  change. Reporter now takes same-run sentinel start, excludes terminal rows
+  from the iteration table, labels configured model, and offers no fabricated
+  30/30 limits or Resume now for a held queue. 18 focused reporter checks
+  passed in 0.33s. Original external postmortem/raw evidence left unchanged.

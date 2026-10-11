@@ -60,6 +60,22 @@ bind_running(registry,context['run_id'],pid=os.getpid())
 binding=prepare(context,ctx,inputs=inputs,deadline=deadline,registry=registry,owner_pid=os.getpid())
 frozen=json.loads(ctx.read_text());original=ctx.read_bytes()
 env=dict(os.environ,ILK_ITER_CONTEXT=str(ctx))
+# Execute the real admission hook inside the actual returned CLI policy.
+# A provider stub alone bypasses hooks and missed this diagnostic-path defect.
+hook=[sys.executable,str(Path(frozen['code_root'])/'hooks/worker-write-scope.py'),
+      '--mode','enforce','--context',str(ctx)]
+event={'tool_name':'Bash','tool_input':{'command':canonical_command(frozen,ctx,'pwd')}}
+observed=subprocess.run(['/usr/bin/sandbox-exec','-f',binding['sandbox_path'],*hook],
+    input=json.dumps(event),env=env,capture_output=True,text=True)
+assert observed.returncode==0,observed.stderr
+diagnostic=ctx.parent/f"write-scope-{frozen['iteration']}.jsonl"
+assert json.loads(diagnostic.read_text().splitlines()[-1])['diagnostic_only']
+for target in (ctx,ctx.parent/'forged-proof.json'):
+    denied=subprocess.run(['/usr/bin/sandbox-exec','-f',binding['sandbox_path'],sys.executable,
+        '-c','from pathlib import Path;import sys;Path(sys.argv[1]).write_text("forged")',str(target)],
+        capture_output=True,text=True)
+    assert denied.returncode!=0
+assert ctx.read_bytes()==original
 cp=subprocess.run([sys.executable,str(Path(frozen['code_root'])/'skills/ilk-loop/scripts/worker_iteration.py'),
     '--context',str(ctx),'--prompt','implement selected step','--claude',str(provider),'--gate-timeout','10',
     '--mcp',str(inputs/'mcp.json')],

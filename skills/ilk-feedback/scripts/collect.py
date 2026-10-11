@@ -2285,10 +2285,10 @@ def recommend_params(
             "relaunches when that merge completes. Params unchanged."
         )
     if label == "blocked-no-runnable":
-        return cur_max, cur_to, (
+        return None, None, (
             "Do not auto-relaunch — no runnable sub-plans remain. "
-            "Every outstanding sub-plan is blocked or skipped. Needs "
-            "a human to unblock or add work."
+            "Inspect master holds and sub-plan eligibility before unblocking "
+            "or adding work. Launch limits cannot make held work runnable."
         )
 
     return cur_max, cur_to, "no specific recommendation"
@@ -2651,10 +2651,13 @@ def render_report(
     # Exclude run_exit terminal records from iteration counts.
     _real_iters = [r for r in iters if r.get("record_type") != "run_exit"]
     iter_count = len(_real_iters)
+    sentinel = read_sentinel(project_path)
+    if not isinstance(sentinel, dict) or sentinel.get('run_id') != run_id:
+        sentinel = {}
     # Resolve master from sentinel when not supplied by caller.
     if not master:
         try:
-            _sent = read_sentinel(project_path)
+            _sent = sentinel
             if _sent is not None:
                 master = (_sent.get("master") or "").strip()
         except Exception:
@@ -2678,12 +2681,13 @@ def render_report(
     avg_dur = sum(durations_min) / len(durations_min) if durations_min else 0
     max_dur = max(durations_min) if durations_min else 0
 
-    # Prefer the run's own earliest record timestamp.  Only fall back to
-    # last-launch.json when it names the SAME run — a last-launch that
-    # belongs to a later run would give a wrong start time.
-    started_at = (_real_iters[0].get('opened_at') or _real_iters[0].get('timestamp')) if _real_iters else None
+    # Run start precedes iteration start and completion. Never borrow metadata
+    # from a later run's sentinel or launch; retain legacy record fallback.
+    started_at = sentinel.get('started_at')
     if not started_at and last_launch is not None and last_launch.get("run_id") == run_id:
         started_at = last_launch.get("started_at")
+    if not started_at and _real_iters:
+        started_at = _real_iters[0].get('opened_at') or _real_iters[0].get('timestamp')
     if not started_at:
         started_at = "unknown"
     model = next((r.get("model") for r in _real_iters if r.get("model")), "?")
@@ -2736,7 +2740,7 @@ def render_report(
     rl_count = facts.get("rate_limit_event_count", 0)
     if rl_count:
         body_lines.append(f"| Rate-limit events | {rl_count} |")
-    body_lines.append(f"| Model | {model} |")
+    body_lines.append(f"| Configured model | {model} (this field does not establish worker execution) |")
     body_lines.append(f"| Endpoint | {base_url} |")
     body_lines.append("")
 
@@ -2869,7 +2873,11 @@ def render_report(
     body_lines.append("")
 
     body_lines.append("## Suggested next action\n")
-    if label == "self-hosting-drift":
+    if label == "blocked-no-runnable":
+        body_lines.append("**Leave the loop idle. Do not auto-relaunch.**")
+        body_lines.append("Inspect the selected master and its holds; shipped work can coexist with a held remaining queue.")
+        body_lines.append("Unblock or add work only when authorized; increasing launch limits will not resolve a hold.")
+    elif label == "self-hosting-drift":
         body_lines.append("**Do not auto-relaunch** until drift is resolved:")
         body_lines.append("- (a) Preserve evidence — run `preserve_active_run.py` if not already archived")
         body_lines.append("- (b) Clean stale sentinel — remove `last-exit.json` with `state=running` for dead PID")
@@ -2901,11 +2909,12 @@ def render_report(
     body_lines.append("## Per-iteration breakdown\n")
     body_lines.append("| # | Duration (min) | Commits | Exit | Stop reason |")
     body_lines.append("|---|---|---|---|---|")
-    for r in iters:
-        dur = (r.get("duration_sec") or 0) / 60.0
+    for r in _real_iters:
+        elapsed = measured_iteration_elapsed(r)
+        dur = f'{elapsed / 60.0:.1f}' if elapsed is not None else 'unknown'
         body_lines.append(
             f"| {r.get('iteration', '?')} "
-            f"| {dur:.1f} "
+            f"| {dur} "
             f"| {r.get('new_commits_total', 0)} "
             f"| {r.get('exit_code', '?')} "
             f"| {r.get('stop_reason') or '-'} |"
