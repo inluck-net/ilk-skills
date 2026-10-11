@@ -1,5 +1,6 @@
 {
   "ship": {
+    "verification_subplan": "optional",
     "ledger": false,
     "release_train": true,
     "suite": {
