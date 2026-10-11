@@ -17,8 +17,8 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: validate opt-in MiMo thinking-control same-session red repair
-through the actual production entry; then selfmod/consumer recovery adapters and remaining
+Current next action: complete drain request/emitter and relaunch reader wiring,
+after the checked consumer claim/cleanup protection; then selfmod recovery and remaining
 state/lifecycle adapters and activation. D1 POSIX callers and D2 private launch
 inputs now have production-entry candidate evidence. C3 preparation/acceptance/
 repair is wired but remains disabled by default. Actual-base provenance and
@@ -152,6 +152,49 @@ output/context work; verify current state at the actual landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- D4 candidate emitter now checks an exact owner request only after the
+  original accepted close, positive integrity/state audit, completed owned
+  cleanup and required landing. Pins the unused prepared next inputs; preserves
+  exact master and consumer-worktree inventory. Opt-in flag defaults off.
+  Contradictory requests refuse activation and preserve pending consumer work.
+  Watchdog/collector readers distinguish intentional drain from ship/failure;
+  neither ship notification nor old-pin restart is allowed. Native boundary /
+  derived terminal mapping checks: 29 passed in 0.57s. An existing focused
+  watchdog check independently exposed two lost legacy-busy refusals after
+  registry migration (fresh legacy launch / live metadata PID). Restored
+  conservative busy refusal without argv discovery or signal authority;
+  five existing guard checks passed in 0.72s. New drain guard/archive entry
+  checks follow. PowerShell reader edited; no PowerShell runtime on this Mac,
+  so native parity is unverified. Scheduler activation is not built yet.
+
+- Consumer `f055e663` preserves intentional drains through reconcile/conclusion
+  and candidate publication. Follow-up adds claim reconciliation, finished-issue
+  cleanup, dead-run sweeps and GC refusal. Shared-key cleanup uses explicit
+  consumer_worktrees inventory rather than claiming process life or guessing a
+  path prefix. Eighteen new/fallback checks passed in 0.20s; 39 existing claim/
+  GC/fleet caller checks passed in 9.58s (one existing invalid-escape warning).
+  Source consumer/workers remain untouched. No runtime drain emission yet.
+
+- `c12a9cad` archived normal/interrupted-commit callers passed 2 in 9.41s.
+  Actual provider same-session red-repair entry PASSED in 55.559s wall,
+  29.488s initial CLI / 18.538s resumed CLI. Same session ID, two distinct
+  driver gates (red then green), one accepted commit/CAS, positive integrity
+  and journal, shipped, source home unchanged and registry clear. Eight copied
+  production hooks; opt-in disabled-thinking adapter retained the original
+  120s iteration / 180s outer fixture bounds. Evidence
+  `full-entry-provider-owned-thinking-red-resume/`. Synthetic two-stage fixture,
+  not interrupted resume or representative quality/speed proof.
+- D4 consumer reader candidate: `upgrade-drained` writes no terminal ledger
+  row and reports toolkit-upgrade-pending. Liveness distinguishes that state
+  from alive/dead/unknown, preventing base refresh and unverified-publication
+  death inference. Candidate processing refuses before any publication; the
+  direct conclusion caller also refuses. Exact master matching and replacement
+  running-sentinel behavior covered. Twelve drain/fallback checks passed in
+  0.19s after enabling the fixture's reap config (first caller check correctly
+  exercised the existing disabled kill switch). Isolated consumer checkpoint;
+  not installed. GC/claim-cleanup readers and toolkit drain emitter/scheduler
+  are still open, so activation remains disabled.
 
 - `a4aa2f26` owned opt-in thinking adapter: archived normal/external-hold callers
   passed 2 in 11.97s. Actual provider entry with eight production hook copies

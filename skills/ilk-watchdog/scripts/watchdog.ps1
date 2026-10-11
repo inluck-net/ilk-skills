@@ -811,6 +811,11 @@ Watchdog exiting cleanly. Job done.
       Write-Log "label '$klass' => action '$action'"
 
       if ($action -eq 'stop-clean') {
+        if ($klass -eq 'upgrade-drained') {
+          Write-Log 'upgrade drain: pending work preserved; no old-pin restart or promotion'
+          Write-Banner -Title 'UPGRADE DRAIN — PENDING WORK PRESERVED' -Body 'Scheduler must validate and activate the prepared new pin.' -Color Green
+          return
+        }
         Write-Log "clean-success: job done. No relaunch, no red banner."
         Invoke-IlkNotify -Event 'ship' -Project $ProjName -Detail "classification: $klass"
         Write-Banner -Title "DONE — $klass" -Body @"
@@ -940,6 +945,7 @@ function Resolve-WatchdogAction {
     { $BlacklistClasses -contains $_ } { return 'block' }
     # Job done; no relaunch, no red banner; scheduler promotes next cycle
     'clean-success'       { return 'stop-clean' }
+    'upgrade-drained'     { return 'stop-clean' }
     # All sub-plans shipped but some need manual verification
     'shipped-unverified'  { return 'needs-human' }
     # Toolkit self-edit drift; human review required

@@ -135,6 +135,8 @@ submenu line.
 | `"already-shipped"` | Nothing to do at launch time (all sub-plans already shipped) | Terminal |
 | `"merge-deferred"` | A selfmod merge was deferred (live loop detected) and could not be retried; the worktree holds unmerged work. The scheduler re-dispatches the project to retry the merge. | Terminal |
 | `"yielded"` | At an iteration boundary, the runner detected that *another* project on the host has a pending selfmod merge. This run yielded so the scheduler can dispatch that merge first. The sentinel carries `yielded_to: <project_key>`. Transient — the watchdog relaunches when the other project's merge lands. | Terminal |
+| `"upgrade-drained"` | Owner-requested opt-in exit after an accepted step's durable close, integrity, landing and child cleanup. Preserves unfinished master/claims. Sentinel identifies the prepared next input pin and exact consumer worktrees. Watchdog does not relaunch the old pin; scheduler activation remains separately gated. | Terminal |
+| `"upgrade_request_invalid"` | Upgrade request contradicts the frozen run, lacks coordinated consumer readiness or an unused prepared pin, or the accepted-close boundary cannot be established. Refuse activation; retain pending work for owner recovery. | Terminal |
 | `"selfmod_merge_failed"` | A selfmod worktree's merge-back failed; committed work is parked in the worktree | Terminal |
 | `"selfmod_live_clone_touched"` | A selfmod worker modified tracked files in the live clone; the run stops without merging and logs the file list | Terminal |
 | `"work_tree_invalid"` | Master declared `work_tree:` but the path is missing, not a work tree, or shares no git objects with `--project-path` | Terminal |
@@ -184,6 +186,8 @@ is how a failed run gets classified `clean-success`.
 | `"shipped-unproven"` | `shipped-unverified` | `needs-human` |
 | `"merge-deferred"` | `merge-deferred` | `relaunch` |
 | `"yielded"` | `yielded` | `relaunch` |
+| `"upgrade-drained"` | `upgrade-drained` | `stop-clean` |
+| `"upgrade_request_invalid"` | `self-hosting-drift` | `block` |
 | `"selfmod_merge_failed"` | `merge-conflict` | `block` |
 | `"selfmod_live_clone_touched"` | `merge-conflict` | `block` |
 | `"timeout"` | *(none — falls through)* | `triage` |

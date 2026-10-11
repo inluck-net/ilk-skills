@@ -317,6 +317,9 @@ except Exception:
 normalize_classification() {
   local label="$1"
   case "$label" in
+    upgrade_request_invalid)
+      echo "self-hosting-drift"
+      ;;
     max-iterations)
       # Hit the iteration cap with work still pending: recoverable.
       echo "max-iter-bound"
@@ -428,7 +431,7 @@ classify_action() {
       # the gates.
       echo "stop-clean"
       ;;
-    clean-success)
+    clean-success|upgrade-drained)
       # Job done — no relaunch, no red banner; scheduler promotes next cycle.
       echo "stop-clean"
       ;;
@@ -713,6 +716,7 @@ refused_relaunch_banner() {
     11) title="STOPPED BY OPERATOR — NOT RELAUNCHING" ;;
     12) title="HELD — NOT RELAUNCHING" ;;
     13) title="GATES OFF — NOT RELAUNCHING" ;;
+    14) title="UPGRADE DRAIN — SCHEDULER OWNS RELAUNCH" ;;
     *)  title="RELAUNCH GUARD UNREADABLE — NOT RELAUNCHING" ;;
   esac
   write_log "relaunch refused (guard rc=$RELAUNCH_GUARD_RC): $RELAUNCH_GUARD_OUT"
@@ -1328,6 +1332,15 @@ except Exception:
     fi
 
     if [[ "$action" == "stop-clean" ]]; then
+      if [[ "$(normalize_classification "$classification")" == upgrade-drained ]]; then
+        write_log "upgrade drain: pending work preserved; no old-pin restart or promotion"
+        write_banner "UPGRADE DRAIN — PENDING WORK PRESERVED" \
+"Project: $proj_name
+Classification: $classification_display
+
+Watchdog exits. The scheduler must validate and activate the prepared new pin." 32
+        return
+      fi
       write_log "clean-success: job done. No relaunch, no red banner."
       invoke_ilk_notify "ship" "$proj_name" "classification: $classification_display"
       write_banner "DONE — $(to_upper "$classification")" \

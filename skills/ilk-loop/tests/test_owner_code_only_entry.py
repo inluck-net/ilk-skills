@@ -13,9 +13,10 @@ pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='Mac production entr
 ROOT=Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize('case',['normal','hold','pending-advance','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red'])
+@pytest.mark.parametrize('case',['normal','hold','pending-advance','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain'])
 def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,monkeypatch,case):
     human_hold_during_gate=case=='hold'
+    upgrading=case=='upgrade-drain'
     spec=importlib.util.spec_from_file_location('entry_fixture',Path(__file__).with_name('test_pre_loop_exit_sentinel.py'))
     fixtures=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixtures)
     world=fixtures._build_world_shipped(tmp_path,with_steps=True);work=world['project']
@@ -31,12 +32,12 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
             (work/'counter.py').write_text('def f(value): return value + 2\n')
             git('add','.');git('commit','-qm','pre-existing accepted behavior')
     later=world['plans']/'2026-10-11-later.md'
-    if case=='two-plans':
+    if case=='two-plans' or upgrading:
         later.write_text('---\nplan: later\nstatus: pending\ncurrent_step: 0\nestimated_steps: 1\n---\n# Later\n'
             '## Steps\n### Step 0: add file\n```yaml\nlocal_checks:\n'
             '  - command: python3 -I -c "from pathlib import Path;assert Path(\'later.txt\').read_text()==\'accepted\'"\n```\n')
         master.write_text(master.read_text()+'\n| '+later.name+' |\n')
-    if human_hold_during_gate:
+    if human_hold_during_gate or upgrading:
         # The coordinator lives outside the gate's write boundary. An ignored
         # readiness file synchronizes it without changing the accepted tree.
         import shlex
@@ -64,6 +65,10 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
 ''');cli.chmod(0o700)
     inputs=tmp_path/'inputs';manifest=prepare(ROOT,home,inputs)
     pin_launch_resources(inputs,project=work,executables={'python':sys.executable,'claude':str(cli)})
+    if upgrading:
+        target_inputs=tmp_path/'upgrade-target-inputs'
+        target_manifest=prepare(ROOT,home,target_inputs,revision='HEAD^')
+        pin_launch_resources(target_inputs,project=work,executables={'python':sys.executable,'claude':str(cli)})
     code=Path(manifest['code_root'])
     if case.startswith('pending-'):
         from iteration_context import resolve_context,write_context
@@ -101,12 +106,13 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         PYTHONPATH=str(code/'skills/ilk-loop/scripts'),PATH=str(world['bin'])+os.pathsep+os.environ['PATH'])
     for key in ('ILK_SKIP_MAIN','ILK_WORKER_SESSION','ILK_ITER_CONTEXT','ILK_ITER_RECORD_STAGE'):env.pop(key,None)
     runtime=world['data_home']/'projects'/world['key']/'runtime/launcher'
+    if upgrading:env['ILK_ENABLE_UPGRADE_DRAIN']='1'
     process=subprocess.Popen(['bash',str(code/'skills/ilk-loop/scripts/run_ilk_loop_claude.sh'),
         '--project-path',str(work),'--max-iterations','2' if case=='two-plans' else '1','--iteration-timeout-min','1','--run-local-checks',
         '--mcp-config-path',str(inputs/'mcp.json')],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
         start_new_session=True)
     try:
-        if human_hold_during_gate:
+        if human_hold_during_gate or upgrading:
             from iteration_clock import monotonic
             import threading
             # Fixture startup judgment: observed gates begin within ~12s;
@@ -115,7 +121,14 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             while not (work/'gate-ready').exists():
                 assert process.poll() is None and monotonic()<deadline
                 threading.Event().wait(.02)
-            master.write_text(master.read_text().replace('status: active','status: blocked\nhold: human'))
+            if human_hold_during_gate:
+                master.write_text(master.read_text().replace('status: active','status: blocked\nhold: human'))
+            else:
+                running=json.loads((runtime/'last-exit.json').read_text())
+                (runtime/'upgrade-drain-request.json').write_text(json.dumps(dict(schema_version=1,
+                    run_id=running['run_id'],from_toolkit_sha=manifest['toolkit_sha'],master_path=str(master),
+                    next_inputs_dir=str(target_inputs),next_toolkit_sha=target_manifest['toolkit_sha'],
+                    consumer_protocol='upgrade-drain-v1-owner-confirmed')))
         # 40s fixture judgment for sampled ~12s launch/close, below the
         # deliberately supplied 60s iteration budget; slower valid startup
         # falsifies this test bound, not a production limit.
@@ -134,6 +147,19 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             assert not project_status(runtime)['busy']
             attempts=list((runtime/'driver-step').glob('*/attempt.json'))
             assert any(json.loads(path.read_text())['all_passed'] for path in attempts)
+            return
+        if upgrading:
+            assert terminal['state']=='upgrade-drained',(terminal,stdout[-4500:],stderr[-4500:])
+            assert process.returncode==0
+            assert terminal['toolkit_sha']==manifest['toolkit_sha']
+            assert terminal['next_toolkit_sha']==target_manifest['toolkit_sha']
+            assert terminal['master_path']==str(master) and str(work) in terminal['consumer_worktrees']
+            assert 'status: shipped' in plan.read_text() and 'current_step: 1' in plan.read_text()
+            assert 'status: pending' in later.read_text() and 'current_step: 0' in later.read_text()
+            assert 'status: active' in master.read_text()
+            assert (home/'settings.json').read_bytes()==original
+            assert not project_status(runtime)['busy']
+            assert not (runtime/'running.pid').exists()
             return
         if case.startswith('pending-'):
             assert terminal['state']=='already-shipped',(terminal,stdout[-4500:],stderr[-4500:])

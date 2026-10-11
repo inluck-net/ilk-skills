@@ -135,6 +135,13 @@ def test_guard_allows_a_crash(tmp_path: Path) -> None:
     assert rc == 0, out
 
 
+def test_guard_refuses_an_old_pin_after_upgrade_drain(tmp_path: Path) -> None:
+    w=_world(tmp_path)
+    (w['launcher']/'last-exit.json').write_text(json.dumps(dict(state='upgrade-drained',run_id='old')))
+    rc,out=_guard(w)
+    assert rc==14 and out['verdict']=='upgrade-drained'
+
+
 def test_guard_sees_a_fresh_launch_as_alive(tmp_path: Path) -> None:
     """The scheduler dispatched after the old run ended; the new runner has
     not taken run.lock yet.  Relaunching --force over it starts a duplicate."""

@@ -733,6 +733,7 @@ def count_rate_limit_events(
 # Internal labels returned by classify_log_keywords() ("local-check", "api",
 # "unknown") are NOT final classification labels and are intentionally excluded.
 CLASSIFICATION_LABELS: tuple[str, ...] = (
+    "upgrade-drained",
     "interrupted",
     "local-checks-stuck",
     "local-checks-broken",
@@ -1667,6 +1668,8 @@ def classify(
     # a-one-iteration-gate-failure-is-not-stuck.
     sentinel = read_sentinel(project_path)
     _SENTINEL_FAILURE_MAP: dict[str, str] = {
+        "upgrade-drained": "upgrade-drained",
+        "upgrade_request_invalid": "self-hosting-drift",
         "budget_exhausted": "budget-exhausted",
         "run_inputs_changed": "self-hosting-drift",
         "code_only_acceptance_failed": "self-hosting-drift",
@@ -2284,6 +2287,12 @@ def recommend_params(
         return cur_max, cur_to, (
             "Yielded for another project's pending merge. The scheduler "
             "relaunches when that merge completes. Params unchanged."
+        )
+    if label == "upgrade-drained":
+        return None, None, (
+            "Intentional upgrade boundary; pending work and claims remain. "
+            "Do not relaunch the old toolkit pin. Activate only the prepared "
+            "new inputs after old process/lock exit and normal hold checks."
         )
     if label == "blocked-no-runnable":
         return None, None, (
@@ -3237,6 +3246,12 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
             "merge-deferred, which is about this run's own merge. "
             "The scheduler will relaunch when the other project's "
             "merge completes."
+        )
+    if label == "upgrade-drained":
+        return (
+            "The driver accepted and closed the current step, then exited at "
+            "the owner's requested upgrade boundary. The batch remains pending. "
+            "The watchdog leaves the prepared new-pin activation to the scheduler."
         )
     if label == "blocked-no-runnable":
         return (

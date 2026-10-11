@@ -5613,9 +5613,15 @@ if sys.argv[2]: d['held_by']=sys.argv[2]
 fc=json.loads(sys.argv[3]) if sys.argv[3] else None
 if fc: d['failed_check']=fc
 if sys.argv[5]: d['yielded_to']=sys.argv[5]
+drain=json.loads(sys.argv[6]) if sys.argv[6] else None
+if drain: d.update(drain)
+if d['state']=='upgrade_request_invalid' and sys.argv[7]:
+  with open(sys.argv[7]) as frozen_file: frozen=json.load(frozen_file)
+  d['master_path']=frozen.get('dispatch',{}).get('master_path')
+  d['consumer_worktrees']=sorted(set(frozen.get('observe_tree',{}).values())|{frozen['exec_tree']})
 print(json.dumps(d))" \
     "$_merge_deferred_json" "${HELD_BY:-}" "${_FAILED_CHECK_JSON:-}" \
-    "${ended_at:-}" "${YIELDED_TO:-}"
+    "${ended_at:-}" "${YIELDED_TO:-}" "${_UPGRADE_DRAIN_JSON:-}" "${ILK_ITER_CONTEXT:-}"
 }
 
 # ----- Ledger helpers --------------------------------------------------------
@@ -8276,6 +8282,37 @@ print(json.dumps(d))
       break
     elif [[ "$CLASSIFIED_STATUS" == "blocked-no-runnable" ]]; then
       stop_reason="blocked-no-runnable"
+      break
+    fi
+
+    # Opt-in only: consumer readers must be installed before the owner
+    # writes a protected request. A red/pending landing never reaches here.
+    # This follows the durable close and all mandatory gates/state/cleanup.
+    if [[ "${ILK_ENABLE_UPGRADE_DRAIN:-}" == 1 && "${ILK_WORKER_MODE:-}" == code-only \
+          && -f "${runtime_dir}/upgrade-drain-request.json" ]]; then
+      if _UPGRADE_DRAIN_JSON=$(python3 - "$ILK_ITER_CONTEXT" "$JSONL_LOG" "${_ILK_SCRIPT_DIR}" <<'PYDRAIN'
+import json,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[3])
+from iteration_context import read_context
+from iteration_clock import monotonic
+from bounded_run import run
+context=read_context(Path(sys.argv[1]))
+remaining=context['iteration_deadline_monotonic']-monotonic()
+if remaining<=0:raise SystemExit('original iteration deadline reached before upgrade boundary')
+code,out,err,timed_out=run([sys.executable,str(Path(sys.argv[3])/'upgrade_drain.py'),
+    '--context',sys.argv[1],'--log',sys.argv[2]],cwd=context['exec_tree'],timeout=remaining)
+if code!=0 or timed_out:raise SystemExit(err or 'upgrade boundary validation failed')
+record=json.loads(out)
+if not isinstance(record,dict):raise SystemExit('upgrade request disappeared')
+print(json.dumps(record))
+PYDRAIN
+      ); then
+        stop_reason="upgrade-drained"
+      else
+        _UPGRADE_DRAIN_JSON=""
+        stop_reason="upgrade_request_invalid"
+      fi
       break
     fi
 

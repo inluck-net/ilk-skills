@@ -91,7 +91,7 @@ def _epoch(raw: object) -> float | None:
 
 
 def _pid_alive(pid: object) -> bool:
-    if not isinstance(pid, int) or pid <= 0:
+    if isinstance(pid,bool) or not isinstance(pid, int) or pid <= 0:
         return False
     try:
         os.kill(pid, 0)
@@ -118,6 +118,22 @@ def decide(project: Path, launcher_dir: Path, now: float | None = None) -> tuple
     activity=project_status(launcher_dir,project=project,now=now)
     if activity['busy']:
         return 10, {"verdict":"alive","reason":"registry busy: "+activity['source']}
+
+    # Legacy launchers have no exact registry identity. Their live recorded
+    # PID is a conservative busy refusal, never authority to signal/relaunch.
+    # No argv matching is needed to avoid launching over an unknown owner.
+    legacy_lock=_read_json(launcher_dir/'run.lock') or {}
+    if _pid_alive(legacy_lock.get('pid')):
+        return 10, {'verdict':'alive','reason':'unowned legacy lock metadata PID exists; refuse duplicate launch'}
+    legacy_launch=_read_json(launcher_dir/'last-launch.json') or {}
+    launched=_epoch(legacy_launch.get('started_at'))
+    ended=_epoch(sentinel.get('ended_at'))
+    if (launched is not None and 0<=now-launched<LAUNCH_WINDOW_SEC
+            and (ended is None or launched>ended) and _pid_alive(legacy_launch.get('pid'))):
+        return 10, {'verdict':'alive','reason':'unowned legacy launch inside existing launch window'}
+
+    if sentinel.get('state')=='upgrade-drained':
+        return 14, {'verdict':'upgrade-drained','reason':'intentional upgrade; scheduler must select the prepared new pin'}
 
     stopped_by = str(sentinel.get("stopped_by") or "")
     if sentinel.get("state") == "interrupted" and (stopped_by.startswith("signal:") or stopped_by=="ilk-stop"):
