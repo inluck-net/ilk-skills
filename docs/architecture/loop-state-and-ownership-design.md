@@ -534,3 +534,14 @@ unknown evidence refuses. Atomic fsynced ID bookkeeping replaces the prior
 whole-file write. This is new single-owner recovery, not multi-plan atomicity,
 owned-contract revision, or green proof. The focused affected checks passed 37
 in 1.15s and three injected gaps passed in 0.33s; no full suite ran.
+
+The toolkit proof consumer now rejects additive accepted/green flags that are
+false or unknown, progress flags/protocol, and unknown schema/phase before
+counting a scoped acceptance or continuation. This is a new reader constraint;
+legacy rows without the additive fields retain their historical interpretation.
+Four actual closed-acceptance negatives previously reported proven despite
+contradictory non-green flags. Corrected proof checks passed 16 in 10.37s and
+unknown/non-green continuation checks passed nine in 4.94s. This validates
+historical scoped proof only; no current gate outcome is reused, and batch final
+verification stays opt-in. A stale fixture name was corrected after reproducing
+its failure against the prior installed reader; frozen scope was not weakened.

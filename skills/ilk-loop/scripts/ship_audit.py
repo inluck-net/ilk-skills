@@ -328,12 +328,27 @@ def count_authored_steps(body: str) -> list[int]:
     return sorted(int(x) for x in _STEP_HEADING_RE.findall(scoped))
 
 
+def ledger_record_has_green_shape(record):
+    """Typed non-green or unknown flags never grant historical green proof."""
+    if 'progress_protocol' in record:return False
+    if any(key in record and record[key] is not True for key in ('accepted','green_accepted')):
+        return False
+    if any(key in record and record[key] is not False for key in ('progress_accepted','progress_integrity_passed')):
+        return False
+    if 'context_schema_version' in record and (type(record['context_schema_version']) is not int or record['context_schema_version']!=1):
+        return False
+    phase=record.get('record_phase')
+    if phase is not None and (not isinstance(phase,str) or phase not in {'provisional','close'}):return False
+    return True
+
+
 def ledger_record_is_reachable(record: dict, cwd: Path | None = None) -> bool:
     """Reject proof whose commit identities are outside audited HEAD.
 
     Rows predating commit identity fields retain their legacy interpretation;
     newly produced rows always carry commits or a gate-at-head identity.
     """
+    if not ledger_record_has_green_shape(record):return False
     if record.get('record_phase')=='close' and (record.get('integrity_passed') is not True or record.get('landed') is not True or record.get('gate_outcome')!='pass'):
         return False
     return ledger_record_range_is_reachable(record,cwd)
@@ -844,7 +859,7 @@ def _accepted_continuation(records,anchor,*,cwd,master,master_fp):
         covered={};slugs=set()
         for row in records:
             checks=row.get('driver_gate_checks') or []
-            if (row.get('driver_owned') is not True or row.get('record_phase')!='close'
+            if (not ledger_record_has_green_shape(row) or row.get('driver_owned') is not True or row.get('record_phase')!='close'
                     or row.get('integrity_passed') is not True or row.get('landed') is not True
                     or row.get('gate_outcome')!='pass' or row.get('master_path')!=str(master)
                     or row.get('context_master_fingerprint')!=master_fp or not checks
@@ -899,7 +914,7 @@ def _resolve_driver_gate(records,*,slug,authored,declared_checks,cwd,subplan_pat
         return 'incomplete','scoped driver proof identity is unavailable'
     valid=[]
     for row in candidates:
-        if (row.get('context_plan_path')!=str(plan) or row.get('master_path')!=str(master)
+        if (not ledger_record_has_green_shape(row) or row.get('context_plan_path')!=str(plan) or row.get('master_path')!=str(master)
                 or row.get('context_plan_fingerprint')!=plan_fp or row.get('context_master_fingerprint')!=master_fp
                 or row.get('integrity_passed') is not True or row.get('landed') is not True
                 or row.get('gate_outcome')!='pass' or not row.get('accepted_head')):continue
@@ -1015,6 +1030,7 @@ def audit_ship(
     # Closed raw-red progress is diagnostic evidence, never green proof.
     progress_reasons=[record for record in (ledger_records or []) if isinstance(record,dict)
                       and closed_progress_is_observable(record,cwd,subplan_path,master_path)]
+    driver_records=[rec for rec in (ledger_records or []) if isinstance(rec,dict)]
     if ledger_records is not None:
         ledger_records = [rec for rec in ledger_records
                           if isinstance(rec, dict) and ledger_record_is_reachable(rec, cwd)]
@@ -1049,7 +1065,7 @@ def audit_ship(
             _legacy_reason = "proven (legacy: per-step records not required — unparseable master created)"
 
     # Gate half (AC-8: exempt no-gate sub-plans from gate check only).
-    driver_gate=_resolve_driver_gate(ledger_records,slug=slug,authored=authored,declared_checks=declared_checks,
+    driver_gate=_resolve_driver_gate(driver_records,slug=slug,authored=authored,declared_checks=declared_checks,
                                     cwd=cwd,subplan_path=subplan_path,master_path=master_path)
     if driver_gate is not None and gate_passed=='unknown':
         gate_verdict,gate_reason=driver_gate

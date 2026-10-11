@@ -3304,3 +3304,19 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
   Specific unknown binding/foreign reason/human byte edit cases refuse.
   Multi-plan atomicity remains open. Legacy authority only; owned Mac frozen
   contracts still refuse this path. No full suite or live plan edits occurred.
+
+- B2/E2 toolkit historical-proof flag correction: four real closed-acceptance
+  negatives set accepted:false, green_accepted:false, progress_accepted:true or
+  progress_protocol on otherwise valid proof; all four incorrectly reported
+  proven. New shared shape check refuses typed non-green/unknown flags and
+  unknown schema/phase before reachability, direct scoped acceptance and
+  continuation proof. Raw closed driver candidates remain available to diagnose
+  incomplete proof rather than silently falling back after filtering. Existing
+  legacy rows without additive flags retain their own semantics. No outcome
+  reuse or final verifier is introduced. Initial continuation fixture failure
+  reproduced against installed immutable 60941f1d: its low-level step.md name
+  was absent from the later canonical registry. Fixture corrected to a real
+  dated plan; scope enforcement unchanged. Sixteen proof checks passed in
+  10.37s; unknown flag/schema and non-green continuation checks passed nine in
+  4.94s. Next: archive owned progress entry and deliver these checked readers
+  and return-red recovery at the next freshly proved idle-services boundary.

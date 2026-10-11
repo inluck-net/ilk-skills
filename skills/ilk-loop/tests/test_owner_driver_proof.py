@@ -12,8 +12,15 @@ import test_owner_driver_step as fixtures
 
 def closed_fixture(tmp_path,monkeypatch,*,two_plans=False):
     context,root,plan=fixtures.fixture(tmp_path)
+    # Real registries use the dated plan convention; step.md is a low-level
+    # fixture name and is not rediscovered into the later canonical context.
+    from iteration_context import plan_snapshot
+    old_name=plan.name;renamed=plan.with_name('2026-10-11-counter.md');plan.rename(renamed);plan=renamed
+    context['plans'].pop(old_name)
+    context['plans'][plan.name]=plan_snapshot(plan)
+    context['dispatch']['subplan_path']=str(plan)
     master=Path(context['plans_dir'])/'MASTER-proof.md'
-    master.write_text('---\nstatus: active\n---\n# Master\n## Sub-plan registry\n| File |\n|---|\n| step.md |\n')
+    master.write_text('---\nstatus: active\n---\n# Master\n## Sub-plan registry\n| File |\n|---|\n| 2026-10-11-counter.md |\n')
     if two_plans:
         later=plan.with_name('2026-10-11-later.md')
         later.write_text('---\nplan: later\nstatus: pending\ncurrent_step: 0\n---\n# Later\n## Steps\n'
@@ -54,7 +61,7 @@ def test_scoped_proof_survives_empty_marker_without_repeating_gate(tmp_path,monk
     assert verdict['proven'],verdict
 
 
-@pytest.mark.parametrize('tamper',[None,'unclosed','red','base','tree','contract','unknown-commit'])
+@pytest.mark.parametrize('tamper',[None,'unclosed','red','base','tree','contract','unknown-commit','non-green','unknown-flag'])
 def test_later_independent_accepted_step_preserves_prior_closed_ship(tmp_path,monkeypatch,tamper):
     """An actual second acceptance, not a fabricated cached gate result."""
     from iteration_context import resolve_context
@@ -77,7 +84,7 @@ def test_later_independent_accepted_step_preserves_prior_closed_ship(tmp_path,mo
         'merge_outcome':'not-applicable','driver_acceptance':result,'driver_integrity_passed':True,
         'state_audit':{'explained':True},'execution':capture_execution(context)})
     monkeypatch.delenv('ILK_ITER_RECORD_STAGE')
-    if tamper in {'unclosed','red','base','tree'}:
+    if tamper in {'unclosed','red','base','tree','non-green','unknown-flag'}:
         import json
         rows=[json.loads(line) for line in ledger.read_text().splitlines()]
         for row in rows:
@@ -85,6 +92,8 @@ def test_later_independent_accepted_step_preserves_prior_closed_ship(tmp_path,mo
                 if tamper=='unclosed':row['record_phase']='provisional'
                 elif tamper=='red':row['gate_outcome']='fail'
                 elif tamper=='base':row.pop('acceptance_base_commit',None)
+                elif tamper=='non-green':row['progress_accepted']=True
+                elif tamper=='unknown-flag':row['green_accepted']=None
                 else:row['accepted_tree']='0'*40
         ledger.write_text('\n'.join(json.dumps(row) for row in rows)+'\n')
     elif tamper=='contract':later.write_text(later.read_text()+'\n## Contract\nchanged\n')
@@ -107,4 +116,15 @@ def test_scoped_proof_never_covers_changed_code_or_contract(tmp_path,monkeypatch
         for row in rows:
             if row.get('record_phase')=='close':row['driver_gate_checks']=[]
         ledger.write_text('\n'.join(json.dumps(row) for row in rows)+'\n')
+    assert not audit(root,plan,master,ledger)['proven']
+
+
+@pytest.mark.parametrize('field,value',[('accepted',False),('green_accepted',False),('progress_accepted',True),('progress_protocol','measured-red-progress-v1'),('green_accepted',None),('progress_accepted',None),('context_schema_version',True)])
+def test_closed_proof_cannot_conflate_non_green_flags(tmp_path,monkeypatch,field,value):
+    import json
+    root,plan,master,ledger=closed_fixture(tmp_path,monkeypatch)
+    rows=[json.loads(line) for line in ledger.read_text().splitlines()]
+    for row in rows:
+        if row.get('record_phase')=='close':row[field]=value
+    ledger.write_text('\n'.join(json.dumps(row) for row in rows)+'\n')
     assert not audit(root,plan,master,ledger)['proven']
