@@ -121,9 +121,13 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--context',type=Path,required=True)
     parser.add_argument('--accepted',type=Path,required=True)
+    parser.add_argument('--progress',action='store_true',help='explicit frozen measured-red progress landing')
     args=parser.parse_args();context=read_context(args.context)
     require_driver(context)
-    result=land(context,json.loads(args.accepted.read_text()),deadline=context['iteration_deadline_monotonic'])
+    if args.progress and (type(context.get('measured_red_progress_protocol')) is not int or context['measured_red_progress_protocol'] != 1):
+        raise ContextError('measured-red landing requires frozen opt-in')
+    adapter=land_progress if args.progress else land
+    result=adapter(context,json.loads(args.accepted.read_text()),deadline=context['iteration_deadline_monotonic'])
     print(json.dumps(result))
 
 

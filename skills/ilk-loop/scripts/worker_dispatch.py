@@ -43,6 +43,7 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
     if deadline<=monotonic():raise ContextError('iteration deadline reached before preparation')
     from driver_step import validate,gate_contract,admit_retained_red_entry
     context=dict(context,worker_tools=manifest.get('worker_tools','shell'),
+                 measured_red_progress_protocol=manifest.get('measured_red_progress_protocol'),
                  private_worker_home=manifest['worker_home'],worker_inputs_dir=str(inputs),
                  toolkit_code_inventory_sha256=manifest.get('code_inventory_sha256'),
                  worker_sandbox_adapter='macos-brokered-shell',run_registry_dir=str(registry),
@@ -62,6 +63,7 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
     ipc=Path(tempfile.mkdtemp(prefix='ilk-ipc-')).resolve()
     scratch=Path(tempfile.mkdtemp(prefix='ilk-worker-')).resolve()
     context=dict(context,worker_tools=manifest.get('worker_tools','shell'),
+                 measured_red_progress_protocol=manifest.get('measured_red_progress_protocol'),
                  private_worker_home=manifest['worker_home'],worker_inputs_dir=str(inputs),
                  toolkit_code_inventory_sha256=manifest.get('code_inventory_sha256'),
                  worker_tmp_dir=str(scratch),worker_shell_python=sys.executable,

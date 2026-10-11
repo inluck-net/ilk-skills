@@ -2995,3 +2995,21 @@ plans, pause and private dispatched inputs remain unchanged.
   Native Windows/member/timeout entry and marker crash tests remain open.
 - No model/full suite, current worker/plan/pause/inputs or installation change.
   Next opt-in worker/loop integration plus marker-crash/terminal consumers.
+
+
+### Candidate opt-in worker and loop bridges — 2026-10-12
+
+Implemented frozen `measured_red_progress_protocol: 1` preparation/context
+agreement, the owned worker assessment/commit/marker path, explicit non-green
+projection/landing/close CLI bridges and separate Bash progress/integrity flags.
+Default pins remain raw-green. Preparation refuses partial runtime capability;
+the capability marker is deliberately absent pending archived runner evidence.
+No installed pointer, working batch, plan or worker inputs were changed.
+
+Observed checks (model none): owned iteration **1 passed in 8.17s**; amended
+projection, run-input policy/partial-revision refusal and existing green landing
+scope **35 passed in 46.89s**. Bash syntax and diff checks passed. The worker
+fixture uses one stub turn and actual failed pytest/head/base Git measurements;
+it does not claim provider speed or consumer completion. Next: committed
+archive's disposable measured-red runner entry, terminal/consumer guards,
+selfmod close and marker crash recovery. Whole estimate remains about 70%.

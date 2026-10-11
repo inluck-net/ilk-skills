@@ -71,3 +71,19 @@ def finalize(context,log,*,deadline):
                 return 0
             append_record(ledger,projected);_sync_parent(ledger)
         return 1
+
+
+def main():
+    import argparse
+    from iteration_context import read_context
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--context',type=Path,required=True)
+    parser.add_argument('--log',type=Path,required=True)
+    args=parser.parse_args();context=read_context(args.context)
+    if type(context.get('measured_red_progress_protocol')) is not int or context['measured_red_progress_protocol'] != 1:
+        raise ContextError('measured-red close requires frozen opt-in')
+    print(json.dumps({'closed_progress_rows':finalize(context,args.log,
+        deadline=context['iteration_deadline_monotonic']),'green_accepted':False}))
+
+
+if __name__=='__main__':main()

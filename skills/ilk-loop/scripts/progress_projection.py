@@ -56,3 +56,19 @@ def project(context,result,*,deadline):
                 batch_base=selected['batch_base_sha'],nodes=[dict(node_id=node,verdict='pre-existing')
                 for observation in observations for node in observation['node_ids']]))
         return record
+
+
+def main():
+    import argparse
+    from iteration_context import read_context
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--context',type=Path,required=True)
+    parser.add_argument('--accepted',type=Path,required=True)
+    args=parser.parse_args();context=read_context(args.context)
+    if type(context.get('measured_red_progress_protocol')) is not int or context['measured_red_progress_protocol'] != 1:
+        raise ContextError('measured-red projection requires frozen opt-in')
+    print(json.dumps(project(context,json.loads(args.accepted.read_text()),
+        deadline=context['iteration_deadline_monotonic'])))
+
+
+if __name__=='__main__':main()

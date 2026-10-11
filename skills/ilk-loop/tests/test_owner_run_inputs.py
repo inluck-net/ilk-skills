@@ -280,3 +280,17 @@ def test_manifest_provider_origin_is_configured_and_secret_free(tmp_path):
     assert 'actual provider unobserved' in manifest['provider_configured']['identity_basis']
     assert 'private-url-secret' not in (destination/'inputs.json').read_text()
     assert json.loads((destination/'worker-home/settings.json').read_text())['env']['ANTHROPIC_BASE_URL']==row['env']['ANTHROPIC_BASE_URL']
+
+
+def test_measured_red_worker_only_revision_cannot_be_launched(tmp_path):
+    repo,home,_=fixture(tmp_path)
+    scripts=repo/'skills/ilk-loop/scripts';scripts.mkdir(parents=True,exist_ok=True)
+    (scripts/'worker_iteration.py').write_text('def _accept_measured_progress(): pass\n')
+    for name in ('base_samples.py','measured_progress.py','progress_transaction.py','progress_ship.py','progress_projection.py','progress_close.py'):
+        (scripts/name).write_text('# candidate API\n')
+    subprocess.run(['git','-C',str(repo),'add','.'],check=True)
+    subprocess.run(['git','-C',str(repo),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','partial worker adapter'],check=True)
+    destination=tmp_path/'partial'
+    with pytest.raises(InputPinError,match='measured-red progress adapter absent'):
+        prepare(repo,home,destination,measured_red_progress=True)
+    assert not destination.exists()

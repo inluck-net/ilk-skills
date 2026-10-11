@@ -134,7 +134,7 @@ def verify_code_snapshot(destination,*,expected=None,deadline=None):
     return fingerprint
 
 
-def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD', observe_scope=False, project=None, worker_thinking='default', worker_tools='shell'):
+def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD', observe_scope=False, project=None, worker_thinking='default', worker_tools='shell', measured_red_progress=False):
     repo=repo.resolve();worker_home=worker_home.resolve();destination=destination.resolve()
     source_root=repo
     marker=repo/'.ilk-release.json'
@@ -147,6 +147,7 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
     archive=subprocess.check_output(['git','-C',str(repo),'archive',sha])
     source,settings_sources=_settings_sources(worker_home,project)
     if worker_tools not in {'shell','native'}:raise InputPinError('unknown worker tool profile')
+    if not isinstance(measured_red_progress,bool):raise InputPinError('explicit measured-red progress opt-in required')
     if worker_thinking not in {'default','disabled'}:raise InputPinError('unknown worker thinking profile')
     if worker_thinking=='disabled':
         from provider_control import validate_settings
@@ -179,6 +180,16 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
             api=code/'skills/ilk-loop/scripts/worker_iteration.py'
             functions={node.name for node in ast.parse(api.read_text()).body if isinstance(node,ast.FunctionDef)} if api.exists() else set()
             if '_tool_names' not in functions:raise InputPinError('native tool adapter absent in pinned revision')
+        if measured_red_progress:
+            api=code/'skills/ilk-loop/scripts/worker_iteration.py'
+            functions={node.name for node in ast.parse(api.read_text()).body if isinstance(node,ast.FunctionDef)} if api.exists() else set()
+            loop=code/'skills/ilk-loop/scripts/run_ilk_loop_claude.sh'
+            # Refuse a worker-only pin: acceptance without close/terminal wiring
+            # is not a launchable profile. Capability marker lands last.
+            runtime_ready=loop.is_file() and '# measured-red-progress-runtime-v1' in loop.read_text()
+            if not runtime_ready or '_accept_measured_progress' not in functions or any(not (code/'skills/ilk-loop/scripts'/name).is_file()
+                    for name in ('base_samples.py','measured_progress.py','progress_transaction.py','progress_ship.py','progress_projection.py','progress_close.py')):
+                raise InputPinError('measured-red progress adapter absent in pinned revision')
         if worker_thinking=='disabled' and not (code/'skills/ilk-loop/scripts/provider_control.py').is_file():
             raise InputPinError('thinking-control adapter absent in pinned revision')
         (home/'skills').symlink_to(code/'skills',target_is_directory=True)
@@ -229,6 +240,7 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
                   'scope_observation_only':observe_scope,
                   'settings_sources':settings_sources,'cli_setting_sources':'',
                   'worker_thinking':worker_thinking,'worker_tools':worker_tools,
+                  'measured_red_progress_protocol':1 if measured_red_progress else None,
                   'global_instruction_inputs':global_instructions,'code_inventory':code_inventory,
                   'code_inventory_sha256':_inventory_digest(code_inventory),
                   'python_cache_pinning':'generated __pycache__ excluded; source files pinned, external cache tamper requires explicit adapter',
@@ -309,6 +321,8 @@ def bind_context(destination: Path, context_path: Path) -> Path:
         raise InputPinError('nested Mac sandbox is unavailable; brokered shell required')
     if context.get('worker_sandbox_adapter')!='macos-brokered-shell':
         raise InputPinError('explicit brokered OS boundary required')
+    if context.get('measured_red_progress_protocol')!=manifest.get('measured_red_progress_protocol'):
+        raise InputPinError('measured-red progress policy differs from frozen inputs')
     if context.get('private_worker_home')!=manifest['worker_home'] or context.get('worker_inputs_dir')!=str(destination):
         raise InputPinError('private CLI input roles contradict prepared home')
     broker_path=context.get('shell_broker_path')
@@ -385,8 +399,9 @@ def main():
     parser.add_argument('--mcp',type=Path)
     parser.add_argument('--worker-tools',choices=['shell','native'],default='shell')
     parser.add_argument('--worker-thinking',choices=['default','disabled'],default='default')
+    parser.add_argument('--measured-red-progress',action='store_true')
     args=parser.parse_args()
-    result=prepare(args.repo,args.worker_home,args.destination,revision=args.revision,observe_scope=args.observe_scope,project=args.project,worker_thinking=args.worker_thinking,worker_tools=args.worker_tools)
+    result=prepare(args.repo,args.worker_home,args.destination,revision=args.revision,observe_scope=args.observe_scope,project=args.project,worker_thinking=args.worker_thinking,worker_tools=args.worker_tools,measured_red_progress=args.measured_red_progress)
     if args.project:result=pin_launch_resources(args.destination,project=args.project,mcp=args.mcp)
     print(json.dumps({'toolkit_sha':result['toolkit_sha'],'hook_count':len(result['hooks']),
                       'scope_observation_only':result['scope_observation_only']}))

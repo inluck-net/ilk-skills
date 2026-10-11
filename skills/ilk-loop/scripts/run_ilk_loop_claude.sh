@@ -6990,17 +6990,23 @@ print(json.dumps(d))
       ITER_QUOTA_EXHAUSTED=0
     fi
 
-    local _driver_acceptance_file="" _driver_accepted=0 _driver_stop_reason="" _driver_gate_results=""
+    local _driver_acceptance_file="" _driver_accepted=0 _driver_progress_accepted=0 _driver_stop_reason="" _driver_gate_results=""
     local _cleanup_started="" _cleanup_ended=""
     if [[ "${ILK_WORKER_MODE:-}" == "code-only" ]]; then
       _driver_acceptance_file="${RUN_LOG_DIR}/ctx-${i}-acceptance.json"
       if [[ -f "$_driver_acceptance_file" ]]; then
         _driver_accepted=$(jq -r 'if .accepted == true then 1 else 0 end' "$_driver_acceptance_file")
         _driver_stop_reason=$(jq -r '.stop_reason // empty' "$_driver_acceptance_file")
-        [[ "$_driver_accepted" -eq 1 ]] && ITER_COMPLETED=1
         _driver_gate_results="${RUN_LOG_DIR}/ctx-${i}-driver-gates.jsonl"
-        python3 "${_ILK_SCRIPT_DIR}/driver_step.py" --project-result "$_driver_acceptance_file" \
-          --context "$ILK_ITER_CONTEXT" --out "$_driver_gate_results" || _driver_stop_reason="code_only_acceptance_failed"
+        if python3 "${_ILK_SCRIPT_DIR}/driver_step.py" --project-result "$_driver_acceptance_file" \
+          --context "$ILK_ITER_CONTEXT" --out "$_driver_gate_results"; then
+          # This file was produced by the owned verifier, never worker JSON.
+          _driver_progress_accepted=$(jq -r 'if .progress_accepted == true and .accepted == false and .green_accepted == false then 1 else 0 end' "$_driver_gate_results")
+          if [[ "$_driver_accepted" -eq 1 || "$_driver_progress_accepted" -eq 1 ]]; then ITER_COMPLETED=1; fi
+        else
+          _driver_accepted=0; _driver_progress_accepted=0
+          _driver_stop_reason="code_only_acceptance_failed"
+        fi
       else
         _driver_stop_reason="code_only_acceptance_failed"
         if [[ "$ITER_COMPLETED" -eq 0 ]] && python3 -c 'import sys;sys.path.insert(0,sys.argv[1]);from iteration_context import read_context;from iteration_clock import monotonic;c=read_context();sys.exit(0 if monotonic()>=c["iteration_deadline_monotonic"] else 1)' "$_ILK_SCRIPT_DIR"; then
@@ -7185,7 +7191,7 @@ print(json.dumps(d))
     iter_stop_reason=$(_decide_iter_stop_reason \
       "$ITER_COMPLETED" "$total_new" "$ITER_BUDGET_EXHAUSTED" "$no_progress_streak" "$ITER_QUOTA_EXHAUSTED")
     if [[ "${ILK_WORKER_MODE:-}" == "code-only" ]]; then
-      if [[ "$_driver_accepted" -eq 1 ]]; then
+      if [[ "$_driver_accepted" -eq 1 || "$_driver_progress_accepted" -eq 1 ]]; then
         iter_stop_reason=""; no_progress_streak=0
       else
         iter_stop_reason="${_driver_stop_reason:-code_only_acceptance_failed}"
@@ -7220,7 +7226,7 @@ print(json.dumps(d))
     fi
 
     # Update no-progress streak
-    if [[ "$_driver_accepted" -eq 1 ]]; then
+    if [[ "$_driver_accepted" -eq 1 || "$_driver_progress_accepted" -eq 1 ]]; then
       no_progress_streak=0
     elif [[ "$total_new" -eq 0 ]]; then
       no_progress_streak=$((no_progress_streak + 1))
@@ -7841,7 +7847,9 @@ for line in sys.stdin:
     fi
     # Ship-proof ledger: write rows after the gate has run so
     # gate_pass_at_head can fire for zero-commit green gates.
-    post_iteration_ship "${_iter_slug:-}" "$_gate_outcome" "$total_new" "$i"
+    if [[ "$_driver_progress_accepted" -ne 1 ]]; then
+      post_iteration_ship "${_iter_slug:-}" "$_gate_outcome" "$total_new" "$i"
+    fi # progress_ship owns the marker/CAS; raw gate outcome stays fail.
 
     # Build new_commits JSON
     local new_commits_json="{}"
@@ -8016,7 +8024,7 @@ append_revert_row(
     # mistaken for a sub-plan that never shipped. Integrity still gets the last
     # word -- it runs after, and its revert is not re-applied (see the
     # --only-interrupted note in converge_ship_transition).
-    if [[ "$iter_stop_reason" != "local_checks_inconclusive" ]]; then
+    if [[ "$iter_stop_reason" != "local_checks_inconclusive" && "$_driver_progress_accepted" -ne 1 ]]; then
       converge_ship_transition "$(get_plans_dir)"
     fi
 
@@ -8028,13 +8036,21 @@ append_revert_row(
     # watchdog park the project.
     # (sub-plan an-unrunnable-derived-check-stops-once, AC-2)
     local _si_stderr=""
-    local _ship_integrity_passed=0
+    local _ship_integrity_passed=0 _progress_integrity_passed=0 _owned_landing_json="{}"
     local _integrity_started="" _integrity_ended="" _landing_started="" _landing_ended=""
     _integrity_started=$(python3 "${_ILK_SCRIPT_DIR}/iteration_clock.py") || _integrity_started=""
     if [[ "$iter_stop_reason" == "local_checks_environment_fault" || "$iter_stop_reason" == "local_checks_inconclusive" ]]; then
       echo "  [ship-integrity] skipped — gate unmeasured; no red-based rollback" >&2
     else
-    if _si_stderr=$(test_ship_integrity "$(get_plans_dir)" "$local_checks_results" "$heads_before_file" "$heads_after_file" 2>&1 1>/dev/null); then
+    if [[ "$_driver_progress_accepted" -eq 1 ]]; then
+      if python3 "${_ILK_SCRIPT_DIR}/progress_projection.py" --context "$ILK_ITER_CONTEXT" \
+        --accepted "$_driver_acceptance_file" >/dev/null; then
+        _progress_integrity_passed=1
+      else
+        iter_stop_reason="local_checks_inconclusive"
+        stop_reason="local_checks_inconclusive"
+      fi
+    elif _si_stderr=$(test_ship_integrity "$(get_plans_dir)" "$local_checks_results" "$heads_before_file" "$heads_after_file" 2>&1 1>/dev/null); then
       _ship_integrity_passed=1
     elif [[ "$?" -eq 2 ]]; then
       # Missing frozen scope is observation failure, never rollback authority.
@@ -8101,7 +8117,7 @@ append_revert_row(
     [[ "${ILK_WORKER_MODE:-}" == "code-only" ]] && _state_audit_args+=(--enforce)
     _state_audit_json=$(python3 "${_ILK_SCRIPT_DIR}/plan_state.py" "${_state_audit_args[@]}") || _state_audit_rc=$?
     if [[ "$_state_audit_rc" -ne 0 ]]; then
-      _ship_integrity_passed=0
+      _ship_integrity_passed=0; _progress_integrity_passed=0
       if [[ "$_state_audit_rc" -eq 3 ]] && jq -e '.explained == false' <<<"$_state_audit_json" >/dev/null 2>&1; then
         _master_tampered=1
         echo "  ! [state-audit] measured unexplained state; refusing integrity proof" >&2
@@ -8115,7 +8131,7 @@ append_revert_row(
     # after the agent returned) is the same class of violation.  No park:
     # the restore already put the fields back as they were.
     if [[ "$_master_tampered" -eq 1 || "$_gates_tampered" -eq 1 ]]; then
-      _ship_integrity_passed=0
+      _ship_integrity_passed=0; _progress_integrity_passed=0
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"
     fi
@@ -8153,7 +8169,7 @@ print(json.dumps(capture_execution(json.loads(Path(sys.argv[2]).read_text()))))
         _merge_blocked_reason="invalid persisted selfmod state"
       fi
       # Double-check the JSONL in case iter_stop_reason was overwritten.
-      if [[ -z "$_merge_blocked_reason" && -n "$local_checks_results" && -s "$local_checks_results" ]]; then
+      if [[ -z "$_merge_blocked_reason" && "$_progress_integrity_passed" -ne 1 && -n "$local_checks_results" && -s "$local_checks_results" ]]; then
         local _blocking_script="${_SKILL_ROOT}/ilk-loop/scripts/blocking_checks.py"
         if [[ -f "$_blocking_script" ]] && python3 "$_blocking_script" "$local_checks_results" --any 2>/dev/null; then
           _merge_blocked_reason="red gate: $(python3 "$_blocking_script" "$local_checks_results" --describe 2>/dev/null || echo 'unknown')"
@@ -8185,10 +8201,13 @@ print(json.dumps(capture_execution(json.loads(Path(sys.argv[2]).read_text()))))
           # Keep the original worktree readable through integrity/close; no
           # legacy create/refresh/remove or daemon bounce on this exact path.
           local _owned_landing_output
+          local _owned_landing_args=(--context "$ILK_ITER_CONTEXT" --accepted "$_driver_acceptance_file")
+          [[ "$_progress_integrity_passed" -eq 1 ]] && _owned_landing_args+=(--progress)
           _owned_landing_output=$(python3 "${_ILK_SCRIPT_DIR}/selfmod_landing.py" \
-            --context "$ILK_ITER_CONTEXT" --accepted "$_driver_acceptance_file" 2>&1) || merge_rc=$?
+            "${_owned_landing_args[@]}") || merge_rc=$?
           if [[ "$merge_rc" -eq 0 ]]; then
-            echo "[selfmod] exact accepted landing: $_owned_landing_output"
+            _owned_landing_json="$_owned_landing_output"
+            echo "[selfmod] exact owned landing: $_owned_landing_output"
             # Terminal selection keeps the source project identity; current
             # integrity/close reads retain the frozen execution mapping.
             PROJECT_PATH="$SELFMOD_ORIGINAL_PROJECT_PATH"
@@ -8315,6 +8334,7 @@ if last:
     _STATE_AUDIT_JSON="$_state_audit_json" \
     _DRIVER_ACCEPTANCE_FILE="$_driver_acceptance_file" \
     _SHIP_INTEGRITY_PASSED="$_ship_integrity_passed" \
+    _PROGRESS_INTEGRITY_PASSED="$_progress_integrity_passed" _OWNED_LANDING_JSON="$_owned_landing_json" \
     _PHASE_SCRIPT_DIR="${_ILK_SCRIPT_DIR}" \
     _PHASE_INTEGRITY_START="$_integrity_started" _PHASE_INTEGRITY_END="$_integrity_ended" \
     _PHASE_LANDING_START="$_landing_started" _PHASE_LANDING_END="$_landing_ended" \
@@ -8356,6 +8376,8 @@ d = {
   'execution': json.loads(os.environ.get('_EXECUTION_CAPTURE_JSON') or '{}'),
   'state_audit': json.loads(os.environ.get('_STATE_AUDIT_JSON') or '{}'),
   'driver_integrity_passed': os.environ['_SHIP_INTEGRITY_PASSED'] == '1',
+  'driver_progress_integrity_passed': os.environ['_PROGRESS_INTEGRITY_PASSED'] == '1',
+  'selfmod_landing': json.loads(os.environ['_OWNED_LANDING_JSON']),
   'exit_code': int(os.environ['_EXIT']),
   'new_commits_total': int(os.environ['_NEW_TOTAL']),
 }
@@ -8439,8 +8461,15 @@ print(json.dumps(d))
     set -e
 
     # Finalize the existing sidecar only from the durable close record.
-    if ! python3 "${_SKILL_ROOT}/ilk-loop/scripts/iteration_record.py" \
-      --log "$JSONL_LOG" --run-id "$RUN_ID" --iteration "$i" >/dev/null; then
+    local _close_projection_rc=0
+    if [[ "$_driver_progress_accepted" -eq 1 ]]; then
+      python3 "${_ILK_SCRIPT_DIR}/progress_close.py" --context "$ILK_ITER_CONTEXT" \
+        --log "$JSONL_LOG" >/dev/null || _close_projection_rc=$?
+    else
+      python3 "${_SKILL_ROOT}/ilk-loop/scripts/iteration_record.py" \
+        --log "$JSONL_LOG" --run-id "$RUN_ID" --iteration "$i" >/dev/null || _close_projection_rc=$?
+    fi
+    if [[ "$_close_projection_rc" -ne 0 ]]; then
       iter_stop_reason="iteration_record_projection_failed"
       stop_reason="iteration_record_projection_failed"
     fi

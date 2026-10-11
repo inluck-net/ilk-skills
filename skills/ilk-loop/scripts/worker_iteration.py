@@ -179,6 +179,29 @@ def _worker_turn(context,path,prompt,*,claude,model,budget,mcp,session,bound,man
                                       and row.get('subtype')=='init' and row.get('model')}))
 
 
+def _accept_measured_progress(context,result,*,gate_timeout):
+    """Opt-in transfer of complete fresh red observations; never green proof."""
+    if context.get('measured_red_progress_protocol')!=1:return None
+    attempts=result.get('attempts') or []
+    if not attempts:return None
+    attempt=attempts[-1]
+    if (attempt.get('verdict')!='red' or attempt.get('all_passed') is not False
+            or attempt.get('working_tree')==context.get('base_tree')):return None
+    from measured_progress import assess
+    from progress_transaction import accept
+    from progress_ship import complete
+    from iteration_clock import monotonic
+    # Reuse the existing red_owner 300s attribution allowance, bounded by
+    # the frozen original iteration deadline. No suite or prior outcome reuse.
+    allowance=min(300,context['iteration_deadline_monotonic']-monotonic())
+    decision=assess(context,attempt,budget_s=allowance)
+    if decision.get('progress_eligible') is not True:return None
+    progress=accept(context,attempt,decision,deadline=context['iteration_deadline_monotonic'],
+        gate_timeout=gate_timeout,budget_s=allowance)
+    complete(context,progress,deadline=context['iteration_deadline_monotonic'])
+    return progress
+
+
 def run(context,path,prompt,*,claude,model,budget,mcp,gate_timeout,turn=worker_turn):
     selected=read_dispatch(context);key=f"{selected['slug']}:{selected['step']}"
     recovery=Path(context['recovery_dir']);counts=recovery/'gate-red-counts.json';ids_path=recovery/'gate-red-ids.json'
@@ -187,6 +210,17 @@ def run(context,path,prompt,*,claude,model,budget,mcp,gate_timeout,turn=worker_t
     read_retry_state(counts,'count');read_retry_state(ids_path,'ids')
     from driver_step import read_gate_history
     read_gate_history(context)
+    protocol=context.get('measured_red_progress_protocol')
+    if protocol is not None and (type(protocol) is not int or protocol!=1):
+        raise ContextError('unknown frozen measured-red progress protocol')
+    if protocol==1:
+        from progress_transaction import recover
+        from progress_ship import complete
+        progress=recover(context,deadline=context['iteration_deadline_monotonic'])
+        if progress:
+            complete(context,progress,deadline=context['iteration_deadline_monotonic'])
+            progress.update(worker_turns=[])
+            return progress
     recovered=recover_acceptance(context,deadline=context['iteration_deadline_monotonic'])
     if recovered:
         recovered.update(worker_turns=[])
@@ -216,8 +250,11 @@ def run(context,path,prompt,*,claude,model,budget,mcp,gate_timeout,turn=worker_t
         session=outcome['session_id']
         phase(context,'gate')
         accepted=accept_step(context,default_timeout=gate_timeout,deadline=context['iteration_deadline_monotonic'],prior_attempts=attempts)
+        if not accepted['accepted']:
+            progress=_accept_measured_progress(context,accepted,gate_timeout=gate_timeout)
+            if progress:accepted=progress
         attempts=accepted['attempts']
-        if accepted['accepted']:
+        if accepted['accepted'] or accepted.get('progress_accepted') is True:
             if outcome.get('findings'):
                 from plan_state import append_findings
                 append_findings(Path(selected['subplan_path']),
@@ -291,7 +328,7 @@ def main():
     with destination.open('x') as stream:
         json.dump(result,stream);stream.write('\n');stream.flush();os.fsync(stream.fileno())
     destination.chmod(0o600)
-    return 0 if result['accepted'] else 1
+    return 0 if result['accepted'] or result.get('progress_accepted') is True else 1
 
 
 if __name__=='__main__':raise SystemExit(main())

@@ -13,8 +13,9 @@ pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='Mac production entr
 ROOT=Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize('case',['normal','selfmod','work-tree','native-tools','native-tools-batch-optin','hold','pending-advance','pending-selfmod','pending-work-tree','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain'])
+@pytest.mark.parametrize('case',['normal','selfmod','work-tree','native-tools','native-tools-batch-optin','hold','pending-advance','pending-selfmod','pending-work-tree','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain','measured-red'])
 def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,monkeypatch,case):
+    measured_red=case=='measured-red'
     human_hold_during_gate=case=='hold'
     upgrading=case=='upgrade-drain'
     spec=importlib.util.spec_from_file_location('entry_fixture',Path(__file__).with_name('test_pre_loop_exit_sentinel.py'))
@@ -30,6 +31,11 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
     plan=world['plans']/(fixtures.STEM+'.md')
     plan.write_text('---\nplan: '+fixtures.SLUG+'\nstatus: pending\ncurrent_step: 0\nestimated_steps: 1\nverification_tier: loop-verified\n---\n# Counter\n## Steps\n### Step 0: fix counter\n```yaml\nlocal_checks:\n  - command: python3 -I -c "from pathlib import Path;exec(Path(\'counter.py\').read_text());assert f(4)==6"\n```\n')
     master=world['plans']/'MASTER-2026-08-29-execution-plan.md'
+    if measured_red:
+        (work/'test_existing.py').write_text('def test_existing():\n    assert False\n')
+        git('add','test_existing.py');git('commit','-qm','measured existing failure')
+        body=plan.read_text();start=body.index('  - command:');end=body.index('\n```',start)
+        plan.write_text(body[:start]+'  - command: '+sys.executable+' -m pytest -q test_existing.py'+body[end:])
     if case=='selfmod':
         master.write_text(master.read_text().replace('status: active',
             'status: active\nilk_profile: unattended\nresult_file: '+str(tmp_path/'automatic-result.json')))
@@ -95,6 +101,11 @@ print(json.dumps({'type':'system','subtype':'init','session_id':'fixture-session
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'fixture-session'}))
 ''');cli.chmod(0o700)
     inputs=tmp_path/'inputs';manifest=prepare(work if case in {'selfmod','pending-selfmod'} else ROOT,home,inputs,worker_tools='native' if case.startswith('native-tools') else 'shell')
+    if measured_red:
+        # Test-only owner prepares an unavailable candidate policy. Public
+        # prepare refuses it until the runtime capability marker lands.
+        manifest['measured_red_progress_protocol']=1
+        (inputs/'inputs.json').write_text(json.dumps(manifest))
     pin_launch_resources(inputs,project=work,executables={'python':sys.executable,'claude':str(cli)})
     if upgrading:
         target_inputs=tmp_path/'upgrade-target-inputs'
@@ -271,6 +282,22 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             if case=='pending-selfmod':
                 assert prior_root.exists() and recovered[0]['merge_outcome']=='merged'
                 assert git('rev-parse','HEAD').stdout.strip()==subprocess.check_output(['git','-C',str(prior_root),'rev-parse','HEAD'],text=True).strip()
+            return
+        if measured_red:
+            assert terminal['state']=='shipped-unproven',(terminal,stdout[-6500:],stderr[-6500:])
+            assert 'current_step: 1' in plan.read_text() and 'status: shipped' in plan.read_text()
+            assert 'status: shipped' not in master.read_text()
+            rows=[json.loads(line) for line in (world['data_home']/'projects'/world['key']/'logs/.ilk-loop.log').read_text().splitlines()]
+            close=next(row for row in rows if row.get('record_phase')=='close')
+            assert close['driver_acceptance']['progress_accepted'] is True and close['driver_acceptance']['accepted'] is False
+            assert close['driver_integrity_passed'] is False and close['driver_progress_integrity_passed'] is True
+            assert close['state_audit']['explained'] is True and not close.get('stop_reason')
+            assert len(close['driver_acceptance']['worker_turns'])==1
+            from ship_proof_ledger import read_raw_records
+            ledger=read_raw_records(Path(close['context']['ledger_path']))
+            progress=[row for row in ledger if row.get('driver_progress_accepted')]
+            assert len(progress)==1 and progress[0]['gate_outcome']=='fail' and progress[0]['integrity_passed'] is False
+            assert not project_status(runtime)['busy'] and (home/'settings.json').read_bytes()==original
             return
         assert terminal['state']=='all-shipped',(terminal,stdout[-4500:],stderr[-4500:])
         provenance_records=[json.loads(line) for line in (world['data_home']/'projects'/world['key']/'logs/.ilk-loop.log').read_text().splitlines()]

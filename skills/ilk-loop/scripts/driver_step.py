@@ -223,6 +223,8 @@ def gate_input_fingerprint(context,selected):
     # unsupported by this observed-input comparison; no outcome is reused.
     inputs={key:context.get(key) for key in ('exec_tree','base_commit','toolkit_sha',
         'toolkit_code_inventory_sha256','instruction_input_inventory','mention_gate_policy')}
+    if context.get('measured_red_progress_protocol') is not None:
+        inputs['measured_red_progress_protocol']=context['measured_red_progress_protocol']
     inputs['dispatch']={key:selected.get(key) for key in ('slug','step','subplan_path','master_path')}
     inputs['plans']={name:row.get('fingerprint') for name,row in context['plans'].items()}
     inputs['master']=(context.get('master_snapshot') or {}).get('fingerprint')
@@ -559,6 +561,11 @@ def _accept_step(context,*,default_timeout):
 
 def project_result(result,context,*,allow_transaction_marker=False):
     """Adapt this transaction to existing gate readers without rerunning gates."""
+    if result.get('progress_accepted') is True:
+        if type(context.get('measured_red_progress_protocol')) is not int or context['measured_red_progress_protocol'] != 1:
+            raise ContextError('measured-red projection requires frozen opt-in')
+        from progress_projection import project
+        return project(context,result,deadline=context['iteration_deadline_monotonic'])
     from emit_jsonl_record import build_record,extract_failing_check
     selected=read_dispatch(context)
     if result.get('run_id')!=context['run_id'] or result.get('iteration')!=context['iteration']:
