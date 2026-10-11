@@ -2394,11 +2394,11 @@ _write_unattended_result() {
   fi
   # Collect per-iteration checks JSONL files.
   if [[ -n "${_RUN_CHECKS_JSONL:-}" ]]; then
-    args+=(--checks-jsonl $_RUN_CHECKS_JSONL)
+    args+=(--checks-jsonl "$_RUN_CHECKS_JSONL")
   fi
   # Collect integrity violations.
   if [[ -n "${_INTEGRITY_VIOLATIONS_FILE:-}" ]]; then
-    args+=(--integrity-jsonl $_INTEGRITY_VIOLATIONS_FILE)
+    args+=(--integrity-jsonl "$_INTEGRITY_VIOLATIONS_FILE")
   fi
 
   if python3 "$result_script" "${args[@]}"; then

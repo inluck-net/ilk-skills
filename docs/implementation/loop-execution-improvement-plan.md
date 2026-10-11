@@ -2453,3 +2453,22 @@ anchors at the time of inspection and can move as integration changes code.
 - Status/ledger/record-identity callers: 32 passed in 0.54s. Local Python/Git
   fixtures dispatch no agent/model; no routine suite or verifier was run.
   Candidate only; installed local e434e346 and remote v0.9.193 remain separate.
+
+
+### Checked status entry and result transport
+
+- Committed db913117 archived owned two-subplan entry: 1 passed/14 deselected
+  in 14.85s. This checks actual driver gates, commits, next-step selection and
+  scoped proof after the selected-master reader change; no model dispatched.
+- Actual Bash result function with `captured checks.jsonl` reproduced loss of
+  its red check: result had an empty checks list (1 failed in 0.15s).
+  `_RUN_CHECKS_JSONL` is one concatenated temporary capture, not multiple
+  whitespace-separated paths. Quote it and the single integrity path.
+- Explicit missing and malformed capture negatives returned empty lists;
+  non-object rows raised an untyped AttributeError (3 failed in 0.05s).
+  run_result now refuses missing/corrupt named evidence with ValueError rather
+  than skip it. The non-object case was an error, not a measured false green.
+- Result transport, close-range and existing writer callers: 26 passed/8
+  deselected in 0.46s; shell syntax passed. Focused fixture-only validation,
+  no agent/model or full suite. New source is candidate only; installed local
+  e434e346 and prepared/unactivated rezmac e434e346 remain separate states.

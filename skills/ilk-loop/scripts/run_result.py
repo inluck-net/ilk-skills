@@ -101,25 +101,23 @@ def _classify_check(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _read_checks_jsonl(paths: list[str]) -> list[dict[str, Any]]:
-    """Read and classify checks from one or more JSONL files."""
+    """Read every supplied capture; missing or corrupt evidence refuses."""
     checks: list[dict[str, Any]] = []
     for p in paths:
         path = Path(p)
-        if not path.is_file():
-            continue
-        for line in path.read_text(encoding="utf-8-sig").splitlines():
-            line = line.strip()
-            if not line:
-                continue
+        try:
+            content = path.read_text(encoding='utf-8-sig')
+        except OSError as error:
+            raise ValueError('named check capture unavailable: ' + str(path)) from error
+        for line in content.splitlines():
+            if not line.strip(): continue
             try:
                 raw = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            try:
-                checks.append(_classify_check(raw))
-            except ValueError:
-                # Re-raise so the caller sees the refusal.
-                raise
+            except json.JSONDecodeError as error:
+                raise ValueError('named check capture is malformed: ' + str(path)) from error
+            if not isinstance(raw, dict):
+                raise ValueError('check capture row is not an object')
+            checks.append(_classify_check(raw))
     return checks
 
 
