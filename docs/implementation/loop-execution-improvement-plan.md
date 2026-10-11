@@ -2134,3 +2134,21 @@ anchors at the time of inspection and can move as integration changes code.
 - Candidate pending committed archived caller checks and accumulated activation.
   Still open: dirty/member owned acceptance, full per-node baseline advancement,
   Windows ownership and broader reader/lint/input closure.
+
+### Focused baseline command must stay focused
+
+- Actual disposable two-file fixture reproduced expansion: authored command
+  selects green test_focused.py, unrelated test_sibling.py is red. With no
+  parsed node IDs, _run_at_base_worktree removed the selected file and ran
+  both, returning failed. Negative failed in 0.64s. This proves a mechanism
+  for unwanted test work; it does not attribute the historical batch totals.
+- File-path replacement now occurs only when explicit node IDs supply the
+  replacement selection. Command-level attribution preserves the authored
+  focused files. The real focused fixture plus shared-budget controls passed
+  5 checks in 0.74s. No toolkit suite was run. Other complex node-selector
+  parsing remains separately reviewable; this is not broad shell-parser proof.
+- Against committed 07e1add0, archived selfmod/declared-worktree/recovery/drain
+  caller selection passed 5 checks/10 deselected in 58.75s. No active production
+  worker, pause or plan changed. Current next action is activation of this
+  accumulated checked candidate, preserving the old pinned controller, then
+  remaining whole-plan work.

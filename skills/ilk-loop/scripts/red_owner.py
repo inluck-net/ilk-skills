@@ -263,11 +263,12 @@ def _measure_at_base_worktree(
         # at the next flag or end-of-string.  Greedy `+` is required;
         # the lazy `*?` in the old regex failed to match a trailing path
         # because it preferred matching nothing.
-        runner = re.sub(
-            r"(pytest)(?:\s+(?!\-)\S+)+",
-            r"\1",
-            runner,
-        )
+        if nodes:
+            runner = re.sub(
+                r"(pytest)(?:\s+(?!\-)\S+)+",
+                r"\1",
+                runner,
+            )
 
         def _classify(rc: int, stdout: str, stderr: str) -> str:
             if rc == 0:
