@@ -85,3 +85,13 @@ def test_full_hook_requires_canonical_shell_even_when_worker_env_is_shed(tmp_pat
     event={'tool_name':'Write','tool_input':{'file_path':str(tmp_path/'outside.py')}}
     cp=subprocess.run(command,input=json.dumps(event),env=env,capture_output=True,text=True,timeout=10)
     assert cp.returncode==2
+
+
+def test_rule_alias_and_new_rule_writes_are_instruction_inputs(tmp_path):
+    ctx=context(tmp_path);root=Path(ctx['exec_tree'])
+    target=root/'ordinary.md';target.write_text('frozen')
+    alias=root/'.claude/rules';alias.parent.mkdir();alias.symlink_to(root,target_is_directory=True)
+    ctx['instruction_input_inventory']=[dict(path=str(alias/'ordinary.md'),resolved_path=str(target),sha256='fixture')]
+    for path in (alias/'ordinary.md',target,root/'module/.claude/rules/new.md'):
+        row=module.classify({'tool_name':'Edit','tool_input':{'file_path':str(path)}},ctx)
+        assert row['scope']=='instruction-input'

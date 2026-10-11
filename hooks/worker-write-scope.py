@@ -35,6 +35,7 @@ def classify(event,context):
             row['scope']='unknown-target';return row
         path=Path(os.path.expanduser(raw))
         if not path.is_absolute(): path=Path(event.get('cwd') or str(root))/path
+        lexical=path.absolute()
         path=path.resolve()
         protected=[('plans',Path(context['plans_dir']).resolve()),
                    ('data',Path(context['data_root']).resolve()),
@@ -47,8 +48,11 @@ def classify(event,context):
             if name in {'data','runtime'} and inside(root,protected_root):
                 continue
             if inside(path,protected_root): row['scope']=name;break
-        if row['scope']=='worktree' and path.name in {'AGENTS.md','CLAUDE.md','CLAUDE.local.md'}:
-            row['scope']='instruction-input'
+        if row['scope']=='worktree':
+            rule_path=any(parts[index:index+2]==('.claude','rules') for parts in (lexical.parts,path.parts) for index in range(len(parts)-1))
+            frozen={item.get('resolved_path') for item in context.get('instruction_input_inventory',[])}
+            if path.name in {'AGENTS.md','CLAUDE.md','CLAUDE.local.md'} or rule_path or str(path) in frozen:
+                row['scope']='instruction-input'
         kernel=context.get('kernel_list') or {}
         if row['scope']=='worktree' and kernel.get('loop_kernel_policy')=='owner-only':
             sys.path.insert(0,str(Path(context['code_root'])/'skills/ilk-loop/scripts'))

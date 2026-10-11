@@ -45,6 +45,12 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
                 raise ContextError('kernel path escapes execution root')
             kernel_paths.append(root/relative)
         protected.extend(kernel_paths)
+    # Frozen instruction aliases and resolved targets are control inputs.
+    for row in context.get('instruction_input_inventory',[]):
+        for key in ('path','resolved_path'):
+            if row.get(key):
+                path=Path(row[key]);protected.append(path)
+                if _inside(path,root):kernel_paths.append(path)
     # Git commands may read metadata, but workers may not mutate it.
     protected.extend([root/'.ilk-remote-type',root/'.ilk/findings.md',root/'.ilk-merge-deferred'])
     protected.append(root/'.git')
@@ -85,7 +91,7 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
                                   if path not in {Path(context['data_root']).resolve(),Path(context['runtime_dir']).resolve()}):
             raise ContextError('private home overlaps execution/control inputs')
         rules.append(_rule('allow','file-write*',home))
-        protected.extend(home/name for name in ('settings.json','hooks','skills','commands'))
+        protected.extend(home/name for name in ('settings.json','hooks','skills','commands','CLAUDE.md','CLAUDE.local.md','rules'))
     if diagnostic_log and not shell:
         log=Path(diagnostic_log).resolve()
         rules.append(f'(allow file-write* (literal {json.dumps(str(log))}))')
@@ -95,6 +101,8 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
     # directories. A copied input is not permission to rewrite its contract.
     rules.append('(deny file-write* (require-all (subpath '+json.dumps(str(root))+') '
                  '(regex "(^|/)(AGENTS[.]md|CLAUDE([.]local)?[.]md)$")))')
+    rules.append('(deny file-write* (require-all (subpath '+json.dumps(str(root))+') '
+                 '(regex "(^|/)[.]claude/rules(/|$)")))')
     rules.extend(_rule('deny','file-write*',path) for path in protected
                  if any(_inside(path,allowed) for allowed in [root,temporary]+([Path(private_home).resolve()] if private_home and not shell else [])))
     for path in kernel_paths:

@@ -135,3 +135,26 @@ def test_execution_root_cannot_move_into_writable_scratch(tmp_path):
         assert result.returncode!=0 and root.exists() and not moved.exists()
     finally:
         if moved.exists() and not root.exists():moved.rename(root)  # Own fixture only.
+
+
+def test_worker_cannot_rewrite_or_move_frozen_rule_inputs(tmp_path):
+    ctx,temporary,home=fixture(tmp_path);root=Path(ctx['exec_tree'])
+    target=root/'module/.claude/rules/guide.md';target.parent.mkdir(parents=True);target.write_text('frozen')
+    from instruction_inputs import inventory
+    ctx['instruction_input_inventory']=inventory(ctx)
+    for shell in (False,True):
+        policy=profile(ctx,temporary=temporary,private_home=home if not shell else None,shell=shell)
+        cp=run(policy,'/usr/bin/python3','-c','from pathlib import Path;import sys;Path(sys.argv[1]).write_text("changed")',str(target))
+        assert cp.returncode!=0 and target.read_text()=='frozen'
+        result=run(policy,'/bin/mv',str(root/'module'),str(temporary/'moved-module'))
+        assert result.returncode!=0 and target.exists()
+
+
+def test_cli_cannot_modify_private_user_rules_while_cache_stays_writable(tmp_path):
+    ctx,temporary,home=fixture(tmp_path)
+    target=home/'rules/guide.md';target.parent.mkdir();target.write_text('frozen');target.chmod(0o600)
+    policy=profile(ctx,temporary=temporary,private_home=home)
+    command=['/usr/bin/python3','-c','from pathlib import Path;import sys;Path(sys.argv[1]).write_text("changed")']
+    assert run(policy,*command,str(target)).returncode!=0
+    assert target.read_text()=='frozen'
+    assert run(policy,*command,str(home/'cache.txt')).returncode==0

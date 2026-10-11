@@ -48,6 +48,17 @@ def _command_script(command, *, root=None):
     return tokens,*candidates[0]
 
 
+def _global_instruction_paths(home):
+    home=Path(home)
+    rules=home/'rules'
+    if rules.is_symlink():raise InputPinError('symlinked user rules directory requires explicit pin adapter')
+    entries=list(rules.rglob('*')) if rules.is_dir() else []
+    if any(path.is_symlink() and path.is_dir() for path in entries):
+        raise InputPinError('symlinked user rules directory requires explicit pin adapter')
+    return sorted([home/name for name in ('CLAUDE.md','CLAUDE.local.md') if (home/name).is_file()]+
+                  [path for path in entries if path.is_file() and path.suffix=='.md'],key=str)
+
+
 def _merge_settings(lower, higher):
     """Supported non-managed settings: recursive objects, additive lists."""
     result=dict(lower)
@@ -219,11 +230,13 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
         pinned.setdefault('env',{})['ILK_SKILL_HOME']=str(code/'skills')
         pinned['env']['ILK_CODE_ROOT']=str(code)
         global_instructions=[]
-        for name in ('CLAUDE.md','CLAUDE.local.md'):
-            source_instruction=worker_home/name
-            if source_instruction.is_file():
-                target=home/name;target.write_bytes(source_instruction.read_bytes());target.chmod(0o400)
-                global_instructions.append(dict(source_path=str(source_instruction),path=str(target),sha256=digest(target)))
+        for source_instruction in _global_instruction_paths(worker_home):
+            payload=source_instruction.read_bytes()
+            target=home/source_instruction.relative_to(worker_home)
+            target.parent.mkdir(parents=True,exist_ok=True)
+            target.write_bytes(payload);target.chmod(0o400)
+            if digest(source_instruction)!=digest(target):raise InputPinError('global instruction changed during preparation')
+            global_instructions.append(dict(source_path=str(source_instruction),path=str(target),sha256=digest(target)))
         code_inventory=_code_inventory(code)
         settings=home/'settings.json';settings.write_text(json.dumps(pinned,indent=2)+'\n');settings.chmod(0o600)
         # Exclude credentials and arbitrary env values from public provenance.
@@ -242,7 +255,7 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
                   'settings_sources':settings_sources,'cli_setting_sources':'',
                   'worker_thinking':worker_thinking,'worker_tools':worker_tools,
                   'measured_red_progress_protocol':1 if measured_red_progress else None,
-                  'global_instruction_inputs':global_instructions,'code_inventory':code_inventory,
+                  'global_instruction_inputs':global_instructions,'global_instruction_inventory_protocol':1,'code_inventory':code_inventory,
                   'code_inventory_sha256':_inventory_digest(code_inventory),
                   'python_cache_pinning':'generated __pycache__ excluded; source files pinned, external cache tamper requires explicit adapter',
                   'managed_settings':'remain enforced by Claude; not overridden or claimed pinned',
@@ -291,6 +304,15 @@ def verify_launch_resources(destination):
     for key,name in (('code_root','code'),('worker_home','worker-home')):
         if Path(manifest[key]).resolve()!=destination/name:
             raise InputPinError('private run input root contradicts prepared manifest')
+    protocol=manifest.get('global_instruction_inventory_protocol')
+    if protocol is not None and (type(protocol) is not int or protocol!=1):
+        raise InputPinError('unknown global instruction inventory protocol')
+    if protocol==1:
+        if any(Path(row['path']).is_symlink() for row in manifest.get('global_instruction_inputs',[])):
+            raise InputPinError('private global instruction link changed')
+        actual=[str(path) for path in _global_instruction_paths(Path(manifest['worker_home']))]
+        expected=sorted(row['path'] for row in manifest.get('global_instruction_inputs',[]))
+        if actual!=expected:raise InputPinError('private global instruction inventory changed')
     paths=list(manifest.get('executables',[]))+[manifest['mcp']]+manifest.get('global_instruction_inputs',[])
     paths.append({'path':str(Path(manifest['worker_home'])/'settings.json'),'sha256':manifest['settings_sha256']})
     paths.extend({'path':row['pinned_script'],'sha256':row['pinned_sha256']} for row in manifest['hooks'])

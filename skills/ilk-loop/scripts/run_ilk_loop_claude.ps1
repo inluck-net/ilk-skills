@@ -186,7 +186,8 @@ if ($MyInvocation.InvocationName -ne '.' -and $env:ILK_DOTSOURCE_ONLY -ne '1' -a
     $env:ILK_WORKER_MODE -eq 'code-only' -or
     ($env:ILK_WORKER_TOOLS -and $env:ILK_WORKER_TOOLS -ne 'shell') -or
     ($env:ILK_WORKER_THINKING -and $env:ILK_WORKER_THINKING -ne 'default') -or
-    $env:ILK_ENABLE_UPGRADE_DRAIN -eq '1')) {
+    $env:ILK_ENABLE_UPGRADE_DRAIN -eq '1' -or
+    $env:ILK_MEASURED_RED_PROGRESS -eq '1')) {
   throw 'Owned worker/tool/thinking/upgrade profiles require a verified platform adapter; PowerShell supports the legacy default only.'
 }
 

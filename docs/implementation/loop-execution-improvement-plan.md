@@ -3247,3 +3247,25 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
 - Rezmac private standby advanced to toolkit 6aa18f7f / consumer 3987a299 after
   independent git-common-dir, clean status and ancestor checks. Shared pointer
   positively remained v0.9.193; shared repos/services were not activated.
+
+
+- A2 unsupported PowerShell profile correction: ILK_MEASURED_RED_PROGRESS=1
+  escaped the unsupported-profile preflight and entered legacy startup. Negative
+  reproduced both absent Python and, with a fixture Python link, ordinary
+  startup instead of the expected profile refusal. Added explicit early refusal;
+  measured-red preflight plus adjacent recovery checks: 3 passed in 1.18s.
+  Portable PowerShell only; native Windows execution adapter remains open.
+- D2/C2 rule inputs: omitted repository/ignored/ancestor rules and a permitted
+  real sandbox write reproduced as five failed focused negatives. Candidate now
+  inventories rules (including symlinked repository directories), freezes paths
+  and resolved targets, protects frozen ancestor renames and new rule writes,
+  and classifies native rule/alias writes as instruction inputs. User rule trees
+  privately copied; source edits cannot change a prepared run. Added private
+  instruction protocol checks path inventory plus hashes; added files and link
+  replacements refuse. Unsupported symlinked user rule directory needs adapter.
+  Inventory/OS 20 passed in 3.19s; inventory/native 23 passed in 2.28s;
+  input/OS 35 passed in 31.11s; private alias/cache negatives 4 passed in 0.38s.
+  Arbitrary imports, managed policy and system runtime coordination remain open.
+  Next: archive public owned entry with this committed candidate, safely deliver
+  at fresh idle-services/paused-undispatched controller boundary; continue I2 and
+  input provenance migration. No full suite/provider repetition for these checks.

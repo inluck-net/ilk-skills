@@ -302,3 +302,20 @@ def test_measured_red_progress_refuses_unchecked_host_adapter(tmp_path,monkeypat
     with pytest.raises(InputPinError,match='checked Mac owner adapter'):
         prepare(repo,home,tmp_path/'windows-profile',measured_red_progress=True)
     assert not (tmp_path/'windows-profile').exists()
+
+
+@pytest.mark.parametrize('mutation',['edit','add','symlink'])
+def test_user_rules_are_copied_and_private_rule_changes_refuse(tmp_path,mutation):
+    from run_inputs import pin_launch_resources,verify_launch_resources
+    repo,home,_=fixture(tmp_path)
+    source=home/'rules/nested/guide.md';source.parent.mkdir(parents=True);source.write_text('original rule')
+    destination=tmp_path/'run';manifest=prepare(repo,home,destination)
+    copied=Path(manifest['worker_home'])/'rules/nested/guide.md'
+    assert copied.is_file() and copied.read_text()=='original rule'
+    assert not copied.is_symlink()
+    pin_launch_resources(destination,project=repo,executables={'python':sys.executable,'claude':sys.executable})
+    source.write_text('later source edit');verify_launch_resources(destination)
+    if mutation=='edit':copied.chmod(0o600);copied.write_text('changed')
+    elif mutation=='add':(copied.parent/'new.md').write_text('new')
+    else:copied.unlink();copied.symlink_to(source)
+    with pytest.raises(InputPinError,match='instruction|changed'):verify_launch_resources(destination)

@@ -654,7 +654,7 @@ its existing supplied driver deadline, without renewing a provider budget.
 `worker_sandbox.py` denies creation/mutation of these named files at any depth;
 native admission gives instruction writes their own denied scope. Existing
 root bootstrap remains brief; inventory is not a request to read every nested
-file. Referenced arbitrary imports, source global-home instructions and native
+file. Referenced arbitrary imports, managed policy inputs and native
 Windows enforcement remain unbuilt; this is not exhaustive input pinning.
 
 ### Focus worker diagnostics on implementation (new brief revision)
@@ -788,3 +788,37 @@ limit, stall-kill threshold, new timeout or default model change is introduced.
 The installed driver protocol remains independently checked; final verification
 stays opt-in. Protocol facts can inform future context work, but this experiment
 does not justify enabling that prompt change.
+
+
+### Rule instruction inputs and remaining pinning limits (2026-10-12)
+
+The official [Claude Code memory documentation](https://code.claude.com/docs/en/memory)
+identifies repository and user-level `.claude/rules` as instruction inputs.
+The named-file inventory did not cover them: five focused negatives showed
+missing ignored/ancestor inputs and an allowed real OS-boundary write.
+The new candidate extends `instruction_inputs.inventory` to rule files and
+symlinked rule directories, preserving path, resolved target and hash. Existing
+original-deadline checks bound discovery. `worker_sandbox.profile` protects
+frozen aliases/targets and their ancestors against rename, and denies newly
+created rule writes. The native write-scope hook classifies rule paths and
+frozen resolved targets as instruction inputs. These are new mechanisms;
+plain named-file inventory and native/shell boundaries existed before them.
+
+`run_inputs.prepare` now privately copies regular user rule trees, in addition
+to the existing global CLAUDE files. Source rule edits do not change a prepared
+run. `verify_launch_resources` checks the complete private instruction path
+inventory as well as hashes, refusing added files and replacement symlinks.
+The worker CLI OS profile protects private rule/CLAUDE paths while keeping its
+ordinary cache writable. Symlinked user rule directories require an explicit
+adapter and refuse preparation; repository rule directory symlinks are observed.
+Historical manifests without the additive inventory protocol keep their prior
+behavior. No shared active home is rewritten.
+
+This closes a concrete omitted input category, not exhaustive hermeticity.
+Arbitrary `@` imports, managed policy/remote settings and system library upgrade
+coordination remain open. Four inventory negatives plus the OS write negative
+failed before the correction; inventory/OS checks passed 20 in 3.19s,
+additional inventory/native checks passed 23 in 2.28s, run-input/OS checks passed
+35 in 31.11s, and new private-rule alias/cache checks passed four in 0.38s.
+These are local capability checks, not performance comparisons. No numeric
+production default or final verification requirement changes.

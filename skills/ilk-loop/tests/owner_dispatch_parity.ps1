@@ -25,7 +25,7 @@ $observationLog=Join-Path $Fixture 'observation.log'
 @{type='system';subtype='init';model='fixture';session_id='fixture'} | ConvertTo-Json -Compress | Set-Content "$observationLog.jsonl"
 $observed=Get-WorkerCostObservation -LogFile $observationLog -ExecTree $Fixture
 if ($observed.bootstrap_execution_root -ne $canonicalFixture) { throw 'observation execution root mismatch' }
-$profiles=@{ILK_WORKER_MODE='code-only';ILK_WORKER_TOOLS='native';ILK_WORKER_THINKING='disabled';ILK_ENABLE_UPGRADE_DRAIN='1'}
+$profiles=@{ILK_WORKER_MODE='code-only';ILK_WORKER_TOOLS='native';ILK_WORKER_THINKING='disabled';ILK_ENABLE_UPGRADE_DRAIN='1';ILK_MEASURED_RED_PROGRESS='1'}
 foreach ($name in $profiles.Keys) {
   $previous=[Environment]::GetEnvironmentVariable($name)
   try {
