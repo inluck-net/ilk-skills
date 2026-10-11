@@ -24,8 +24,8 @@ required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: wire candidate measured-red progress into opt-in Mac
 worker/loop, close/result and consumer readers, then finish remaining
-legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview bb0e7d31
-and consumer compatibility 2cb713ae are locally installed and checked. The original idle controller exit is historical. Current controller 94556
+legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview 7a0691b0
+and consumer compatibility 4f74ae4e are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
 worker was interrupted. Source main fast-forwarded without overlapping batch
@@ -37,7 +37,7 @@ Mac evidence. Actual provider red then green used the same session; a real
 consumer repair passed and a focused-diagnostics comparison is recorded.
 Windows/member/dirty-entry adapters remain open. The controlled shell/native pairing is recorded in docs/verification/loop-tools-comparison-2026-10-12.md.
 Continue here per Chad: “no more handover, until the whole thing done”.
-Overall estimate about 70% is a judgment over the whole installed/measured scope,
+Overall estimate about 73% is a judgment over the whole installed/measured scope,
 not a checkbox count. Do not infer whole completion from capability checks.
 
 Old runs 20261011-102057/130246/212131/215532 and their controller identities
@@ -3071,3 +3071,34 @@ host adapters; pinned runtime rejects policy with a legacy worker mode. Fresh
 archive preparation/runner and launch-profile checks still required before
 installation. Consumer guard 4f74ae4e must land before consumers use the profile.
 No active batch or installed pointer changed. Whole scope is still in progress.
+
+
+### Local measured-red opt-in delivery — 2026-10-12
+
+Fresh public preparation (no test-only manifest edits) from committed archive
+7a0691b0: plain and selfmod runner **2 passed / 41 deselected in 61.26s**;
+frozen input/partial-revision/unchecked-host and detached profile checks
+**26 passed in 29.77s**. Mac opt-in stays off unless explicitly requested; final
+verification stays opt-in. No full suite or provider speed claim.
+
+Installed immutable local preview **7a0691b028d591a4cb40221ed3d87de6238ea4d0**;
+consumer main first fast-forwarded to **4f74ae4e72b255962a71407b212708e8c3082909**
+so non-green close rows cannot become publication proof. Fresh registry proved
+consumer idle/no host blockers and toolkit controller exact PID/PGID **94556**,
+private pin **4de1eb06**, pause-only sleep/no dispatch/children. Idle scheduler
+alone was temporarily removed and restored. Protected **1,891 hashes** (all
+project plans, original pause, launcher plist and private run inputs) unchanged;
+controller not signalled. Toolkit main fast-forwarded bb0e7d31→7a0691b0 and
+installed pointer changed; no public release, tag, push, active worker mutation
+or global code-only/native/thinking/drain/progress toggle.
+
+Evidence: external `toolkit-delivery-preview-20261012m/installed.json` and
+`boundary-before.json`. Prepared/extracted/read-only release plus exact boundary
+proof distinguish this from candidate-only delivery. Rezmac remains on v0.9.193;
+its unknown reaper ownership is not permission for a forced activation.
+
+Whole scope estimate now **about 73%**, a judgment of installed/measured work,
+not a checkbox count. Next: read-only remaining consumer/feedback/ownership
+reader migrations, representative actual provider measurement of the opt-in
+path, prepared remote delivery, remaining parity/hermeticity/CAS writers and
+requirement-to-evidence closure. Do not stop at this checkpoint.

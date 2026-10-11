@@ -439,8 +439,9 @@ legacy blocking readers remain red. selfmod_landing.land_progress validates
 the separate durable progress transaction and lands only a fresh shared-store
 base, reporting green_accepted=false/accepted_tree=null. Existing land stays
 green-only. Actual fixture landing, idempotence, strict-green refusal and
-existing green/changed-source callers are checked on Mac. These APIs still
-need close/ledger/result/consumer and opt-in runtime caller integration.
+existing green/changed-source callers are checked on Mac. Close/ledger/result and opt-in Mac runtime integration now have the evidence
+recorded below; consumer proof refusal is locally delivered. Remaining lifecycle
+readers and unsupported adapters remain open.
 
 New candidate progress_close.finalize projects one exact durable close after
 positive progress-only integrity/state, absent registered children and actual
@@ -449,8 +450,9 @@ adds progress_integrity_passed/driver_progress_accepted. ship_audit now retains
 validated typed closed progress as a named unproven diagnostic reason while
 its gate/step proof readers still reject it. Open-only, pending landing, wrong
 tree/scope and green-conflated fields are refused in actual Mac fixture checks.
-These APIs remain unwired into loop and consumer lifecycle; final verification
-stays opt-in and no running worker or dispatched input is changed.
+Mac loop/terminal integration and consumer non-green refusal are now locally
+delivered as recorded below; final verification stays opt-in and no running
+worker or dispatched input is changed.
 
 New candidate progress_ship.complete/verify_shipped supply an explicit final
 sub-plan marker/status boundary for measured-red progress. Only the exact
@@ -459,8 +461,8 @@ status CAS remain durable/recoverable. Progress transaction, projection,
 landing and close recognize only that exact marker continuation, retaining
 failed checks and named unproven reasons. This finishes a sub-plan for next
 selection without asserting green proof. Actual Mac combined lifecycle checks
-are recorded in the tracker; runtime/consumer wiring and marker-crash tests
-remain required before enabling the protocol.
+are recorded in the tracker, including runtime/consumer wiring and marker
+crash checks. Unchecked adapters remain refused.
 
 
 Candidate runtime integration now exists in `worker_iteration.run`,
@@ -486,3 +488,12 @@ changes cannot alter already prepared inputs. Unchecked Windows adapters are
 refused. Capability availability is candidate-only pending fresh preparation
 and installation; existing batch pins retain their policy. Consumer proof
 refusal must be delivered before enabling this profile for consumer runs.
+
+
+Local immutable preview 7a0691b0 and consumer guard 4f74ae4e are installed after
+fresh frozen preparation/entry checks and positive undispatched boundary proof.
+The per-launch profile remains off by default. Local delivery preserves the
+working controller's 4de1eb06 private pin and all plans/pause/input bytes; no
+worker was interrupted. Rezmac activation and remaining reader migrations are
+still open, as is representative actual-provider performance evidence for this
+new progress path. Runtime tests establish behavior, not a speed claim.
