@@ -1906,3 +1906,31 @@ anchors at the time of inspection and can move as integration changes code.
   comparison. Host concurrency is uncontrolled; retain failed results unchanged.
 - Next: finish this measurement, activate the checked candidate only at a fresh
   undispatched/paused boundary, then continue remaining tracked policy adapters.
+
+### Controlled tool-profile pair and truthful incomplete closure
+
+- Same 093d67d6 / task base ab55826c / actual MiMo PRO / disabled thinking /
+  eight hooks / seven-test gate: native accepted in 104.744s, one gate/commit/
+  pointer advance, positive integrity/journal, source home unchanged and idle
+  registry. Native worker cost $0.200278, CLI interval 89.371228s.
+- Shell failed at 242.845s (240s original fixture cap), no accepted gate or
+  pointer advance. It spent the window in broker/tool investigation. Keep the
+  failure; do not turn the wall-time ratio into an accepted-work speed claim.
+  Toolkit/model/task/gate controlled, host concurrency and profile ordering
+  not randomized. Source home unchanged in both. Full parser-v6 reports saved
+  beside the raw streams under controlled-toolkit-tools-pair-20261012-*.
+- This failed caller exposed legacy timeout WIP preservation still executing
+  on the owned path, plus audit lock expiry being asserted as tamper. Owned
+  interruptions now retain diff/context without an ungated WIP commit. If the
+  acceptance file is missing at the original deadline, actual timeout is
+  retained. Audit exit 3 with measured explained=false still proves a state
+  violation; exit 2/absent observation remains unknown, preserves actual stop
+  reason and never creates positive integrity evidence. No cap is renewed.
+- Actual audit control-flow / Git-mutation refusal: three tests passed in 0.05s.
+  Adjacent legacy WIP and closed-record contracts: 71 passed in 23.79s. Added
+  deadline-origin lookup without ambient PYTHONPATH: four passed in 0.14s.
+  Syntax/whitespace checks passed. Dirty owned re-entry remains unsupported;
+  retained work needs its documented owner recovery/legacy adapter, not a
+  claimed successful unattended resume.
+- Preparation f3687bd7 is superseded before activation by this correction.
+  Source/installed main stays 4de1eb06 until the fresh boundary is rechecked.

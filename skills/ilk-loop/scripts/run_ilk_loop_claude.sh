@@ -5204,6 +5204,11 @@ if m:
 # Args: $1=amend_detected (0 or 1, optional, default 0)
 # Returns: 0 always (never fatal)
 preserve_dirty_tree_on_timeout() {
+  if [[ "${ILK_WORKER_MODE:-}" == code-only ]]; then
+    echo "[runner] owned interruption: retaining the worktree diff and frozen context; no ungated WIP commit" >&2
+    echo 0
+    return 0
+  fi
   local amend_detected="${1:-0}"
   local wip_count=0
   local repo
@@ -6953,6 +6958,9 @@ print(json.dumps(d))
           --context "$ILK_ITER_CONTEXT" --out "$_driver_gate_results" || _driver_stop_reason="code_only_acceptance_failed"
       else
         _driver_stop_reason="code_only_acceptance_failed"
+        if [[ "$ITER_COMPLETED" -eq 0 ]] && python3 -c 'import sys;sys.path.insert(0,sys.argv[1]);from iteration_context import read_context;from iteration_clock import monotonic;c=read_context();sys.exit(0 if monotonic()>=c["iteration_deadline_monotonic"] else 1)' "$_ILK_SCRIPT_DIR"; then
+          _driver_stop_reason="timeout"
+        fi
       fi
       _cleanup_started=$(python3 "${_ILK_SCRIPT_DIR}/iteration_clock.py") || _cleanup_started=""
       python3 "${_ILK_SCRIPT_DIR}/worker_dispatch.py" close --context "$ILK_ITER_CONTEXT" || _driver_stop_reason="code_only_acceptance_failed"
@@ -8011,8 +8019,15 @@ append_revert_row(
     [[ "${ILK_WORKER_MODE:-}" == "code-only" ]] && _state_audit_args+=(--enforce)
     _state_audit_json=$(python3 "${_ILK_SCRIPT_DIR}/plan_state.py" "${_state_audit_args[@]}") || _state_audit_rc=$?
     if [[ "$_state_audit_rc" -ne 0 ]]; then
-      _master_tampered=1
-      echo "  ! [state-audit] unexplained or unverifiable state; refusing integrity proof" >&2
+      _ship_integrity_passed=0
+      if [[ "$_state_audit_rc" -eq 3 ]] && jq -e '.explained == false' <<<"$_state_audit_json" >/dev/null 2>&1; then
+        _master_tampered=1
+        echo "  ! [state-audit] measured unexplained state; refusing integrity proof" >&2
+      else
+        _state_audit_json='{"explained":null,"observation_complete":false,"capture_error":"state audit unavailable"}'
+        [[ -n "$iter_stop_reason" ]] || iter_stop_reason="local_checks_inconclusive"
+        echo "  ! [state-audit] observation unavailable; retaining actual stop reason without claiming tamper" >&2
+      fi
     fi
     # A worker edit to master state or to gate declarations (restored right
     # after the agent returned) is the same class of violation.  No park:
