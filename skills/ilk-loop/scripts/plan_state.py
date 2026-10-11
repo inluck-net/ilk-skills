@@ -114,7 +114,11 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
                       and from_.get('status')=='blocked' and str(from_.get('auto_block_fails'))==state['auto_block_fails']
                       and to=={'status':'in-progress','auto_block_fails':0})
         if release_auto_block and not auto_release:raise TransitionError('automatic block release is not justified')
-        if (state.get('status') in {'draft','parked','blocked'} or state.get('hold')=='human') and actor!='human' and not auto_release:
+        desired_hold=state.get('hold') if 'hold' not in to else parse_frontmatter('---\nhold: '+str(to['hold'])+'\n---\n').get('hold')
+        repair=(actor=='integrity-repair' and set(to)<={'status','hold','yield','parked_at','parked_reason'}
+                and (state.get('hold')!='human' or desired_hold=='human'))
+        if actor=='integrity-repair' and not repair:raise TransitionError('integrity repair cannot advance pointers or erase human holds')
+        if (state.get('status') in {'draft','parked','blocked'} or state.get('hold')=='human') and actor!='human' and not auto_release and not repair:
             raise TransitionError('human hold cannot be changed by driver')
         if not text.startswith('---') or (end:=text.find('\n---',3))<0:
             raise TransitionError('frontmatter missing')

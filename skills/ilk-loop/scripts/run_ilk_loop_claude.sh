@@ -6891,8 +6891,9 @@ print(json.dumps(d))
       _ss_out=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/subplan_status_snapshot.py" restore \
                   --plans-dir "$(get_plans_dir)" --snapshot "$_status_snap_file" 2>&1) || _ss_rc=$?
       [[ -n "$_ss_out" ]] && echo "$_ss_out"
-      if [[ $_ss_rc -eq 2 ]]; then
-        echo "  ! [status-guard] restore failed (rc=2) — sub-plan statuses are unverified this iteration" >&2
+      if [[ $_ss_rc -ne 0 && $_ss_rc -ne 3 ]]; then
+        _master_tampered=1
+        echo "  ! [status-guard] restore failed (rc=${_ss_rc}) — refusing integrity proof for unverified sub-plan state" >&2
       fi
     fi
 

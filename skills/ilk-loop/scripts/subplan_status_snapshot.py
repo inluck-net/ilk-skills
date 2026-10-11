@@ -35,6 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plan_status import extract_subplan_files, parse_frontmatter  # noqa: E402
+from plan_state import TransitionError
 
 #: Every sub-plan status a reader branches on (loop_status.py:418-431,656).
 KNOWN_STATUSES = frozenset(
@@ -87,23 +88,11 @@ def take(plans_dir: Path, master: str) -> dict[str, str | None]:
 
 def _write_status(path: Path, raw: str | None) -> None:
     """Set *path*'s status line to *raw* (None removes it); every other byte kept."""
-    text = path.read_text(encoding="utf-8-sig")
-    span = _frontmatter_span(text)
-    if span is None:
-        raise ValueError(f"{path.name}: no frontmatter block")
-    m = _STATUS_RE.search(text, span[0], span[1])
-    if raw is None:
-        if m is None:
-            return
-        cut_end = m.end() + 1 if text[m.end():m.end() + 1] == "\n" else m.end()
-        new = text[:m.start()] + text[cut_end:]
-    elif m is None:
-        new = text[:span[1]] + f"\nstatus: {raw}" + text[span[1]:]
-    else:
-        new = text[:m.start()] + f"status: {raw}" + text[m.end():]
-    tmp = path.with_name(path.name + ".status-guard.tmp")
-    tmp.write_text(new, encoding="utf-8")
-    tmp.replace(path)
+    from plan_state import transition
+    from plan_status import parse_frontmatter
+    state=parse_frontmatter(path.read_text(encoding='utf-8-sig'))
+    transition(path,{'status':state.get('status')},{'status':raw},
+               actor='integrity-repair',reason='restore invalid subplan status from dispatch snapshot')
 
 
 def restore(plans_dir: Path, snap: dict[str, str | None]) -> tuple[list[str], int]:
@@ -164,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(snap, dict):
             raise ValueError("snapshot is not an object")
         lines, restored = restore(a.plans_dir, snap)
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, TransitionError) as e:
         print(f"subplan_status_snapshot: {e}", file=sys.stderr)
         return 2
     for line in lines:

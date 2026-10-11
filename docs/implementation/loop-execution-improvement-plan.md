@@ -545,3 +545,14 @@ No completion/ship/proof markers are inferred from this human tracker.
   journal retains byte hashes without raw finding content. Quarantine/CAS/
   driver checks: 28 passed in 4.78s. No real plan was mutated. Integrity restore,
   registry projection and PowerShell writers still need migration.
+
+- C4 snapshot writer migration: master/subplan status restoration now uses the
+  shared journal. Found and fixed a measured legacy bug: restore accepted a
+  newly added human hold, then `_write_owned(before)` erased it when restoring
+  another field. Restore now merges only remaining changed fields into current
+  state. Integrity-repair actor cannot advance pointers or erase a human hold;
+  quoted human values remain parse-equivalent. Snapshot/hold/CAS checks: 31
+  passed in 1.40s. Bash now refuses integrity proof for any unverifiable status
+  restore return code (only 0/3 accepted), not merely logging rc=2. Actual
+  production-entry corrupt-journal/invalid-status fixture plus legacy master
+  guards: 14 passed in 15.04s. Syntax/diff checks passed. No real state changes.

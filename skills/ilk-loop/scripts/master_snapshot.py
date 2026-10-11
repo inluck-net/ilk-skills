@@ -46,6 +46,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plan_status import is_master_all_shipped, parse_frontmatter  # noqa: E402
+from plan_state import TransitionError
 
 #: The fields only the runner and park_master may change.
 OWNED_FIELDS = ("status", "parked_at", "parked_reason", "hold", "yield")
@@ -128,38 +129,10 @@ def _write_owned(path: Path, want: dict[str, str | None]) -> None:
     is removed; one absent from the file is appended at the end of the
     frontmatter.
     """
-    text = path.read_text(encoding="utf-8-sig")
-    if not text.startswith("---"):
-        raise ValueError(f"{path.name}: no frontmatter block")
-    end = text.find("\n---", 3)
-    if end < 0:
-        raise ValueError(f"{path.name}: unterminated frontmatter")
-    head, rest = text[3:end], text[end:]
-    lines = head.splitlines(keepends=True)
-    seen: set[str] = set()
-    out: list[str] = []
-    for line in lines:
-        m = _FIELD_RE.match(line)
-        if not m:
-            out.append(line)
-            continue
-        key = m.group(1)
-        if key in seen:
-            continue  # a duplicate owned line would shadow the restore
-        seen.add(key)
-        if want.get(key) is not None:
-            out.append(f"{key}: {want[key]}\n")
-    if out and not out[-1].endswith("\n"):
-        out[-1] += "\n"
-    for key in OWNED_FIELDS:
-        if key not in seen and want.get(key) is not None:
-            out.append(f"{key}: {want[key]}\n")
-    new_head = "".join(out)
-    if new_head.endswith("\n"):
-        new_head = new_head[:-1]
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text("---" + new_head + rest, encoding="utf-8")
-    os.replace(tmp, path)
+    from plan_state import transition
+    state=parse_frontmatter(path.read_text(encoding='utf-8-sig'))
+    transition(path,{key:state.get(key) for key in want},want,
+               actor='integrity-repair',reason='restore snapshot-owned master fields')
 
 
 def restore(plans_dir: Path, snap: dict[str, dict[str, str | None]]) -> dict:
@@ -208,8 +181,10 @@ def restore(plans_dir: Path, snap: dict[str, dict[str, str | None]]) -> dict:
                "before": {f: before[f] for f in changed},
                "after": {f: now[f] for f in changed}}
         try:
-            _write_owned(path, before)
-        except (OSError, ValueError) as e:
+            wanted=dict(now)
+            wanted.update({field:before[field] for field in changed})
+            _write_owned(path,wanted)
+        except (OSError, ValueError, TransitionError) as e:
             row["error"] = f"{type(e).__name__}: {e}"
             errors.append(row)
             continue
@@ -242,7 +217,7 @@ def main(argv: list[str]) -> int:
 
     try:
         snap = json.loads(a.snapshot.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, TransitionError) as e:
         print(json.dumps({"error": f"cannot read snapshot: {type(e).__name__}: {e}",
                           "snapshot": str(a.snapshot)}))
         return 2
