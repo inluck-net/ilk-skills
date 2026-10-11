@@ -67,6 +67,7 @@ CLI_ENGINE=""
 CLI_WORKER_HOME=""
 CLI_MASTER=""
 CLI_RUN_LOCAL_CHECKS=false
+CLI_RUN_BATCH_GATE=false
 CLI_NO_LOCAL_CHECKS=false
 
 # Resolved values
@@ -598,6 +599,7 @@ start_ilk_window() {
   local worker_home_override="${9:-}"
   local run_local_checks="${10:-false}"
   local master_override="${11:-}"
+  local run_batch_gate="${12:-false}"
 
   # Concurrency guard
   local live_pid
@@ -636,6 +638,7 @@ start_ilk_window() {
     max_iterations=$(jq -r '.launch_contract.max_iterations' <<<"$upgrade_selection")
     timeout_min=$(jq -r '.launch_contract.iteration_timeout_min' <<<"$upgrade_selection")
     run_local_checks=true
+    run_batch_gate=$(jq -r '.launch_contract.run_batch_gate // false' <<<"$upgrade_selection")
     engine=claude-worker
     worker_home_override=$(jq -r '.worker_home' <<<"$upgrade_selection")
   fi
@@ -711,6 +714,9 @@ start_ilk_window() {
   runner_cmd="${env_prefix}bash \"$loop_script\" --project-path \"$project_path\" --max-iterations $max_iterations --iteration-timeout-min $timeout_min"
   if [[ -n "$mcp_config_path" ]]; then
     runner_cmd="$runner_cmd --mcp-config-path \"$mcp_config_path\""
+  fi
+  if [[ "$run_batch_gate" == "true" ]]; then
+    runner_cmd="$runner_cmd --run-batch-gate"
   fi
   if [[ "$run_local_checks" == "true" ]]; then
     runner_cmd="$runner_cmd --run-local-checks"
@@ -805,9 +811,10 @@ prefix="".join("export "+key+"="+shlex.quote(value)+"; " for key,value in zip(ke
 if sys.argv[8]:prefix+="export ILK_MASTER="+shlex.quote(sys.argv[8])+"; "
 args=["bash",sys.argv[9],"--project-path",sys.argv[10],"--max-iterations",sys.argv[11],"--iteration-timeout-min",sys.argv[12],"--mcp-config-path",sys.argv[13],"--log-dir",sys.argv[14],"--jsonl-log",sys.argv[15]]
 if sys.argv[16]=="true":args.append("--run-local-checks")
+if sys.argv[17]=="true":args.append("--run-batch-gate")
 print(prefix+shlex.join(args))
 ' "$private_home" "$pinned_root/skills" "$pinned_root" "$inputs_dir" "$pinned_source_root" "$HOME" "$pinned_cli" \
-  "$master_override" "$loop_script" "$project_path" "$max_iterations" "$timeout_min" "$mcp_config_path" "$per_run_dir" "$jsonl_log" "$run_local_checks") || return 1
+  "$master_override" "$loop_script" "$project_path" "$max_iterations" "$timeout_min" "$mcp_config_path" "$per_run_dir" "$jsonl_log" "$run_local_checks" "$run_batch_gate") || return 1
     if [[ -n "$upgrade_from_run" ]]; then
       local quoted_upgrade_run quoted_upgrade_guard
       quoted_upgrade_run=$(python3 -c 'import shlex,sys;print(shlex.quote(sys.argv[1]))' "$upgrade_from_run") || return 1
@@ -878,6 +885,7 @@ Options:
                                (default: ~/.claude-worker; also CLAUDE_WORKER_HOME).
   --master NAME                Pin to a specific MASTER-*.md basename.
                                Exports ILK_MASTER into the runner's environment.
+  --run-batch-gate             Explicitly request the optional final batch suite
   --run-local-checks           Forward --run-local-checks to the runner so
                                local_checks fire after each productive iteration.
   --no-local-checks            Suppress --run-local-checks even when queued
@@ -936,6 +944,10 @@ parse_args() {
       --master)
         CLI_MASTER="$2"
         shift 2
+        ;;
+      --run-batch-gate)
+        CLI_RUN_BATCH_GATE=true
+        shift
         ;;
       --run-local-checks)
         CLI_RUN_LOCAL_CHECKS=true
@@ -1006,7 +1018,7 @@ for p in d:
       mcp_config_path=$(build_worker_mcp_config "$ppath" "$MCP_FILTER_MODE" "$MCP_FILTER_NAMES")
       local engine
       engine=$(resolve_engine "$ppath" "$CLI_ENGINE")
-      start_ilk_window "$ppath" "$pname" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine" "$CLI_WORKER_HOME" "$CLI_RUN_LOCAL_CHECKS" "$CLI_MASTER"
+      start_ilk_window "$ppath" "$pname" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine" "$CLI_WORKER_HOME" "$CLI_RUN_LOCAL_CHECKS" "$CLI_MASTER" "$CLI_RUN_BATCH_GATE"
     done
     return 0
   fi
@@ -1104,7 +1116,7 @@ for p in d:
     return
   fi
 
-  start_ilk_window "$RESOLVED_PATH" "$RESOLVED_NAME" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine" "$CLI_WORKER_HOME" "$CLI_RUN_LOCAL_CHECKS" "$CLI_MASTER"
+  start_ilk_window "$RESOLVED_PATH" "$RESOLVED_NAME" "$max_iter" "$timeout_min" "$CLI_FORCE" "$CLI_DRY_RUN" "$mcp_config_path" "$engine" "$CLI_WORKER_HOME" "$CLI_RUN_LOCAL_CHECKS" "$CLI_MASTER" "$CLI_RUN_BATCH_GATE"
 }
 
 # --- dot-source guard --------------------------------------------------------

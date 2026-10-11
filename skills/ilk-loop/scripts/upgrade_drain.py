@@ -127,6 +127,8 @@ def activation(runtime,project):
             or any(isinstance(launch.get(key),bool) or not isinstance(launch.get(key),int)
                    or launch[key]<=0 for key in ('max_iterations','iteration_timeout_min'))):
         raise ContextError('frozen launch limits unavailable; refuse inferred upgrade limits')
+    if not isinstance(launch.get('run_batch_gate',False),bool):
+        raise ContextError('invalid frozen final verification opt-in')
     import math
     budget=launch.get('max_budget_usd')
     if isinstance(budget,bool) or not isinstance(budget,(int,float)) or not math.isfinite(budget) or budget<0:

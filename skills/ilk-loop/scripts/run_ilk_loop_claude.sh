@@ -51,6 +51,7 @@ MODEL=""
 # in finalize_sentinel's stopped_reason so interrupted sentinels self-identify.
 _LAST_ERR_CONTEXT=""
 RUN_LOCAL_CHECKS=false
+RUN_BATCH_GATE=false
 LOCAL_CHECKS_TIMEOUT_SEC=180
 LOCAL_CHECKS_SCRIPT="${_SKILL_ROOT}/ilk-loop/scripts/run_local_checks.py"
 MCP_CONFIG_PATH=""
@@ -165,6 +166,7 @@ Options:
                                    Default: 0 (no cap)
   --model MODEL                    Optional --model override.
                                    Default: "" (claude reads ANTHROPIC_MODEL from env)
+  --run-batch-gate                 Explicitly run the optional final batch suite
   --run-local-checks               After each productive iteration, scan new commit
                                    messages for [plan:<slug>#step-N] tags and run
                                    the matching sub-plan's local_checks.
@@ -229,6 +231,10 @@ parse_args() {
       --model)
         MODEL="$2"
         shift 2
+        ;;
+      --run-batch-gate)
+        RUN_BATCH_GATE=true
+        shift
         ;;
       --run-local-checks)
         RUN_LOCAL_CHECKS=true
@@ -4659,6 +4665,14 @@ resolve_iteration_timeout_sec() {
   echo $((ITERATION_TIMEOUT_MIN * 60))
 }
 
+invoke_automatic_batch_gate() {
+  if [[ "${RUN_BATCH_GATE:-false}" != true ]]; then
+    echo "[batch-gate] Optional final verification not requested; skipped."
+    return 0
+  fi
+  invoke_batch_gate "$@"
+}
+
 invoke_batch_gate() {
   local project_path="$1"
   local runtime_dir="$2"
@@ -6069,7 +6083,7 @@ PY
     echo "All sub-plans already shipped. Nothing to do."
     # Batch-end gate: run the suite once before the master is done (SP1)
     if [[ -n "$runtime_dir" ]]; then
-      invoke_batch_gate "$PROJECT_PATH" "$runtime_dir"
+      invoke_automatic_batch_gate "$PROJECT_PATH" "$runtime_dir"
     fi
     echo "[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch."
     local ts
@@ -6319,6 +6333,7 @@ PY
     export _ILK_CONTEXT_TIMEOUT="$timeout_sec" _ILK_CONTEXT_OWNER="$$" _ILK_CONTEXT_REGISTRY="${_RUN_REGISTRY_DIR:-}"
     export _ILK_CONTEXT_MAX_ITERATIONS="$MAX_ITERATIONS" _ILK_CONTEXT_TIMEOUT_MIN="$ITERATION_TIMEOUT_MIN"
     export _ILK_CONTEXT_RUN_LOCAL_CHECKS="$RUN_LOCAL_CHECKS"
+    export _ILK_CONTEXT_RUN_BATCH_GATE="$RUN_BATCH_GATE"
     export _ILK_CONTEXT_MAX_BUDGET="$MAX_BUDGET_USD"
     if ! _DISPATCH_IDENTITY_JSON="$_dispatch_identity_json" _DISPATCH_STEP="${PRE_ITER_TARGET#* }" \
       python3 -c '
@@ -6336,6 +6351,7 @@ context=resolve_context(clone=a[2],exec_tree=a[3],plans_dir=a[4],runtime_dir=a[5
  iteration=int(a[8]),dispatch=identity,observe_tree=dict(zip(a[10::2],a[11::2])))
 context["launch_contract"]=dict(max_iterations=int(os.environ["_ILK_CONTEXT_MAX_ITERATIONS"]),
  iteration_timeout_min=int(os.environ["_ILK_CONTEXT_TIMEOUT_MIN"]),run_local_checks=os.environ["_ILK_CONTEXT_RUN_LOCAL_CHECKS"]=="true",
+ run_batch_gate=os.environ["_ILK_CONTEXT_RUN_BATCH_GATE"]=="true",
  max_budget_usd=float(os.environ["_ILK_CONTEXT_MAX_BUDGET"]))
 if os.environ.get("ILK_WORKER_MODE")=="code-only":
  from worker_dispatch import prepare
@@ -8395,7 +8411,7 @@ print(json.dumps(d))
   if [[ "$stop_reason" == "all-shipped" ]]; then
     # Batch-end gate: run the suite once before the master is done (SP1)
     if [[ -n "$runtime_dir" ]]; then
-      invoke_batch_gate "$PROJECT_PATH" "$runtime_dir"
+      invoke_automatic_batch_gate "$PROJECT_PATH" "$runtime_dir"
     fi
     echo "[ilk] ALL SHIPPED — nothing to run. Do NOT relaunch."
   elif [[ "$stop_reason" == "shipped-unproven" ]]; then

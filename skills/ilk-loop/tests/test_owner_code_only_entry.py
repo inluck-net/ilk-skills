@@ -13,7 +13,7 @@ pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='Mac production entr
 ROOT=Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize('case',['normal','native-tools','hold','pending-advance','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain'])
+@pytest.mark.parametrize('case',['normal','native-tools','native-tools-batch-optin','hold','pending-advance','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain'])
 def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,monkeypatch,case):
     human_hold_during_gate=case=='hold'
     upgrading=case=='upgrade-drain'
@@ -47,6 +47,15 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
         action='from pathlib import Path;import threading;Path("gate-ready").write_text("ready");threading.Event().wait(0.8)'
         plan.write_text(plan.read_text().replace('python3 -I -c "from pathlib',
             'python3 -I -c '+shlex.quote(action)+'; python3 -I -c "from pathlib'))
+    if case.startswith('native-tools'):
+        # A harmless suite stand-in catches automatic invocation without
+        # running any full suite. Its marker must appear only on explicit opt-in.
+        import shlex
+        (work/'.gitignore').write_text('batch-suite-invoked\n')
+        command='from pathlib import Path;Path("batch-suite-invoked").write_text("explicit")'
+        (work/'.ilk-launch.json').write_text(json.dumps({'ship':{'verification_subplan':'required',
+            'suite':{'command':'python3 -I -c '+shlex.quote(command),'flags':[],'timeout':10}}}))
+        git('add','.gitignore','.ilk-launch.json');git('commit','-qm','fixture optional final suite')
     home=tmp_path/'source-home';home.mkdir()
     (home/'settings.json').write_text(json.dumps({'env':{'ANTHROPIC_BASE_URL':'https://example.invalid','ANTHROPIC_MODEL':'fixture-model','ANTHROPIC_AUTH_TOKEN':'fixture-token'}}))
     original=(home/'settings.json').read_bytes()
@@ -72,7 +81,7 @@ else:
 print(json.dumps({'type':'system','subtype':'init','session_id':'fixture-session','model':'fixture-model'}))
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'fixture-session'}))
 ''');cli.chmod(0o700)
-    inputs=tmp_path/'inputs';manifest=prepare(ROOT,home,inputs,worker_tools='native' if case=='native-tools' else 'shell')
+    inputs=tmp_path/'inputs';manifest=prepare(ROOT,home,inputs,worker_tools='native' if case.startswith('native-tools') else 'shell')
     pin_launch_resources(inputs,project=work,executables={'python':sys.executable,'claude':str(cli)})
     if upgrading:
         target_inputs=tmp_path/'upgrade-target-inputs'
@@ -121,7 +130,7 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
     runtime=world['data_home']/'projects'/world['key']/'runtime/launcher'
     if upgrading:env['ILK_ENABLE_UPGRADE_DRAIN']='1'
     process=subprocess.Popen(['bash',str(code/'skills/ilk-loop/scripts/run_ilk_loop_claude.sh'),
-        '--project-path',str(work),'--max-iterations','2' if case=='two-plans' else '1','--iteration-timeout-min','1','--run-local-checks',
+        '--project-path',str(work),'--max-iterations','2' if case=='two-plans' else '1','--iteration-timeout-min','1','--run-local-checks',*(['--run-batch-gate'] if case=='native-tools-batch-optin' else []),
         '--mcp-config-path',str(inputs/'mcp.json')],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
         start_new_session=True)
     try:
@@ -239,6 +248,9 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             return
         assert terminal['state']=='all-shipped',(terminal,stdout[-4500:],stderr[-4500:])
         assert process.returncode==0,(stdout[-4500:],stderr[-4500:])
+        if case.startswith('native-tools'):
+            assert (work/'batch-suite-invoked').exists()==(case=='native-tools-batch-optin')
+            if case=='native-tools':assert 'Optional final verification not requested; skipped.' in stdout
         assert 'current_step: 1' in plan.read_text() and 'status: shipped' in plan.read_text()
         if case=='two-plans':
             assert 'status: shipped' in later.read_text() and 'status: shipped' in master.read_text()

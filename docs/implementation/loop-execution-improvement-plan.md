@@ -153,6 +153,22 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- Actual native consumer model session succeeded in 135.569s, 31 turns,
+  10 Bash / 3 Grep / 13 Read / 4 Edit calls, no tool errors. Authoritative
+  driver gate passed 12 checks in 0.51s (0.75s child interval), one accepted
+  commit/CAS, positive close integrity/audit. Outer fixture nevertheless hit
+  300.038s: old automatic batch-end gate invoked the declared full suite because
+  the cloned source config had no optional waiver. This was unintended and
+  violates the current opt-in preference. The disposable fixture was stopped;
+  registry idle and recorded batch-gate PID dead, original paused/shared workers
+  untouched. Do not describe this as full-suite verification or a completed run.
+- Fix in progress: automatic Bash batch-end verification will default off,
+  enabled only by explicit `--run-batch-gate`; launcher forwards it and freezes
+  it in the launch contract for drain/relaunch. Manual batch_gate APIs remain
+  available on explicit calls. A harmless suite marker will verify default
+  refusal and explicit opt-in, with no suite run. The accepted actual consumer
+  will then resume/terminate under the fixed pin without another model call.
+
 - Opt-in native tools at `8c884dc1`: exact archived native + default entry
   checks passed 2 in 12.73s; native provider stub edits code directly inside
   the CLI OS profile and cannot forge plan/Git metadata. Separate existing
