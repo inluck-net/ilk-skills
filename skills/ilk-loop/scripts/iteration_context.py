@@ -30,6 +30,23 @@ def read_context(path: Path | None = None) -> dict | None:
         raise ContextError(f'iteration context invalid: {exc}') from exc
 
 
+def read_dispatch(context: dict) -> dict:
+    selected=context.get('dispatch')
+    if not isinstance(selected,dict): raise ContextError('frozen dispatch is absent')
+    step=selected.get('step')
+    if not isinstance(step,int) or isinstance(step,bool) or step<0:
+        raise ContextError('frozen step is invalid')
+    raw=selected.get('subplan_path')
+    if not isinstance(raw,str) or not Path(raw).is_absolute():
+        raise ContextError('frozen subplan path is invalid')
+    path=Path(raw).resolve()
+    row=context.get('plans',{}).get(path.name)
+    if path.parent!=Path(context['plans_dir']) or not row or Path(row['path']).resolve()!=path:
+        raise ContextError('dispatch is outside frozen registry')
+    return dict(selected,exec_tree=context['exec_tree'],code_root=context['code_root'],
+                run_id=context['run_id'],iteration=context['iteration'])
+
+
 def root_for_plan(context: dict, subplan: Path) -> Path:
     from plan_status import parse_frontmatter
     subplan=subplan.resolve()
@@ -174,11 +191,16 @@ def write_context(path: Path, context: dict):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     sources=p.add_mutually_exclusive_group(required=True)
+    sources.add_argument('--print-dispatch',action='store_true')
     sources.add_argument('--input',type=Path)
     sources.add_argument('--capture',type=Path)
     p.add_argument('--out',type=Path)
     a=p.parse_args()
-    if a.capture:
+    if a.print_dispatch:
+        context=read_context()
+        if not context: p.error('frozen iteration context required')
+        print(json.dumps(read_dispatch(context)))
+    elif a.capture:
         print(json.dumps(capture_execution(json.loads(a.capture.read_text(encoding='utf-8-sig')))))
     else:
         if not a.out: p.error('--out required with --input')

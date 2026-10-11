@@ -344,3 +344,20 @@ No completion/ship/proof markers are inferred from this human tracker.
   API follow-up with concurrent same-step CAS: 10 passed in 0.12s. Exactly
   one of two concurrent drivers advanced; the stale call refused.
   Bash syntax and diff checks passed. New authority module is kernel protected.
+
+- Worker discovery increment: pinned dispatch has a strict read API and
+  `iteration_context.py --print-dispatch` CLI. Command/skill instructions use it
+  for dispatched workers instead of repeating queue discovery; interactive
+  sessions retain status lookup. Required project/step references and gates
+  remain. Invalid/foreign context refuses rather than silently reselecting.
+  Context/CLI checks: 10 passed in 0.98s; the earlier dispatch/real-entry run
+  passed 22 callers, with one new fixture initially missing its step corrected.
+  Skill validator passed using PyYAML installed only in external tooling;
+  no global Python/worker-home mutation. No batch speed claim.
+- Old timeout measurement independently re-extracted with parser v2:
+  run `20261011-102057`, iteration 04, actual init MiMo PRO, 48 unique root
+  assistant turns (130 split emissions), 81 tools, no observed Edit/Write,
+  3,117.0s completed thinking, 3,599s observed renderer span, one compaction
+  155.949s; matched foreground test interval 0.178s. Clocks overlap; no final
+  worker result. Evidence `old-worker-timeout-observation.json` under external
+  design-revision analysis. This was thinking/investigation, not suite waiting.

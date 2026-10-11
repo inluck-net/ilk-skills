@@ -134,3 +134,31 @@ def test_batch_gate_keeps_frozen_identity_and_refuses_wrong_latest_batch(tmp_pat
     assert read.batch_base_sha==base and read.batch_base_sha!=read.head_sha
     assert read.run_id=='test'
     assert batch_gate.read_record(runtime,batch='different') is None
+
+
+def test_worker_reads_pinned_dispatch_without_reselecting_queue(tmp_path):
+    from iteration_context import read_dispatch
+    args=fixture(tmp_path)
+    args['dispatch']['step']=0
+    context=resolve_context(**args)
+    result=read_dispatch(context)
+    assert result['subplan_path']==context['dispatch']['subplan_path']
+    assert result['step']==context['dispatch']['step']
+    assert result['run_id']==context['run_id']
+    foreign=dict(context['dispatch'],subplan_path=str(tmp_path/'foreign.md'))
+    import pytest
+    from iteration_context import ContextError
+    with pytest.raises(ContextError,match='outside frozen registry'):
+        read_dispatch(dict(context,dispatch=foreign))
+
+
+def test_dispatch_cli_uses_the_same_frozen_record(tmp_path,monkeypatch):
+    import os,sys
+    args=fixture(tmp_path);args['dispatch']['step']=0
+    context=resolve_context(**args);path=tmp_path/'ctx.json';write_context(path,context)
+    monkeypatch.setenv('ILK_ITER_CONTEXT',str(path))
+    completed=subprocess.run([sys.executable,str(SCRIPTS/'iteration_context.py'),'--print-dispatch'],capture_output=True,text=True,env=os.environ,timeout=10)
+    assert completed.returncode==0,completed.stderr
+    identity=json.loads(completed.stdout)
+    assert identity['subplan_path']==context['dispatch']['subplan_path']
+    assert identity['step']==0

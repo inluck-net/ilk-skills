@@ -434,3 +434,31 @@ reconcile the existing batch's pending context plan against the owner patch,
 then activate at a clean boundary and measure comparable accepted consumer
 work. Expanded freeze policy is approved; runtime enforcement, I1/I2,
 drain-after-step, driver-only gates and outcome reuse are not built here.
+
+
+### Later authorized manual candidate (unreleased)
+
+The durable [owner tracker](../implementation/loop-execution-improvement-plan.md)
+supersedes section 9's initial patch inventory; it records checkpoint-specific
+checks and open migration work. The candidate now has canonical frozen context,
+additive open/close records and selected reader migrations, close-projection
+recovery, full gate artifacts and durable strict retry history. I1/I2/I3 remain
+partial because unmigrated consumers and writers still exist. PowerShell
+function/syntax checks passed on Mac; Windows entry is not proven. New bases
+carry owner-only kernel policy; release ranges retain the policy at their base.
+
+An additional old-run measurement found MiMo PRO iteration 04 of
+`20261011-102057` timed out without an observed edit: 48 unique root turns,
+81 tools, 3,117.0s completed thinking in a 3,599s renderer span, and a matched
+foreground test interval of 0.178s. Thinking excludes its unfinished tail;
+compaction 155.949s overlaps those clocks. No final result supplies API time.
+This strengthens the thinking/serial-investigation problem statement without
+promising savings from brief delivery alone.
+
+Actual MiMo PRO tools-disabled session resume retained its session and opaque
+prior context. Production-hook red recovery remains unverified; driver-only
+gates are not activated. Kernel admission and journaled CAS step advancement
+are candidate authority changes, not proof of completed ownership migration.
+No full suite, deployment, measured consumer improvement or gate-outcome reuse
+is claimed. The watchdog restarted the old installed runner; it is waiting at
+the existing pause flag. Activation still requires fresh lifecycle checks.

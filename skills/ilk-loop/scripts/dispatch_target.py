@@ -101,7 +101,7 @@ def format_brief(identity: dict, step: int, project: str, skills: Path) -> str:
         f'Frozen batch base (not iteration HEAD): {base}',
         f'Gate entry point: {skills / "ilk-loop" / "scripts" / "run_local_checks.py"} --print-step-gate "{path}" {step}',
         'Read the exact instructions/master/subplan above; use existing fixtures and repository guidance.',
-        'Start at this step. Do not scan all plans or rediscover the skill root; group independent reads when supported.',
+        'Use the frozen dispatch instead of interactive queue discovery. Start at this step; group independent reads when supported.',
         'These paths are context, not gate success or permission to change driver-owned proof/state.',
     ]
     from iteration_context import read_context

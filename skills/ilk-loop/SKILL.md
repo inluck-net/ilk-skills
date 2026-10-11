@@ -191,8 +191,12 @@ helper is idempotent — running it twice does not duplicate files.
 ## The loop
 
 ```
-1. Run loop_status.py.
-2. Exit code 0  → done, tell the user, stop.
+1. In a dispatched worker (`ILK_ITER_CONTEXT` set), run
+   `python3 <skill-root>/ilk-loop/scripts/iteration_context.py --print-dispatch`
+   (`python` on Windows). Use its exact master/subplan/step; refuse invalid
+   context. Do not rediscover the queue. In an interactive session without
+   frozen context, run loop_status.py instead.
+2. Interactive status: exit code 0  → done, tell the user, stop.
    Exit code 1  → there is a next pending sub-plan; loop_status prints its path.
 3. Read the master plan + the next sub-plan.
 4. Execute exactly ONE step: the one at `current_step`. One turn, one step.
@@ -219,7 +223,8 @@ helper is idempotent — running it twice does not duplicate files.
        (use the ilk-lark-tickets skill if it's a Lark Bitable)
      - commit the last step and end your turn; the driver ships after the gate passes
        (never edit `status:` or author a `#ship` commit by hand)
-7. Print loop_status.py output again so the human sees updated state.
+7. Interactive session: print loop_status.py output again. Dispatched worker:
+   report the selected step outcome; the driver records and selects what follows.
 8. Exit (let the human start a fresh chat for the next iteration).
 ```
 

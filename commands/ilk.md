@@ -2,9 +2,21 @@ Resume the ilk loop on the project rooted above this chat's cwd.
 
 Follow these steps in order. Do NOT skip any.
 
-## 1. Status check (always first)
+## 1. Read the selected target
 
-Run:
+When the runner supplies `ILK_ITER_CONTEXT`, read its pinned dispatch once:
+
+```bash
+python3 "<skill-root>/ilk-loop/scripts/iteration_context.py" --print-dispatch
+```
+
+Use that exact master, subplan and step. Do not rerun queue discovery or scan
+all plans to choose another target. An unreadable or inconsistent context is a
+refusal: report it and stop. The context does not waive project instructions,
+reference reading, declared gates or the one-step rule. On Windows use `python`.
+Continue to section 2 with these pinned paths.
+
+For an interactive session without `ILK_ITER_CONTEXT`, run:
 
 ```bash
 # macOS / Linux
