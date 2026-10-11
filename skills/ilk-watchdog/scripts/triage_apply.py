@@ -114,23 +114,21 @@ def _append_finding(
     falsifier: str,
 ) -> None:
     """Append a ``#### Triage <ts> (run <id>)`` block under ``## Findings``."""
+    from plan_state import transition,TransitionError
     _assert_write_allowed(plan_path, data_dir)
-    text = plan_path.read_text(encoding="utf-8")
-
+    raw=plan_path.read_bytes()
+    fm=parse_frontmatter(raw.decode('utf-8-sig'))
+    if not fm.get('status'):raise TransitionError('triage target status is missing')
     ts = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
     block = (
-        f"\n#### Triage {ts} (run {run_id})\n"
+        f"#### Triage {ts} (run {run_id})\n"
         f"- Finding: {finding}\n"
         f"- Basis: {basis}\n"
         f"- Falsifier: {falsifier}\n"
     )
-
-    if "## Findings" in text:
-        text = text.replace("## Findings\n", "## Findings\n" + block, 1)
-    else:
-        text += f"\n## Findings\n{block}\n"
-
-    plan_path.write_text(text, encoding="utf-8")
+    transition(plan_path,{'status':fm['status']},{'status':fm['status']},
+               actor='triage',reason='stopped-run triage findings',findings_note=block,
+               expected_digest=hashlib.sha256(raw).hexdigest())
 
 
 def _set_plan_status(
@@ -475,6 +473,8 @@ def validate(
 def apply(decision, data_dir, *, run_id, data_root=None, repo=None):
     """Return a recorded refusal if a shared state transition loses its CAS."""
     from plan_state import TransitionError
+    if os.environ.get('ILK_WORKER_SESSION','').strip():
+        raise TransitionError('worker cannot apply control-plane triage')
     try:
         return _apply(decision,data_dir,run_id=run_id,data_root=data_root,repo=repo)
     except TransitionError as exc:

@@ -343,6 +343,16 @@
       "path": "skills/ilk-loop/scripts/ilk_run_lock.py",
       "group": "ownership",
       "why": "Serializes authoritative loop ownership and excludes concurrent state writers."
+    },
+    {
+      "path": "skills/ilk-loop/scripts/launch_inputs_root.py",
+      "guard": "owner",
+      "why": "Selected execution role controls project settings and dependency preparation."
+    },
+    {
+      "path": "skills/ilk-loop/scripts/migration_guard.py",
+      "guard": "owner",
+      "why": "Canonical run ownership guards movement of project plans and runtime."
     }
   ],
   "kernel_basenames": [

@@ -35,12 +35,13 @@ def test_triage_cannot_reopen_human_held_plan(tmp_path,monkeypatch):
     assert path.read_bytes()==before
 
 
-def test_public_apply_records_hold_refusal_without_ack(tmp_path,monkeypatch):
+@pytest.mark.parametrize("action",["reopen","amend","ack-and-relaunch"])
+def test_public_apply_records_hold_refusal_without_ack(tmp_path,monkeypatch,action):
     import triage_apply
     monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
     monkeypatch.setattr(triage_apply,'ilk_notify',lambda **_: None)
     data,path=fixture(tmp_path,'hold: human\n');before=path.read_bytes()
-    decision={'action':'reopen','slug':'triage','step':1,'finding':'diagnosis',
+    decision={'action':action,'slug':'triage','step':1,'finding':'diagnosis',
               'basis':'stopped run','falsifier':'repair passes'}
     result=triage_apply.apply(decision,data,run_id='held-fixture')
     assert result['action']=='refused' and result['audit_kind']=='triage-refused'
@@ -60,3 +61,23 @@ def test_triage_byte_cas_preserves_concurrent_edit(tmp_path,monkeypatch):
         _set_plan_status(path,data,status='in-progress',current_step=1)
     assert 'current_step: 3' in path.read_text()
     assert not (path.parent/'state-transitions.jsonl').exists()
+
+
+def test_findings_update_uses_journal_without_changing_step(tmp_path,monkeypatch):
+    from triage_apply import _append_finding
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    data,path=fixture(tmp_path)
+    _append_finding(path,data,run_id='finding-fixture',finding='diagnosis',basis='output',falsifier='repaired')
+    assert 'current_step: 2' in path.read_text()
+    rows=[json.loads(line) for line in (path.parent/'state-transitions.jsonl').read_text().splitlines()]
+    assert rows[-1]['phase']=='applied' and rows[-1]['from_']==rows[-1]['to']
+
+
+def test_worker_cannot_write_triage_or_audit_state(tmp_path,monkeypatch):
+    import triage_apply
+    data,path=fixture(tmp_path)
+    before={p:p.read_bytes() for p in data.rglob('*') if p.is_file()}
+    monkeypatch.setenv('ILK_WORKER_SESSION','fixture-worker')
+    with pytest.raises(TransitionError,match='worker cannot'):
+        triage_apply.apply({'action':'ack-and-relaunch'},data,run_id='worker-fixture')
+    assert {p:p.read_bytes() for p in data.rglob('*') if p.is_file()}==before

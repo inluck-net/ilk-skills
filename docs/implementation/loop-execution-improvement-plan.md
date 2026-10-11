@@ -24,7 +24,7 @@ required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: finish declared-worktree settings/dependency root validation,
 then reconcile the remaining accepted design requirements against the implementation
-and evidence map. Toolkit preview 2b1f554a
+and evidence map. Toolkit preview ee4aaab4
 and consumer compatibility 3987a299 are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -3564,3 +3564,28 @@ not a production cap. No real project migration, worker signal, plan edit or
 full suite was performed. This replaces liveness discovery at two named entry
 points, not migration-wide atomicity with a concurrent launch. Candidate awaits
 local safe activation alongside the triage writer correction.
+
+
+### State/lifecycle delivery and triage append closure
+
+Local preview `ee4aaab4` installed both the shared triage state writer and
+registry-aware migrations. First activation attempt refused an active reaper
+before any mutation; later fresh idle proof passed. Controller 94556 and all
+1,891 protected hashes stayed unchanged; services restored. Evidence:
+`toolkit-delivery-preview-20261012w/installed.json`. No active job was stopped.
+The added migration refusal/idle checks passed 5 in **0.09s**.
+
+Further writer closure found findings still used a whole-file rewrite outside
+CAS. Three negatives reproduced amend/ack of a human-held plan and absence of a
+journal (3 failed, 4 passed in 0.07s). Findings append now uses the shared
+transition API with unchanged state, findings note and exact original-byte
+hash. Held targets refuse with no acknowledgement; worker sessions refuse
+before triage or audit mutations. 33 targeted triage/rails/kernel-screening/
+backlog-isolation/gate-edit checks passed in **0.19s**.
+
+The new launch-root and migration-guard authority helpers are registered in
+the owner-only safety kernel list. Two missing-registration negatives failed
+in 0.06s; 25 focused kernel/current-and-historical-policy checks passed in
+**1.60s** after registration. Historical bases retain their own list/policy;
+report-only tools remain outside this authority extension. These last append
+and policy corrections are candidate-only until the next safe activation.
