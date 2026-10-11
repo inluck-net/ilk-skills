@@ -17,13 +17,19 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: finish C3 driver ownership and integrate the measured
-brokered same-session/interrupted recovery path. Candidate broker/profile/hook/binding and canonical recovery identity:
-36 focused checks passed in 2.66s. The master registry/progress normalizer is
-now shared with amendment detection; ordinary status updates retain retry caps.
-Old run `20261011-102057` timed out by itself. Watchdog restarted old run
-`20261011-130246`, last observed idling at the pause flag before dispatch.
-Integration requires fresh PID/start/phase checks and a quiescent boundary.
+Current next action: E2 mention-gate attribution gap: verify and replace
+failure-ID parsing from the displayed stdout tail with complete captured output;
+unknown capture coverage must not excuse failures. Add a focused regression with
+an undeclared failure before the retained tail. This change was announced but
+NOT implemented. Then continue C3/C4 caller migrations and the full checklist.
+C3 acceptance, journaled registry projection and real-provider continuation
+have candidate evidence, but are not production-wired. Latest code checkpoint
+is `0a7b7549`; see work log for actual results. Continuing in the same session after compression, per Chad; no more handover.
+Overall delivery estimate is 35% (judgment: candidates ahead of integration).
+Old run `20261011-102057` timed out by itself. Old run `20261011-130246`
+was freshly observed at handoff with PID 1016, PGID 958, start Oct 11 13:02:46,
+and a sleep child; the pause flag remains. Watchdog PID 354 is no longer present;
+a detached scheduler PID 27687 exists. Re-check all identities before activation.
 Owner checkpoints preserve main `5081038b` WIP prose ancestry. No new install,
 consumer benchmark, full suite, or production enforcement has occurred.
 
@@ -569,3 +575,20 @@ No completion/ship/proof markers are inferred from this human tracker.
   registry parser does not register; changed to a valid dated reference.
   Projection/context rerun: 14 passed in 1.29s. Do not repeat the already
   passing watcher cases just for that fixture correction. No real master edit.
+
+- Context handover: refreshed Resume pointer and live-state observations;
+  no implementation after the handover request. Successor must use the full
+  checklist, not treat candidate helpers as installed loop behavior.
+
+- E2 complete-output attribution: mention excuses now use complete captured
+  stdout/stderr; display tails cannot hide an undeclared prefix and unknown
+  capture cannot excuse. 15 focused mention checks passed in 5.64s. This closes
+  capture coverage, not actual-base provenance for legacy configured exceptions.
+- C4 additional Bash writers: refusal/re-entry findings and inconclusive/red/
+  foreign-plan ship retractions use shared journal API with byte CAS, exact
+  frozen/registry identity, idempotent notes, strict corrupt-history refusal,
+  hold preservation, and BOM/CRLF retention. First caller checks exposed my
+  incorrect SCRIPT_DIR reference; corrected to runner's _ILK_SCRIPT_DIR and
+  existing _master_tampered flag. Relevant state/findings/gates-off checks:
+  31 passed in 3.97s. No live plans changed. Foreign-plan inline production
+  seam, remaining PS writer and explained state mutation audit still open.

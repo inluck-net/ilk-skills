@@ -66,7 +66,7 @@ def _recover(log,path,content):
 
 
 def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, guards=None,
-               findings_note=None,release_auto_block=False) -> bool:
+               findings_note=None,release_auto_block=False,expected_digest=None) -> bool:
     """Change only requested scalar state fields if every expected value matches.
 
     Human holds cannot be lifted or progressed by driver calls. The worker
@@ -106,6 +106,8 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
             if (observed.get('status') in {'draft','parked','blocked'} or observed.get('hold')=='human') and actor!='human':
                 raise TransitionError('human hold on guard cannot be progressed')
         content=path.read_bytes();_recover(log,path,content)
+        if expected_digest is not None and _digest(content)!=expected_digest:
+            raise TransitionError('plan bytes changed before transition')
         text=content.decode('utf-8-sig');state=parse_frontmatter(text)
         if any(state.get(key)!=str(value) if value is not None else key in state for key,value in from_.items()):
             raise TransitionError('state changed since dispatch; compare-and-set refused')
@@ -132,13 +134,18 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
             elif value is not None: head=head.rstrip('\n')+'\n'+replacement
         projected='---'+head.rstrip('\n')+text[end:]
         if findings_note is not None:
-            marker=re.search(r'^## Findings[ \t]*$',projected,re.M)
-            if marker:
-                position=projected.find('\n',marker.end())
-                if position<0:projected+='\n'+findings_note+'\n'
-                else:projected=projected[:position+1]+findings_note+'\n'+projected[position+1:]
+            markers=list(re.finditer(r'^## Findings[ \t]*$',projected,re.M))
+            if markers:
+                start=markers[-1].end()
+                following=re.search(r'^## ',projected[start:],re.M)
+                position=start+following.start() if following else len(projected)
+                projected=projected[:position].rstrip()+'\n\n'+findings_note+'\n\n'+projected[position:].lstrip('\n')
             else:projected=projected.rstrip()+'\n\n## Findings\n\n'+findings_note+'\n'
+        # State transactions preserve the source encoding/newline convention.
+        if b'\r\n' in content:
+            projected=projected.replace('\r\n','\n').replace('\n','\r\n')
         new=projected.encode('utf-8')
+        if content.startswith(b'\xef\xbb\xbf'):new=b'\xef\xbb\xbf'+new
         if new==content: return False
         row=dict(id=str(uuid.uuid4()),path=str(path),actor=actor,reason=reason,
                  from_=from_,to=to,before_sha256=_digest(content),after_sha256=_digest(new),phase='intent')
@@ -150,6 +157,85 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
         finally: temporary.unlink(missing_ok=True)
         _append(log,dict(row,phase='applied'))
         return True
+
+
+def append_findings(path, note, *, reason):
+    """Append an idempotent driver note without racing a changed plan body."""
+    path=Path(path);raw=path.read_bytes();text=raw.decode('utf-8-sig')
+    if note in text:return False
+    state=parse_frontmatter(text)
+    if 'status' not in state:raise TransitionError('finding target has no state')
+    return transition(path,{'status':state['status']},{'status':state['status']},
+        actor='integrity-repair',reason=reason,findings_note=note,expected_digest=_digest(raw))
+
+
+def rollback_ship(path, *, step=None, history=None, slug=None, reason):
+    """Retract only a current ship; only verified red history lowers a pointer."""
+    path=Path(path);raw=path.read_bytes();state=parse_frontmatter(raw.decode('utf-8-sig'))
+    if state.get('status')!='shipped':raise TransitionError('rollback target is not shipped')
+    failed=[]
+    if history:
+        for line in Path(history).read_text(encoding='utf-8').splitlines():
+            if not line.strip():continue
+            try:row=json.loads(line)
+            except ValueError:raise TransitionError('rollback gate history is corrupt')
+            value=row.get('step')
+            if row.get('slug')==slug and row.get('outcome') in {'fail','error'}:
+                if isinstance(value,bool) or not isinstance(value,int) or value<0:
+                    raise TransitionError('rollback gate step is invalid')
+                failed.append(value)
+        step=min(failed) if failed else None
+    expected={'status':'shipped'};wanted={'status':'in-progress'}
+    note='pointer unchanged'
+    if step is not None:
+        if isinstance(step,bool) or not isinstance(step,int) or step<0:raise TransitionError('invalid rollback step')
+        current=state.get('current_step','')
+        if not current.isdigit():raise TransitionError('rollback pointer is invalid')
+        expected['current_step']=current
+        if int(current)>step:wanted['current_step']=step;note=f'current_step {current} -> {step}'
+    transition(path,expected,wanted,actor='driver',reason=reason,expected_digest=_digest(raw))
+    return note
+
+
+def resolve_plan(plans, slug):
+    """Use the frozen registry for every identity, never a first glob match."""
+    from iteration_context import read_context
+    from dispatch_target import identities,resolve,TargetError
+    context=read_context()
+    if context:
+        if Path(context['plans_dir']).resolve()!=Path(plans).resolve():raise TransitionError('foreign plans root')
+        candidates=[Path(row['path']) for row in context.get('plans',{}).values()]
+        matches=[path for path in candidates if slug in identities(path)]
+        if len(matches)!=1:raise TransitionError('ambiguous or absent frozen plan identity')
+        return matches[0]
+    try:return Path(resolve(Path(plans),slug)['subplan_path'])
+    except TargetError as exc:raise TransitionError(str(exc)) from exc
+
+
+def main():
+    import argparse
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action',choices=['finding','rollback','status','resolve'])
+    parser.add_argument('--path',type=Path)
+    parser.add_argument('--plans',type=Path)
+    parser.add_argument('--slug')
+    parser.add_argument('--note')
+    parser.add_argument('--reason',default='driver refusal')
+    parser.add_argument('--step',type=int)
+    parser.add_argument('--history',type=Path)
+    args=parser.parse_args()
+    try:
+        path=args.path or resolve_plan(args.plans,args.slug)
+        if args.action=='resolve':print(path)
+        elif args.action=='status':print(parse_frontmatter(path.read_text(encoding='utf-8-sig')).get('status',''))
+        elif args.action=='finding':
+            if not args.note:raise TransitionError('finding note required')
+            append_findings(path,args.note,reason=args.reason)
+        else:print(rollback_ship(path,step=args.step,history=args.history,slug=args.slug,reason=args.reason))
+        return 0
+    except (TransitionError,OSError,ValueError,TypeError) as exc:
+        import sys
+        print(str(exc),file=sys.stderr);return 2
 
 
 def reconcile_registry(path: Path, *, expected_digest: str) -> bool:
@@ -188,3 +274,7 @@ def reconcile_registry(path: Path, *, expected_digest: str) -> bool:
         finally:temporary.unlink(missing_ok=True)
         _append(log,dict(row,phase='applied'))
         return True
+
+
+if __name__=='__main__':
+    raise SystemExit(main())

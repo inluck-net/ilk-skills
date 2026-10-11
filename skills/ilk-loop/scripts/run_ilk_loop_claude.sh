@@ -3173,28 +3173,7 @@ _append_ungated_refusal_findings() {
   local _today _line
   _today=$(date +%Y-%m-%d)
   _line="- [${_today}] ungated: run ${run_id:-unknown} had gates off; ship refused."
-  python3 -c '
-import re, sys
-from pathlib import Path
-p = Path(sys.argv[1])
-line = sys.argv[2]
-body = p.read_text(encoding="utf-8")
-if line in body:
-    raise SystemExit(0)
-m = re.search(r"^##\s+Findings\s*$", body, re.MULTILINE)
-if m:
-    rest = body[m.end():]
-    nxt = re.search(r"^##\s+", rest, re.MULTILINE)
-    if nxt:
-        prefix, suffix = body[: m.end() + nxt.start()], body[m.end() + nxt.start():]
-        if prefix and not prefix.endswith("\n"):
-            prefix += "\n"
-        p.write_text(prefix + line + "\n" + suffix, encoding="utf-8")
-        raise SystemExit(0)
-if body and not body.endswith("\n"):
-    body += "\n"
-p.write_text(body + line + "\n", encoding="utf-8")
-' "$file" "$_line" 2>/dev/null || true
+  python3 "${_ILK_SCRIPT_DIR}/plan_state.py" finding --path "$file" --note "$_line" --reason "gates off: ship refused"
 }
 
 # post_iteration_ship <slug> <gate_outcome> <total_new> [iteration]
@@ -4169,14 +4148,10 @@ for raw in Path(sys.argv[1]).read_text().splitlines():
         # Sub-plan was unshipped before this iteration and is now shipped —
         # the worker shipped it this iteration.  Revert.
         # Revert shipped → in-progress, pointer untouched.
-        python3 -c "
-import re, sys
-from pathlib import Path
-p = Path(sys.argv[1])
-body = p.read_text()
-body = re.sub(r'^(status:\s*)shipped', r'\1in-progress', body, count=1, flags=re.MULTILINE)
-p.write_text(body)
-" "$f" 2>/dev/null
+        if ! python3 "${_ILK_SCRIPT_DIR}/plan_state.py" rollback --path "$f" --reason "driver gate inconclusive"; then
+          _master_tampered=1
+          return 1
+        fi
         echo "  [ship-integrity] $_si_slug: gate inconclusive (driver cap) — self-ship reverted, not counted toward quarantine" >&2
         # Record the revert for the next worker's prompt.
         local _revert_ts
@@ -4479,62 +4454,12 @@ for raw in Path(gh_path).read_text().splitlines():
       # sub-plan file instead of the gate's slug's file.
       local _revert_file="$f"
       if [[ "$_revert_target_slug" != "$slug" ]]; then
-        local _owner_plan_file
-        _owner_plan_file=$(find "$plans_dir" -maxdepth 1 -name "*-${_revert_target_slug}.md" ! -name "MASTER-*" 2>/dev/null | head -1) || true
-        if [[ -n "$_owner_plan_file" && -f "$_owner_plan_file" ]]; then
-          _revert_file="$_owner_plan_file"
-        fi
+        _revert_file=$(python3 "${_ILK_SCRIPT_DIR}/plan_state.py" resolve --plans "$plans_dir" --slug "$_revert_target_slug") || return 1
       fi
       local revert_out=""
-      revert_out=$(python3 -c "
-import json, re, sys
-from pathlib import Path
-
-subplan, lc_file, slug = sys.argv[1], sys.argv[2], sys.argv[3]
-p = Path(subplan)
-body = p.read_text()
-body = re.sub(r'^(status:\s*)shipped', r'\1in-progress', body, count=1, flags=re.MULTILINE)
-
-failed_steps = []
-if lc_file and slug:
-    try:
-        for raw in Path(lc_file).read_text().splitlines():
-            if not raw.strip():
-                continue
-            try:
-                rec = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if rec.get('slug') != slug:
-                continue
-            if rec.get('outcome') not in ('fail', 'error'):
-                continue
-            step = rec.get('step')
-            if isinstance(step, bool) or not isinstance(step, int):
-                continue
-            failed_steps.append(step)
-    except OSError:
-        pass
-
-note = ''
-if failed_steps:
-    target = min(failed_steps)
-    m = re.search(r'^current_step:\s*(\d+)\s*\$', body, re.MULTILINE)
-    if m is None:
-        note = 'no current_step field to revert'
-    elif int(m.group(1)) <= target:
-        note = 'pointer already at or behind step %d' % target
-    else:
-        body = re.sub(r'^current_step:\s*\d+\s*\$', 'current_step: %d' % target,
-                      body, count=1, flags=re.MULTILINE)
-        note = 'current_step %s -> %d (gate for step %d was red)' % (
-            m.group(1), target, target)
-else:
-    note = 'no gate record for this slug; pointer left untouched'
-
-p.write_text(body)
-print(note)
-" "$_revert_file" "$lc_file" "$_revert_target_slug" 2>/dev/null)
+      local _rollback_args=(rollback --path "$_revert_file" --slug "$_revert_target_slug" --reason "attributed driver gate red")
+      [[ -n "$lc_file" && -f "$lc_file" ]] && _rollback_args+=(--history "$lc_file")
+      revert_out=$(python3 "${_ILK_SCRIPT_DIR}/plan_state.py" "${_rollback_args[@]}") || return 1
       echo "  [ship-integrity] reverted $_revert_target_slug to in-progress; ${revert_out:-pointer unchanged}" >&2
       # Record the revert for the next worker's prompt.
       if [[ -n "$_revert_target_slug" ]]; then
@@ -5202,53 +5127,7 @@ if m:
 - $remaining_line"
   fi
 
-  # Append to Findings section: find the LAST ## Findings heading, then
-  # insert the note at the end of that section (before the next ## heading
-  # or at EOF).  Write is atomic (.tmp + os.replace).
-  if grep -q "^## Findings" "$sub_file" 2>/dev/null; then
-    python3 -c "
-import re, sys, os, tempfile
-path = sys.argv[1]
-note = sys.argv[2]
-text = open(path, encoding='utf-8').read()
-
-# Find the LAST ## Findings heading (not a substring mention).
-matches = list(re.finditer(r'^## Findings\s*$', text, re.M))
-if not matches:
-    sys.exit(0)
-
-last_match = matches[-1]
-start = last_match.end()
-
-# Find the next ## heading after it (or EOF).
-next_section = re.search(r'^## ', text[start:], re.M)
-if next_section:
-    insert_pos = start + next_section.start()
-else:
-    insert_pos = len(text)
-
-# Insert the note at the end of the Findings section.
-new_text = text[:insert_pos].rstrip('\n') + '\n\n' + note + '\n\n' + text[insert_pos:].lstrip('\n')
-
-# Atomic write.
-fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path), suffix='.tmp')
-try:
-    os.write(fd, new_text.encode('utf-8'))
-    os.close(fd)
-    os.replace(tmp_path, path)
-except:
-    os.close(fd)
-    if os.path.exists(tmp_path):
-        os.unlink(tmp_path)
-    raise
-" "$sub_file" "$note" 2>/dev/null
-  else
-    # No Findings section — append at end of file.
-    echo "" >> "$sub_file"
-    echo "## Findings" >> "$sub_file"
-    echo "" >> "$sub_file"
-    echo "$note" >> "$sub_file"
-  fi
+  python3 "${_ILK_SCRIPT_DIR}/plan_state.py" finding --path "$sub_file" --note "$note" --reason "iteration re-entry" || return 1
 
   echo "[runner] re-entry note stamped in $(basename "$sub_file") for step $step" >&2
   return 0
@@ -7737,41 +7616,17 @@ print(json.dumps({'slug': slug, 'violation': f'gate_isolation_restore_failed: {e
             printf '%s\n' "$_GATE_FIRST_SHIPPED_SLUGS" | grep -qxF "$_pre_slug" && continue
           fi
           # Read the current status from frontmatter.
-          _pre_status=$(python3 -c "
-import re, sys
-from pathlib import Path
-for p in Path(sys.argv[1]).glob('*.md'):
-    if p.name.startswith('MASTER'):
-        continue
-    text = p.read_text()
-    fm = {}
-    for m in re.finditer(r'^(\w[\w_-]*):\s*(.*)', text, re.MULTILINE):
-        fm[m.group(1)] = m.group(2).strip()
-    if fm.get('plan') == sys.argv[2]:
-        print(fm.get('status', ''))
-        break
-" "$_one_ship_plans_dir" "$_pre_slug" 2>/dev/null) || _pre_status=""
+          _pre_status=$(python3 "${_ILK_SCRIPT_DIR}/plan_state.py" status --plans "$_one_ship_plans_dir" --slug "$_pre_slug") || {
+            _master_tampered=1
+            break
+          }
           if [[ "$_pre_status" == "shipped" ]]; then
             # This sub-plan went non-shipped → shipped and is not dispatched.
             # Revert to its pre-iteration status AND current_step.
-            python3 -c "
-import re, sys
-from pathlib import Path
-plans_dir, slug, pre_step = sys.argv[1], sys.argv[2], sys.argv[3]
-for p in Path(plans_dir).glob('*.md'):
-    if p.name.startswith('MASTER'):
-        continue
-    text = p.read_text()
-    fm = {}
-    for m in re.finditer(r'^(\w[\w_-]*):\s*(.*)', text, re.MULTILINE):
-        fm[m.group(1)] = m.group(2).strip()
-    if fm.get('plan') == slug:
-        text = re.sub(r'^(status:\s*)shipped', r'\1in-progress', text, count=1, flags=re.MULTILINE)
-        cur_step = fm.get('current_step', '0')
-        text = re.sub(r'^(current_step:\s*)' + re.escape(cur_step), r'\g<1>' + pre_step, text, count=1, flags=re.MULTILINE)
-        p.write_text(text)
-        break
-" "$_one_ship_plans_dir" "$_pre_slug" "$_pre_step" 2>/dev/null || true
+            if ! python3 "${_ILK_SCRIPT_DIR}/plan_state.py" rollback --plans "$_one_ship_plans_dir" --slug "$_pre_slug" --step "$_pre_step" --reason "foreign plan self-shipped"; then
+              _master_tampered=1
+              break
+            fi
             echo "[one-ship] reverted $_pre_slug: status shipped→in-progress, current_step ${_pre_step:-?} (dispatched for ${_dispatched_slug:-<empty>})"
             # Record the revert for the next worker's prompt.
             local _revert_ts

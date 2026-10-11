@@ -560,3 +560,33 @@ def test_vitest_ac2_path_stripped_still_resolves(tmp_path: Path) -> None:
     assert vitest_abs in cmd, (
         f"expected absolute vitest path even with PATH stripped: {cmd}"
     )
+@pytest.mark.parametrize('unknown_capture', [False, True])
+def test_complete_output_required_for_baseline_excuse(tmp_path, monkeypatch, unknown_capture):
+    """A hidden undeclared prefix or unknown capture cannot turn a red green."""
+    repo = _setup_repo(tmp_path, {'ship': {'baseline_red': [
+        {'node_id': 'test_foo.py::test_declared', 'reason': 'legacy'}]}},
+        base_files={'test_foo.py': 'def test_green(): pass\n'},
+        commit_files={'test_foo.py': 'def test_changed(): pass\n'})
+    # Exercise main's actual verdict path with a disposable captured process.
+    output = ('FAILED test_foo.py::test_new - regression\n' + 'padding\n' * 500
+              + 'FAILED test_foo.py::test_declared - known\n')
+    command = sys.executable + ' -c ' + __import__('shlex').quote(
+        'import sys; print(' + repr(output) + '); sys.exit(1)')
+    monkeypatch.setattr(rlc, 'build_mention_gate_inventory', lambda *a, **k: [
+        {'command': command, 'timeout': 30}])
+    original = rlc.run_one
+    def capture(*a, **k):
+        result = original(*a, **k)
+        if result.scope == 'mention':
+            assert 'test_new' not in result.stdout_tail
+            if unknown_capture:
+                result.output_complete = False
+                del result._stdout_complete
+                del result._stderr_complete
+        return result
+    monkeypatch.setattr(rlc, 'run_one', capture)
+    result = _run(repo)
+    mention = next(c for c in result['results'] if c['scope'] == 'mention')
+    assert mention['passed'] is False
+    assert result['all_passed'] is False
+    assert 'excused_declared_reds' not in mention

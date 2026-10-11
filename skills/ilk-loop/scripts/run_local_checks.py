@@ -629,6 +629,7 @@ class CheckResult:
     stderr_path: str | None = None
     started_monotonic: float | None = None
     ended_monotonic: float | None = None
+    output_complete: bool = False
 
 
 _STEP_HEADING_ANY_RE = re.compile(r"^###\s+Step\s+(\d+)", re.MULTILINE)
@@ -1623,6 +1624,11 @@ def run_one(check: dict, scope: str, project: Path,
             )
         r.started_monotonic = t0
         r.ended_monotonic = t0 + dur
+        # Keep verdict evidence separate from display tails. Dynamic attributes
+        # are deliberately omitted by asdict: full output lives in artifacts.
+        r._stdout_complete = stdout or ""
+        r._stderr_complete = stderr_full
+        r.output_complete = not timed_out and stdout is not None and stderr is not None
         import uuid
         r.attempt_id = uuid.uuid4().hex
         output_root = os.environ.get('ILK_GATE_OUTPUT_DIR', '')
@@ -2435,11 +2441,13 @@ def main(argv: list[str]) -> int:
             # hard failure — never excused.  Applied per partition: a red in
             # any partition blocks advancement.
             excused_ids: list[str] = []
-            if mr.exit_code == 1 and baseline_red:
+            if (mr.exit_code == 1 and baseline_red and mr.output_complete
+                    and hasattr(mr, "_stdout_complete")
+                    and hasattr(mr, "_stderr_complete")):
                 from batch_gate import _undeclared_failures  # noqa: E402
-                # Parse from the same output the check captured
+                # Parse complete capture, never the human-facing display tail.
                 parsed_ids: list[str] = []
-                for line in (mr.stdout_tail or "").splitlines():
+                for line in (mr._stdout_complete + "\n" + mr._stderr_complete).splitlines():
                     if line.startswith(("FAILED ", "ERROR ")):
                         rest = line.split(" ", 1)[1]
                         parsed_ids.append(rest.split(" - ", 1)[0].strip())

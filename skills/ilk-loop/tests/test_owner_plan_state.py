@@ -120,3 +120,40 @@ def test_held_ship_refuses_before_creating_marker(tmp_path,monkeypatch):
         ship(plans_dir=plans,slug='conflict-batch-verify',repo=repo)
     assert fixtures._git(repo,'rev-parse','HEAD')==before
     assert not (plans/'.ship-intent.json').exists()
+
+
+def test_notes_and_rollback_keep_hold_and_complete_journal(tmp_path,monkeypatch):
+    from plan_state import append_findings,rollback_ship
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    path=plan(tmp_path,'shipped')
+    raw=path.read_bytes().replace(b'current_step: 0',b'current_step: 2')
+    path.write_bytes(b'\xef\xbb\xbf'+raw.replace(b'\n',b'\r\n'))
+    assert append_findings(path,'a refusal',reason='diagnostic')
+    assert not append_findings(path,'a refusal',reason='diagnostic')
+    assert path.read_bytes().startswith(b'\xef\xbb\xbf')
+    assert b'\r\n' in path.read_bytes() and b'\n' not in path.read_bytes().replace(b'\r\n',b'')
+    rollback_ship(path,step=0,reason='foreign ship')
+    assert 'current_step: 0' in path.read_text(encoding='utf-8-sig')
+    rows=[json.loads(line) for line in (tmp_path/'state-transitions.jsonl').read_text().splitlines()]
+    assert [row['phase'] for row in rows]==['intent','applied','intent','applied']
+    path.write_text('---\nstatus: shipped\nhold: human\ncurrent_step: 2\n---\n')
+    with pytest.raises(TransitionError,match='human hold'):
+        rollback_ship(path,step=0,reason='foreign ship')
+
+
+def test_rollback_refuses_corrupt_history_and_stale_bytes(tmp_path,monkeypatch):
+    from plan_state import rollback_ship,append_findings
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    path=plan(tmp_path,'shipped');before=path.read_bytes()
+    history=tmp_path/'history.jsonl';history.write_text('{broken')
+    with pytest.raises(TransitionError,match='corrupt'):
+        rollback_ship(path,history=history,slug='alpha',reason='red')
+    assert path.read_bytes()==before
+    original=__import__('plan_state').transition
+    def race(*a,**k):
+        path.write_bytes(path.read_bytes()+b'\nchanged by human\n')
+        return original(*a,**k)
+    monkeypatch.setattr('plan_state.transition',race)
+    with pytest.raises(TransitionError,match='bytes changed'):
+        append_findings(path,'diagnostic',reason='test race')
+    assert 'diagnostic' not in path.read_text()
