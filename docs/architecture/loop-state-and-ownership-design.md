@@ -476,3 +476,13 @@ older green rows without independently established supersession; that change
 is not installed yet. Final verification stays opt-in. Immediate metadata
 reads are batched/deduplicated only inside the same validated owner operation;
 this is not gate reuse and does not restore the plan 07m R1/R2 false-green path.
+
+
+The Mac candidate profile now has checked plain and selfmod archived entry,
+non-green terminal/result, and marker crash recovery evidence. Its explicit
+launch switch is `ILK_MEASURED_RED_PROGRESS=1` with `ILK_WORKER_MODE=code-only`;
+preparation freezes policy into the manifest and dispatch context. Ambient
+changes cannot alter already prepared inputs. Unchecked Windows adapters are
+refused. Capability availability is candidate-only pending fresh preparation
+and installation; existing batch pins retain their policy. Consumer proof
+refusal must be delivered before enabling this profile for consumer runs.

@@ -5,7 +5,8 @@ import pytest
 from test_owner_driver_step import fixture,git
 
 @pytest.mark.skipif(sys.platform!='darwin',reason='Mac owned iteration adapter')
-def test_optin_iteration_advances_once_without_retry_or_green_claim(tmp_path):
+@pytest.mark.parametrize('fault',['none','ship-intent','ship-commit','ship-cas'])
+def test_optin_iteration_advances_once_without_retry_or_green_claim(tmp_path,fault):
     context,root,plan=fixture(tmp_path,sys.executable+' -m pytest -q test_focused.py')
     (root/'test_focused.py').write_text('def test_existing():\n    assert False\n')
     git(root,'add','test_focused.py');git(root,'commit','-qm','existing red')
@@ -29,7 +30,28 @@ def turn(context,path,prompt,**kwargs):
     turns.append(prompt)
     (Path(context['exec_tree'])/'counter.py').write_text('def f(value): return value + 2\n')
     return dict(completed=True,session_id='fixture',findings='')
-row=run(ctx,path,'fixture',claude='unused',model='none',budget=0,mcp=None,gate_timeout=15,turn=turn)
+import progress_ship
+original_save=progress_ship._save;original_git=progress_ship.transaction.driver.git;original_transition=progress_ship.transition
+fault=sys.argv[2]
+def save(*args,**kwargs):
+    original_save(*args,**kwargs)
+    if fault=='ship-intent' and args[2]=='marker-intent':raise OSError('fixture lost caller after marker intent')
+def command(root,*args,**kwargs):
+    answer=original_git(root,*args,**kwargs)
+    if fault=='ship-commit' and args[0]=='commit' and '--allow-empty' in args:raise OSError('fixture lost caller after marker commit')
+    return answer
+def transition(*args,**kwargs):
+    answer=original_transition(*args,**kwargs)
+    if fault=='ship-cas':raise OSError('fixture lost caller after shipped CAS')
+    return answer
+progress_ship._save=save;progress_ship.transaction.driver.git=command;progress_ship.transition=transition
+try:row=run(ctx,path,'fixture',claude='unused',model='none',budget=0,mcp=None,gate_timeout=15,turn=turn)
+except OSError:
+    assert fault!='none'
+    progress_ship._save=original_save;progress_ship.transaction.driver.git=original_git;progress_ship.transition=original_transition
+    row=run(ctx,path,'fixture',claude='unused',model='none',budget=0,mcp=None,gate_timeout=15,turn=turn)
+    assert row['worker_turns']==[],row
+else:assert fault=='none','fault injection not exercised'
 assert len(turns)==1 and row['progress_accepted'] is True and row['accepted'] is False and row['green_accepted'] is False,row
 assert row['attempts'][-1]['all_passed'] is False
 from driver_step import project_result
@@ -49,7 +71,7 @@ print('one stub turn; actual failed gates; progress accepted; green false')
     # Fixture judgments reuse 15/30/35/40s gate/original/reservation/outer.
     # The measured ~6s core plus marker path fits; legitimate slower-host
     # completion beyond this margin falsifies it. No production cap changes.
-    result=subprocess.run([sys.executable,'-c',program,str(request)],env=env,start_new_session=True,capture_output=True,text=True,timeout=40)
+    result=subprocess.run([sys.executable,'-c',program,str(request),fault],env=env,start_new_session=True,capture_output=True,text=True,timeout=40)
     assert result.returncode==0,result.stdout+result.stderr
     assert 'green false' in result.stdout
     assert git(root,'rev-list','--count',context['base_commit']+'..HEAD')=='2'

@@ -3056,3 +3056,18 @@ entry, consumer safe activation and only then profile availability.
 
 Metadata/projection/strict-green landing/child retirement focused selection:
 **15 passed in 18.68s** (model none). Fresh committed archive selfmod entry next.
+
+
+Candidate 0121ab47 archived red selfmod entry **1 passed / 16 deselected in
+37.66s**: actual FF landing, progress-only close, failed result checks and
+`shipped-unproven`; no green proof or publication. Marker intent/commit/status
+CAS crash cases **3 passed / 1 deselected in 37.73s**, original frozen deadline,
+no second worker turn and exactly one code commit plus one empty marker.
+
+Added explicit per-launch `ILK_MEASURED_RED_PROGRESS=1` guard (Mac code-only
+only), frozen preparation policy and runtime capability marker after the
+measured lifecycle. Default remains off. Direct preparation rejects unchecked
+host adapters; pinned runtime rejects policy with a legacy worker mode. Fresh
+archive preparation/runner and launch-profile checks still required before
+installation. Consumer guard 4f74ae4e must land before consumers use the profile.
+No active batch or installed pointer changed. Whole scope is still in progress.

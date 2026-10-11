@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# measured-red-progress-runtime-v1
 set -Eeuo pipefail
 
 # =============================================================================
@@ -6365,7 +6366,7 @@ PY
       break
     fi
     if [[ -n "${ILK_RUN_INPUTS:-}" ]]; then
-      if ! python3 -c 'import sys;from pathlib import Path;sys.path.insert(0,sys.argv[1]);from run_inputs import verify_launch_resources;verify_launch_resources(Path(sys.argv[2]))' "${_ILK_SCRIPT_DIR}" "$ILK_RUN_INPUTS"; then
+      if ! python3 -c 'import sys;from pathlib import Path;sys.path.insert(0,sys.argv[1]);from run_inputs import verify_launch_resources;d=verify_launch_resources(Path(sys.argv[2]));import os;sys.exit(1 if d.get("measured_red_progress_protocol") is not None and (type(d["measured_red_progress_protocol"]) is not int or d["measured_red_progress_protocol"]!=1 or os.environ.get("ILK_WORKER_MODE")!="code-only" or sys.platform!="darwin") else 0)' "${_ILK_SCRIPT_DIR}" "$ILK_RUN_INPUTS"; then
         stop_reason="run_inputs_changed"
         break
       fi

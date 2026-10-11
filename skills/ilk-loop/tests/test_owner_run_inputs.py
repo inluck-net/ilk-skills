@@ -294,3 +294,11 @@ def test_measured_red_worker_only_revision_cannot_be_launched(tmp_path):
     with pytest.raises(InputPinError,match='measured-red progress adapter absent'):
         prepare(repo,home,destination,measured_red_progress=True)
     assert not destination.exists()
+
+
+def test_measured_red_progress_refuses_unchecked_host_adapter(tmp_path,monkeypatch):
+    repo,home,_=fixture(tmp_path)
+    monkeypatch.setattr(sys,'platform','win32')
+    with pytest.raises(InputPinError,match='checked Mac owner adapter'):
+        prepare(repo,home,tmp_path/'windows-profile',measured_red_progress=True)
+    assert not (tmp_path/'windows-profile').exists()

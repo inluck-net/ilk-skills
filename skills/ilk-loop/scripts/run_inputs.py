@@ -148,6 +148,7 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
     source,settings_sources=_settings_sources(worker_home,project)
     if worker_tools not in {'shell','native'}:raise InputPinError('unknown worker tool profile')
     if not isinstance(measured_red_progress,bool):raise InputPinError('explicit measured-red progress opt-in required')
+    if measured_red_progress and sys.platform!='darwin':raise InputPinError('measured-red progress requires the checked Mac owner adapter')
     if worker_thinking not in {'default','disabled'}:raise InputPinError('unknown worker thinking profile')
     if worker_thinking=='disabled':
         from provider_control import validate_settings

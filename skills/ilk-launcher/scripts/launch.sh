@@ -830,6 +830,13 @@ start_ilk_window() {
       fi
       pin_args+=(--worker-thinking "$ILK_WORKER_THINKING")
     fi
+    if [[ "${ILK_MEASURED_RED_PROGRESS:-0}" != 0 ]]; then
+      if [[ "${ILK_MEASURED_RED_PROGRESS}" != 1 || "${ILK_WORKER_MODE:-}" != code-only || "$(uname -s)" != Darwin ]]; then
+        echo "[ilk] measured-red progress requires explicit 1 and the checked Mac code-only boundary" >&2
+        return 1
+      fi
+      pin_args+=(--measured-red-progress)
+    fi
     [[ -n "$mcp_config_path" ]] && pin_args+=(--mcp "$mcp_config_path")
     python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_inputs.py" "${pin_args[@]}" >/dev/null || return 1
     fi

@@ -102,12 +102,7 @@ else:
 print(json.dumps({'type':'system','subtype':'init','session_id':'fixture-session','model':'fixture-model'}))
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'fixture-session'}))
 ''');cli.chmod(0o700)
-    inputs=tmp_path/'inputs';manifest=prepare(work if case in {'selfmod','pending-selfmod','measured-red-selfmod'} else ROOT,home,inputs,worker_tools='native' if case.startswith('native-tools') else 'shell')
-    if measured_red:
-        # Test-only owner prepares an unavailable candidate policy. Public
-        # prepare refuses it until the runtime capability marker lands.
-        manifest['measured_red_progress_protocol']=1
-        (inputs/'inputs.json').write_text(json.dumps(manifest))
+    inputs=tmp_path/'inputs';manifest=prepare(work if case in {'selfmod','pending-selfmod','measured-red-selfmod'} else ROOT,home,inputs,worker_tools='native' if case.startswith('native-tools') else 'shell',measured_red_progress=measured_red)
     pin_launch_resources(inputs,project=work,executables={'python':sys.executable,'claude':str(cli)})
     if upgrading:
         target_inputs=tmp_path/'upgrade-target-inputs'
