@@ -30,6 +30,8 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
     context_path=Path(context_path).resolve();inputs=Path(inputs).resolve();registry=Path(registry).resolve()
     if context_path.exists():raise ContextError('context already frozen')
     manifest=verify_launch_resources(inputs)
+    from run_inputs import verify_code_snapshot
+    verify_code_snapshot(inputs,deadline=deadline)
     if Path(context['code_root']).resolve()!=Path(manifest['code_root']).resolve():
         raise ContextError('dispatch differs from pinned toolkit')
     if Path(__file__).resolve()!=Path(context['code_root'])/'skills/ilk-loop/scripts/worker_dispatch.py':
@@ -48,6 +50,7 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
     scratch=Path(tempfile.mkdtemp(prefix='ilk-worker-')).resolve()
     context=dict(context,worker_tools=manifest.get('worker_tools','shell'),
                  private_worker_home=manifest['worker_home'],worker_inputs_dir=str(inputs),
+                 toolkit_code_inventory_sha256=manifest.get('code_inventory_sha256'),
                  worker_tmp_dir=str(scratch),worker_shell_python=sys.executable,
                  worker_sandbox_adapter='macos-brokered-shell',shell_broker_path=str(ipc/'shell.sock'),
                  shell_broker_nonce=uuid.uuid4().hex,run_registry_dir=str(registry),runner_owner_pid=owner_pid,

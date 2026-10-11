@@ -2,6 +2,7 @@ from iteration_clock import monotonic
 import json
 from pathlib import Path
 import subprocess
+import sys
 import pytest
 from run_inputs import prepare,InputPinError,digest
 
@@ -223,3 +224,33 @@ def test_actual_launcher_runs_from_private_inputs_without_changing_source_home(t
         if runtime.exists():
             for row in project_status(runtime)['runs']:
                 if row['liveness']=='running':signal_run(runtime,row['run_id'])
+
+
+def test_global_instructions_are_private_frozen_inputs_not_live_home_links(tmp_path):
+    from run_inputs import pin_launch_resources,verify_launch_resources
+    repo,home,_=fixture(tmp_path)
+    (home/'CLAUDE.md').write_text('original global instructions')
+    destination=tmp_path/'run';manifest=prepare(repo,home,destination)
+    pin_launch_resources(destination,project=repo,executables={'python':sys.executable,'claude':sys.executable})
+    (home/'CLAUDE.md').write_text('later source edit')
+    copied=Path(manifest['global_instruction_inputs'][0]['path'])
+    assert copied.read_text()=='original global instructions'
+    verify_launch_resources(destination)
+    copied.chmod(0o600);copied.write_text('altered private instructions')
+    with pytest.raises(InputPinError,match='changed'):verify_launch_resources(destination)
+
+
+@pytest.mark.parametrize('mutation',['edit','add','manifest'])
+def test_complete_code_inventory_detects_changed_or_added_runtime_inputs(tmp_path,mutation):
+    from run_inputs import verify_code_snapshot
+    repo,home,_=fixture(tmp_path);destination=tmp_path/'run';manifest=prepare(repo,home,destination)
+    expected=manifest['code_inventory_sha256'];verify_code_snapshot(destination,expected=expected)
+    code=Path(manifest['code_root'])
+    cache=code/'__pycache__';cache.mkdir();(cache/'generated.pyc').write_bytes(b'fixture cache')
+    verify_code_snapshot(destination,expected=expected)
+    if mutation=='edit':(code/'skills/keep').write_text('altered snapshot')
+    elif mutation=='add':(code/'unexpected_import.py').write_text('new runtime input')
+    else:
+        data=json.loads((destination/'inputs.json').read_text());data['code_inventory']=[]
+        (destination/'inputs.json').write_text(json.dumps(data))
+    with pytest.raises(InputPinError,match='changed'):verify_code_snapshot(destination,expected=expected)

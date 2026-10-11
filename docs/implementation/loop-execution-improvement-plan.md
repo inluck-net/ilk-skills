@@ -159,6 +159,22 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- Private code inventory/global-home candidate: canonical hashes for all snapshot
+  files and symlink entries; frozen context fingerprint checked at preparation,
+  each provider turn and acceptance validation, not each tool call. Detects
+  added imports, changed files and manifest tamper. Named source-home global
+  instructions copied privately and hashed (none present in actual worker home).
+  Initial focused input/instruction/preparation checks: 25 passed / 1 failed
+  in 21.65s, due missing sys import in new global-copy fixture; corrected case
+  passed 1 in 0.10s. One warm local inventory pass: 1180 installed files,
+  0.131171s. No universal timing threshold/default inferred. Generated Python
+  caches and external/system/managed inputs remain explicitly unpinned; source
+  files pinned and worker OS denies private-code mutation. Archived callers next.
+- 144b57b0 named-instruction candidate archived normal/native/selfmod/worktree/
+  pending recovery callers passed 6 in 42.03s. Current installed remains 2ed78097;
+  named-input/brief/new code-inventory changes await next verified boundary.
+
+
 - Worker brief performance hypothesis: actual corrected-policy sample spent
   46.607s in worker diagnostic test intervals (including broad 253-test adjacent
   run) versus 0.984407s driver gate. Brief now asks for smallest defect diagnostic,

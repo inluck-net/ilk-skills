@@ -103,6 +103,36 @@ def _settings_sources(worker_home, project):
     return effective,observations
 
 
+def _code_inventory(root,deadline=None):
+    """Canonical snapshot files/links; generated Python caches are not inputs."""
+    from iteration_clock import monotonic
+    rows=[]
+    for path in sorted(Path(root).rglob('*')):
+        relative=path.relative_to(root)
+        if '__pycache__' in relative.parts:continue
+        if deadline is not None and monotonic()>=deadline:raise InputPinError('code inventory reached existing deadline')
+        if path.is_symlink():rows.append(dict(path=str(relative),kind='symlink',target=os.readlink(path)))
+        elif path.is_file():rows.append(dict(path=str(relative),kind='file',sha256=digest(path)))
+    return rows
+
+
+def _inventory_digest(rows):
+    return hashlib.sha256(json.dumps(rows,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+
+
+def verify_code_snapshot(destination,*,expected=None,deadline=None):
+    manifest=json.loads((Path(destination)/'inputs.json').read_text())
+    rows=manifest.get('code_inventory')
+    if rows is None:
+        if expected is not None:raise InputPinError('frozen code inventory unavailable')
+        return None # Historical descriptor did not freeze this capability.
+    fingerprint=_inventory_digest(rows)
+    if fingerprint!=manifest.get('code_inventory_sha256') or expected is not None and fingerprint!=expected:
+        raise InputPinError('frozen code inventory changed')
+    if _code_inventory(Path(manifest['code_root']),deadline)!=rows:raise InputPinError('pinned toolkit files changed')
+    return fingerprint
+
+
 def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD', observe_scope=False, project=None, worker_thinking='default', worker_tools='shell'):
     repo=repo.resolve();worker_home=worker_home.resolve();destination=destination.resolve()
     source_root=repo
@@ -175,6 +205,13 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
                                  'pinned_script':str(observer),'pinned_sha256':digest(observer)})
         pinned.setdefault('env',{})['ILK_SKILL_HOME']=str(code/'skills')
         pinned['env']['ILK_CODE_ROOT']=str(code)
+        global_instructions=[]
+        for name in ('CLAUDE.md','CLAUDE.local.md'):
+            source_instruction=worker_home/name
+            if source_instruction.is_file():
+                target=home/name;target.write_bytes(source_instruction.read_bytes());target.chmod(0o400)
+                global_instructions.append(dict(source_path=str(source_instruction),path=str(target),sha256=digest(target)))
+        code_inventory=_code_inventory(code)
         settings=home/'settings.json';settings.write_text(json.dumps(pinned,indent=2)+'\n');settings.chmod(0o600)
         # Exclude credentials and arbitrary env values from public provenance.
         safe={key:value for key,value in pinned.items() if key!='env'}
@@ -190,6 +227,9 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
                   'scope_observation_only':observe_scope,
                   'settings_sources':settings_sources,'cli_setting_sources':'',
                   'worker_thinking':worker_thinking,'worker_tools':worker_tools,
+                  'global_instruction_inputs':global_instructions,'code_inventory':code_inventory,
+                  'code_inventory_sha256':_inventory_digest(code_inventory),
+                  'python_cache_pinning':'generated __pycache__ excluded; source files pinned, external cache tamper requires explicit adapter',
                   'managed_settings':'remain enforced by Claude; not overridden or claimed pinned',
                   'remaining':'launcher wiring, model/effort resolution, MCP/plan-script adapters and shell enforcement'}
         (destination/'inputs.json').write_text(json.dumps(manifest,indent=2)+'\n')
@@ -236,7 +276,7 @@ def verify_launch_resources(destination):
     for key,name in (('code_root','code'),('worker_home','worker-home')):
         if Path(manifest[key]).resolve()!=destination/name:
             raise InputPinError('private run input root contradicts prepared manifest')
-    paths=list(manifest.get('executables',[]))+[manifest['mcp']]
+    paths=list(manifest.get('executables',[]))+[manifest['mcp']]+manifest.get('global_instruction_inputs',[])
     paths.append({'path':str(Path(manifest['worker_home'])/'settings.json'),'sha256':manifest['settings_sha256']})
     paths.extend({'path':row['pinned_script'],'sha256':row['pinned_sha256']} for row in manifest['hooks'])
     for row in manifest.get('context_bindings',[]):

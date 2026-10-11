@@ -657,3 +657,23 @@ leaves routine authored gates to the driver. A broad adjacent run needs a
 driver diagnostic demonstrating the need. No authored gate is removed and
 no worker report grants acceptance. This is a performance hypothesis requiring
 actual acceptance/quality measurement, not an established speed gain.
+
+### Private code and global-home inputs (new candidate)
+
+`run_inputs._code_inventory` freezes every snapshot file's hash and each symlink
+entry; new/changed files or inventory rewrites refuse. Preparation, provider-turn
+entry and driver validation verify the inventory against its frozen context
+fingerprint. This includes toolkit runtime imports, skills/commands and referenced
+files within the snapshot. A warm-cache pass over installed 2ed78097's 1,180
+files took 0.131171s on this Mac; this single observation is not a default or
+cross-host benchmark. Verification occurs at transaction boundaries, not per
+tool call. Source-home CLAUDE.md/CLAUDE.local.md, when present, are copied privately
+with hashes and verified alongside hooks/settings; later live-home edits do not
+alter the active copy. Production worker home currently has neither named file.
+
+Generated __pycache__ is excluded explicitly: source files are pinned, but
+external bytecode-cache mutation and system/managed runtime inputs still require
+a drain and a measured adapter. Arbitrary imports/references outside the snapshot
+are not claimed pinned. Existing descriptors without this inventory retain
+historical capability/limitations; an explicitly frozen fingerprint cannot fall
+back to missing inventory. Final verification stays opt-in.

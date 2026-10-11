@@ -81,6 +81,9 @@ def validate(context):
             raise ContextError('frozen plan contract changed')
     from instruction_inputs import verify
     verify(context)
+    if context.get('toolkit_code_inventory_sha256') is not None:
+        from run_inputs import verify_code_snapshot
+        verify_code_snapshot(context['worker_inputs_dir'],expected=context['toolkit_code_inventory_sha256'],deadline=_deadline.get())
     state=parse_frontmatter(path.read_text())
     if state.get('current_step')!=str(selected['step']):raise ContextError('step changed since dispatch')
     if state.get('status') in {'draft','blocked','parked','shipped'} or state.get('hold')=='human':

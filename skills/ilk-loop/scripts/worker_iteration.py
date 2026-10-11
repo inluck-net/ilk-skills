@@ -98,6 +98,8 @@ def _tool_names(context,manifest):
 
 def _worker_turn(context,path,prompt,*,claude,model,budget,mcp,session,bound,manifest,control):
     deadline=context['iteration_deadline_monotonic']
+    from run_inputs import verify_code_snapshot
+    verify_code_snapshot(context['worker_inputs_dir'],expected=context.get('toolkit_code_inventory_sha256'),deadline=deadline)
     import hashlib
     from instruction_inputs import verify
     verify(context)
