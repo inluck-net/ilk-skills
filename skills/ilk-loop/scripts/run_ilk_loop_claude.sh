@@ -4237,7 +4237,7 @@ if m:
     # repo a separate worktree).  Without this, the resolver walks up
     # from the plans dir and finds no .git ancestor.
     if [[ -n "${PROJECT_PATH:-}" && -d "$PROJECT_PATH" ]]; then
-      _si_args+=("--repo" "$PROJECT_PATH")
+      _si_args+=("--repo" "$(iteration_observe_repo "$PROJECT_PATH")")
     fi
     # Pass the results file and slug so ship_integrity can read the full
     # gate record and name the error in the violation reason.

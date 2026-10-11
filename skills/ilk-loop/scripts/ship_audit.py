@@ -881,6 +881,25 @@ def _resolve_driver_gate(records,*,slug,authored,declared_checks,cwd,subplan_pat
         return 'stale_head','final scoped proof has an unaccepted or changed-contract continuation'
     return 'pass',None
 
+def audit_execution_root(cwd,subplan_path,master_path):
+    """Use the exact frozen tree, or a validated exact master's declared tree."""
+    from iteration_context import read_context,root_for_plan,validate_work_tree_binding,ContextError
+    context=read_context()
+    if context and subplan_path:
+        validate_work_tree_binding(context)
+        return root_for_plan(context,Path(subplan_path))
+    if not cwd or not master_path:return cwd
+    from plan_status import parse_frontmatter
+    declared=parse_frontmatter(Path(master_path).read_text(encoding='utf-8-sig')).get('work_tree','')
+    if not declared:return cwd
+    root=Path(declared)
+    if not root.is_absolute() or not root.is_dir():raise ContextError('audit declared worktree unavailable')
+    from work_tree import _git_common_dir
+    common=_git_common_dir(Path(cwd))
+    if not common or common!=_git_common_dir(root):raise ContextError('audit declared worktree Git store differs')
+    return root.resolve()
+
+
 def audit_ship(
     status: str,
     body: str,
@@ -944,6 +963,7 @@ def audit_ship(
             "reasons": [],
         }
 
+    cwd=audit_execution_root(cwd,subplan_path,master_path)
     if ledger_records is not None:
         ledger_records = [rec for rec in ledger_records
                           if isinstance(rec, dict) and ledger_record_is_reachable(rec, cwd)]
