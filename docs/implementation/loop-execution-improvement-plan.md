@@ -621,3 +621,18 @@ No completion/ship/proof markers are inferred from this human tracker.
   Windows native lifecycle adapter/readers, private-input pin activation,
   broker child registration and consumer drain still open. No live daemon
   or runner was changed; no installed I4 claim.
+
+- D2 launch pinning candidate: Claude launcher prepares exact committed code
+  (release manifests select their SHA, never later source HEAD), private copied
+  settings/hooks, immutable MCP bytes and explicit executable path/hash plus
+  consumer lockfile inventory. Fixed CLI path is invoked; resources verified
+  before dispatch, input drift refuses with named terminal state. ILK_CODE_ROOT
+  resolves legacy toolkit plan-script references including spaced paths;
+  pinned selfmod keeps its driver code root, resolves source clone separately.
+  Source homes unchanged. Runtime libraries are explicitly observed rather than
+  copied: a system-runtime upgrade requires drain/relaunch. Eight input-pin
+  checks passed in 0.44s (release-SHA isolation, credential omission, drift and
+  actual spaced-path script execution). Consumer-map check also exposed three
+  earlier candidate terminal states absent from collector; all now map to
+  self-hosting-drift / needs-human. Full launcher-through-private-input entry
+  check and activation remain pending; no installed I6 claim.

@@ -1667,6 +1667,13 @@ def classify(
     sentinel = read_sentinel(project_path)
     _SENTINEL_FAILURE_MAP: dict[str, str] = {
         "budget_exhausted": "budget-exhausted",
+        "run_inputs_changed": "self-hosting-drift",
+        "dispatch_identity_invalid": "self-hosting-drift",
+        "iteration_record_projection_failed": "self-hosting-drift",
+        "recovery_history_invalid": "self-hosting-drift",
+        "iteration_context_invalid": "self-hosting-drift",
+        "iteration_record_recovery_failed": "self-hosting-drift",
+        "selfmod_state_invalid": "self-hosting-drift",
         "max-iterations": "max-iter-bound",
         "interrupted": "interrupted",
         # A sub-plan was marked `shipped` while its declared gate was red, and

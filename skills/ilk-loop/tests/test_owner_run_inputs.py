@@ -98,3 +98,37 @@ def test_brokered_binding_is_immutable_and_leaves_base_home_unchanged(tmp_path):
         assert len(full)==1 and '--mode enforce --context' in full[0]['hooks'][0]['command']
         assert 'private-token' not in (destination/'inputs.json').read_text()
         with pytest.raises(FileExistsError):bind_context(destination,path)
+
+
+def test_release_pin_uses_manifest_commit_and_resource_hashes(tmp_path):
+    from run_inputs import pin_launch_resources,verify_launch_resources
+    repo,home,_=fixture(tmp_path)
+    sha=subprocess.check_output(['git','-C',str(repo),'rev-parse','HEAD'],text=True).strip()
+    release=tmp_path/'release';release.mkdir()
+    (release/'.ilk-release.json').write_text(json.dumps({'sha':sha,'source_repo':str(repo)}))
+    (repo/'skills/keep').write_text('later clone change')
+    subprocess.run(['git','-C',str(repo),'add','.'],check=True)
+    subprocess.run(['git','-C',str(repo),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','later'],check=True)
+    destination=tmp_path/'run';manifest=prepare(release,home,destination)
+    assert manifest['toolkit_sha']==sha and (destination/'code/skills/keep').read_text()=='pinned'
+    config=tmp_path/'mcp.json';config.write_text('{"mcpServers":{"example":{"env":{"TOKEN":"private-mcp"}}}}')
+    binary=tmp_path/'runtime';binary.write_text('fixed executable')
+    pin_launch_resources(destination,project=repo,mcp=config,executables={'fixture':binary})
+    assert 'private-mcp' not in (destination/'inputs.json').read_text()
+    verify_launch_resources(destination)
+    config.write_text('{}') # live config edit does not alter pinned input
+    verify_launch_resources(destination)
+    binary.write_text('changed executable')
+    with pytest.raises(InputPinError,match='changed'):verify_launch_resources(destination)
+
+
+@pytest.mark.parametrize('quoted',[False,True])
+def test_plan_script_uses_pinned_code_with_space_in_path(tmp_path,quoted):
+    from run_local_checks import pin_gate_command
+    code=tmp_path/'pinned code';script=code/'skills/ilk-loop/scripts/example.py';script.parent.mkdir(parents=True)
+    script.write_text('print("pinned")')
+    raw='~/.claude/skills/ilk-loop/scripts/example.py'
+    command='python3 '+('"'+raw+'"' if quoted else raw)
+    rewritten=pin_gate_command(command,{'ILK_CODE_ROOT':str(code),'HOME':str(tmp_path)})
+    cp=subprocess.run(['bash','-c',rewritten],capture_output=True,text=True)
+    assert cp.returncode==0 and cp.stdout.strip()=='pinned',cp.stderr

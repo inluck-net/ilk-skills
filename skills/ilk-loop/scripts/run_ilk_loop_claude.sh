@@ -415,6 +415,10 @@ if root: print(external_logs_dir(project_key(root)))
 #   2. Symlink farm (production): _SKILL_ROOT is ~/.claude-worker/skills/ with
 #      symlinks into the real repo.  Follow one child symlink to the repo.
 _resolve_toolkit_clone() {
+  if [[ -n "${ILK_RUN_INPUTS:-}" ]]; then
+    python3 -c 'import json,sys;from pathlib import Path;print(Path(json.load(open(sys.argv[1]))["source_repo"]).resolve(strict=True))' "$ILK_RUN_INPUTS/inputs.json"
+    return $?
+  fi
   local skill_root_resolved
   skill_root_resolved="$(readlink -f "$_SKILL_ROOT" 2>/dev/null \
                     || realpath "$_SKILL_ROOT" 2>/dev/null \
@@ -642,7 +646,7 @@ create_selfmod_worktree() {
   PROJECT_PATH="$wt_path"
   # The worker's skill root must be the worktree, not the live clone.
   if [[ -d "${wt_path}/skills" ]]; then
-    export ILK_SKILL_HOME="${wt_path}/skills"
+    [[ -n "${ILK_CODE_ROOT:-}" ]] || export ILK_SKILL_HOME="${wt_path}/skills"
   fi
   echo "[selfmod] working directory switched to worktree: $wt_path"
 }
@@ -4803,7 +4807,7 @@ for k, v in sorted(d.get("env", {}).items()):
   set -m
   (cd "$cwd" && { [[ -z "$PATH_PRELUDE" ]] || eval "$PATH_PRELUDE"; } \
       && eval "$settings_env_exports" \
-      && ILK_WORKER_SESSION=1 exec gtimeout "${timeout_sec}s" claude "${claude_args[@]}") \
+      && ILK_WORKER_SESSION=1 exec gtimeout "${timeout_sec}s" "${ILK_CLAUDE_BIN:-claude}" "${claude_args[@]}") \
     | tee "$jsonl_log" | python3 "$renderer" | tee "$iter_log" &
   local _pipeline_pid=$!
   set +m
@@ -6210,6 +6214,12 @@ print(fm.get('result_file', ''))
     fi
 
     # Freeze resolved identities before any HEAD/dirty/gate snapshot.
+    if [[ -n "${ILK_RUN_INPUTS:-}" ]]; then
+      if ! python3 -c 'import sys;from pathlib import Path;sys.path.insert(0,sys.argv[1]);from run_inputs import verify_launch_resources;verify_launch_resources(Path(sys.argv[2]))' "${_ILK_SCRIPT_DIR}" "$ILK_RUN_INPUTS"; then
+        stop_reason="run_inputs_changed"
+        break
+      fi
+    fi
     local _context_clone="${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
     local _context_exec _context_runtime _context_mode="none"
     _context_exec="$(selfmod_effective_repo "$PROJECT_PATH")"
@@ -8232,7 +8242,7 @@ print(json.dumps(d))
 # ----- Selfmod skill home resolution (end of file) ---------------------------
 # Runs after all defaults, arg parsing, and function definitions.  A test
 # harness that sets SELFMOD_WORKTREE_PATH after sourcing sees this.
-if [[ -n "${SELFMOD_WORKTREE_PATH:-}" && -d "${SELFMOD_WORKTREE_PATH}/skills" ]]; then
+if [[ -z "${ILK_CODE_ROOT:-}" && -n "${SELFMOD_WORKTREE_PATH:-}" && -d "${SELFMOD_WORKTREE_PATH}/skills" ]]; then
   export ILK_SKILL_HOME="${SELFMOD_WORKTREE_PATH}/skills"
 fi
 

@@ -1528,6 +1528,35 @@ def pin_gate_command(cmd: str, env: dict[str, str]) -> str:
 
     Returns the (possibly rewritten) command string.
     """
+    code_root=env.get('ILK_CODE_ROOT','')
+    if code_root:
+        root=Path(code_root)
+        if not root.is_absolute() or not (root/'skills').is_dir():
+            raise ValueError('pinned code root unavailable')
+        home=env.get('ILK_SOURCE_HOME') or env.get('HOME') or str(Path.home())
+        prefixes=[f'{home}/.ilk/current/skills/','~/.ilk/current/skills/',
+                  f'{home}/.claude/skills/','~/.claude/skills/',
+                  f'{home}/.codex/skills/','~/.codex/skills/',
+                  '$HOME/.claude/skills/','${HOME}/.claude/skills/']
+        source=env.get('ILK_TOOLKIT_SOURCE_ROOT')
+        if source:prefixes.append(str(Path(source)/'skills')+'/')
+        # Preserve shell quoting when private snapshots live under spaced paths.
+        replacement=str(root/'skills')+'/'
+        output=[];index=0;quote=None
+        while index<len(cmd):
+            prefix=next((value for value in sorted(prefixes,key=len,reverse=True) if cmd.startswith(value,index)),None)
+            if prefix:
+                if quote=="'":value=replacement.replace("'", "'\\''")
+                elif quote=='"':value=replacement.replace('\\','\\\\').replace('"','\\"').replace('$','\\$').replace('`','\\`')
+                else:value=shlex.quote(replacement)
+                output.append(value);index+=len(prefix);continue
+            char=cmd[index];output.append(char);index+=1
+            if char=='\\' and quote!="'" and index<len(cmd):
+                output.append(cmd[index]);index+=1
+            elif char in {"'",'"'}:
+                if quote is None:quote=char
+                elif quote==char:quote=None
+        return ''.join(output)
     release_dir = env.get("ILK_RUN_RELEASE_DIR", "")
     skill_home = env.get("ILK_SKILL_HOME", "")
     if not release_dir or not skill_home:

@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import tempfile
 import tarfile
+import sys
 
 
 class InputPinError(RuntimeError):
@@ -45,6 +46,12 @@ def _command_script(command):
 
 def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD', observe_scope=False):
     repo=repo.resolve();worker_home=worker_home.resolve();destination=destination.resolve()
+    source_root=repo
+    marker=repo/'.ilk-release.json'
+    if marker.exists():
+        metadata=json.loads(marker.read_text())
+        revision=metadata['sha'];repo=Path(metadata['source_repo']).resolve(strict=True)
+        # Reconstruct the exact released commit, never source-repo HEAD.
     if destination.exists(): raise InputPinError('run input destination already exists')
     sha=subprocess.check_output(['git','-C',str(repo),'rev-parse',revision+'^{commit}'],text=True).strip()
     archive=subprocess.check_output(['git','-C',str(repo),'archive',sha])
@@ -97,11 +104,13 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
             observations.append({'phase':'PreToolUse','source_name':observer.name,
                                  'pinned_script':str(observer),'pinned_sha256':digest(observer)})
         pinned.setdefault('env',{})['ILK_SKILL_HOME']=str(code/'skills')
+        pinned['env']['ILK_CODE_ROOT']=str(code)
         settings=home/'settings.json';settings.write_text(json.dumps(pinned,indent=2)+'\n');settings.chmod(0o600)
         # Exclude credentials and arbitrary env values from public provenance.
         safe={key:value for key,value in pinned.items() if key!='env'}
         env=pinned.get('env',{})
         manifest={'schema_version':1,'toolkit_sha':sha,'code_root':str(code),'worker_home':str(home),
+                  'source_root':str(source_root),'source_repo':str(repo),'source_worker_home':str(worker_home),
                   'settings_non_env_sha256':hashlib.sha256(json.dumps(safe,sort_keys=True).encode()).hexdigest(),
                   'env_keys':sorted(env),'requested_model':env.get('ANTHROPIC_MODEL') or pinned.get('model'),
                   'hooks':observations,'credentials_provisioned':'private settings copy; no values in manifest',
@@ -111,6 +120,48 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
         return manifest
     except BaseException:
         shutil.rmtree(destination);raise
+
+
+def pin_launch_resources(destination, *, project, mcp=None, executables=None):
+    """Freeze MCP bytes and record explicit runtime/dependency inventories.
+
+    Executable paths and hashes are checked before dispatch; installed system
+    runtimes are observed, not copied or claimed immutable during host upgrades.
+    """
+    destination=Path(destination);manifest_path=destination/'inputs.json'
+    manifest=json.loads(manifest_path.read_text())
+    source=Path(mcp) if mcp else Path(project)/'.mcp.json'
+    raw=source.read_bytes() if source.exists() else b'{"mcpServers":{}}\n'
+    if not isinstance(json.loads(raw),dict):raise InputPinError('MCP configuration must be an object')
+    target=destination/'mcp.json'
+    with target.open('xb') as stream:stream.write(raw)
+    target.chmod(0o400)
+    manifest['mcp']={'path':str(target.resolve()),'sha256':digest(target)}
+    resolved=[]
+    for name,raw_path in (executables or {'python':sys.executable,'claude':shutil.which('claude')}).items():
+        if not raw_path:raise InputPinError('required executable unavailable: '+name)
+        path=Path(raw_path).resolve(strict=True)
+        resolved.append({'name':name,'path':str(path),'sha256':digest(path)})
+    manifest['executables']=resolved
+    names=('package-lock.json','pnpm-lock.yaml','yarn.lock','uv.lock','poetry.lock','requirements.txt','pyproject.toml')
+    manifest['consumer_dependency_inventory']=[{'path':str((Path(project)/name).resolve()),'sha256':digest(Path(project)/name)}
+        for name in names if (Path(project)/name).is_file()]
+    manifest['settings_sha256']=digest(Path(manifest['worker_home'])/'settings.json')
+    manifest['runtime_pinning']='fixed executable path/hash; system libraries require drain for host upgrade'
+    manifest['plan_scripts']='toolkit references resolved via ILK_CODE_ROOT; consumer scripts remain gated worktree inputs'
+    manifest['remaining']='code-only caller activation and external system-runtime upgrade coordination'
+    manifest_path.write_text(json.dumps(manifest,indent=2)+'\n');manifest_path.chmod(0o600)
+    return manifest
+
+
+def verify_launch_resources(destination):
+    manifest=json.loads((Path(destination)/'inputs.json').read_text())
+    paths=list(manifest.get('executables',[]))+[manifest['mcp']]
+    paths.append({'path':str(Path(manifest['worker_home'])/'settings.json'),'sha256':manifest['settings_sha256']})
+    paths.extend({'path':row['pinned_script'],'sha256':row['pinned_sha256']} for row in manifest['hooks'])
+    for row in paths:
+        if digest(Path(row['path']))!=row['sha256']:raise InputPinError('pinned run input changed: '+row['path'])
+    return manifest
 
 
 def bind_context(destination: Path, context_path: Path) -> Path:
@@ -183,8 +234,11 @@ def main():
     parser.add_argument('--destination',type=Path,required=True)
     parser.add_argument('--revision',default='HEAD')
     parser.add_argument('--observe-scope',action='store_true')
+    parser.add_argument('--project',type=Path)
+    parser.add_argument('--mcp',type=Path)
     args=parser.parse_args()
     result=prepare(args.repo,args.worker_home,args.destination,revision=args.revision,observe_scope=args.observe_scope)
+    if args.project:result=pin_launch_resources(args.destination,project=args.project,mcp=args.mcp)
     print(json.dumps({'toolkit_sha':result['toolkit_sha'],'hook_count':len(result['hooks']),
                       'scope_observation_only':result['scope_observation_only']}))
 

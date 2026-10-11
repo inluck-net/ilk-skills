@@ -24,7 +24,14 @@ class RegistryError(RuntimeError):pass
 def code_sha(root):
     root=Path(root).resolve()
     marker=root/'.ilk-release.json'
-    if marker.exists():
+    inputs=root.parent/'inputs.json'
+    if inputs.exists():
+        try:
+            pinned=json.loads(inputs.read_text())
+            if Path(pinned['code_root']).resolve()!=root:raise RegistryError('private code root contradicts manifest')
+            value=pinned['toolkit_sha']
+        except (OSError,ValueError,KeyError):raise RegistryError('private code identity unavailable')
+    elif marker.exists():
         try:value=json.loads(marker.read_text())['sha']
         except (OSError,ValueError,KeyError):raise RegistryError('release identity unavailable')
     else:
@@ -111,6 +118,11 @@ def bind_running(runtime,run_id,*,pid,probe=process_identity,now=None):
         row=read(path)
         if row['state']!='launching' or row['expires_at']<=now:raise RegistryError('launch reservation expired or already bound')
         row.update(identity,state='running',bound_at=now)
+        if os.environ.get('ILK_RUN_INPUTS'):
+            from run_inputs import verify_launch_resources
+            pinned=verify_launch_resources(Path(os.environ['ILK_RUN_INPUTS']))
+            if pinned['toolkit_sha']!=row['toolkit_sha']:raise RegistryError('pinned code contradicts registry')
+            row.update(inputs_pinned=True,code_root=pinned['code_root'],worker_home=pinned['worker_home'],inputs_manifest=str(Path(os.environ['ILK_RUN_INPUTS'])/'inputs.json'))
         _write(path,row)
     return row
 

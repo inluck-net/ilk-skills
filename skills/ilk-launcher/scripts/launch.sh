@@ -736,6 +736,33 @@ start_ilk_window() {
     echo "[ilk] tip: a worker home is bootstrapped but this run uses the planner (official) provider. Set ILK_DEFAULT_ENGINE=claude-worker (or worker_engine in .ilk-launch.json) to use the cheaper worker." >&2
   fi
 
+  # Each Claude run gets private committed code/settings/hooks before spawn.
+  # The source worker home remains untouched and is never relinked mid-run.
+  local inputs_dir="${per_run_dir}/inputs" source_home="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  case "$engine" in
+    claude-worker) source_home="$worker_home" ;;
+    claude-manager) source_home="${CLAUDE_MANAGER_HOME:-$HOME/.claude-manager}" ;;
+  esac
+  if [[ "$engine" == claude* ]]; then
+    local pin_args=(--repo "${_SKILL_ROOT}/.." --worker-home "$source_home" --destination "$inputs_dir" --project "$project_path" --observe-scope)
+    [[ -n "$mcp_config_path" ]] && pin_args+=(--mcp "$mcp_config_path")
+    python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_inputs.py" "${pin_args[@]}" >/dev/null || return 1
+    local pinned_root="${inputs_dir}/code" private_home="${inputs_dir}/worker-home"
+    loop_script="${pinned_root}/skills/ilk-loop/scripts/$(basename "$loop_script")"
+    mcp_config_path="${inputs_dir}/mcp.json"
+    local pinned_cli
+    pinned_cli=$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(next(r["path"] for r in d["executables"] if r["name"]=="claude"))' "$inputs_dir/inputs.json") || return 1
+    runner_cmd=$(python3 -c 'import shlex,sys
+keys=["CLAUDE_CONFIG_DIR","ILK_SKILL_HOME","ILK_CODE_ROOT","ILK_RUN_INPUTS","ILK_TOOLKIT_SOURCE_ROOT","ILK_SOURCE_HOME","ILK_CLAUDE_BIN"]
+prefix="".join("export "+key+"="+shlex.quote(value)+"; " for key,value in zip(keys,sys.argv[1:8]))
+if sys.argv[8]:prefix+="export ILK_MASTER="+shlex.quote(sys.argv[8])+"; "
+args=["bash",sys.argv[9],"--project-path",sys.argv[10],"--max-iterations",sys.argv[11],"--iteration-timeout-min",sys.argv[12],"--mcp-config-path",sys.argv[13],"--log-dir",sys.argv[14],"--jsonl-log",sys.argv[15]]
+if sys.argv[16]=="true":args.append("--run-local-checks")
+print(prefix+shlex.join(args))
+' "$private_home" "$pinned_root/skills" "$pinned_root" "$inputs_dir" "${_SKILL_ROOT}/.." "$HOME" "$pinned_cli" \
+  "$master_override" "$loop_script" "$project_path" "$max_iterations" "$timeout_min" "$mcp_config_path" "$per_run_dir" "$jsonl_log" "$run_local_checks") || return 1
+  fi
+
   # Judgment: reuse scheduler's 120s launch-gap window; slow valid startup
   # reaching expiry falsifies this default. Operator can set an explicit TTL.
   local launch_ttl="${ILK_LAUNCH_TTL_SEC:-120}" launcher_dir code_sha
