@@ -6198,6 +6198,10 @@ PY
 
     local iter_start
     iter_start=$(date +%s)
+    if [[ "${ILK_WORKER_MODE:-}" == "code-only" ]]; then
+      export _ILK_ITERATION_STARTED_MONOTONIC
+      _ILK_ITERATION_STARTED_MONOTONIC=$(python3 "${_ILK_SCRIPT_DIR}/iteration_clock.py") || { stop_reason="iteration_context_invalid"; break; }
+    fi
     # The previous context stays on disk for recovery, but may not select this
     # iteration's identity while isolation/dispatch are being resolved.
     unset ILK_ITER_CONTEXT ILK_EXEC_TREE ILK_ITER_RECORD_STAGE _CONTEXT_PLANS_DIR _CONTEXT_LAUNCHER_DIR _CONTEXT_RECOVERY_DIR
@@ -6348,7 +6352,12 @@ import os
 identity=json.loads(os.environ.get("_DISPATCH_IDENTITY_JSON") or "null")
 if identity: identity["step"]=int(os.environ["_DISPATCH_STEP"])
 a=sys.argv
-context=resolve_context(clone=a[2],exec_tree=a[3],plans_dir=a[4],runtime_dir=a[5],
+operation_context=None
+if os.environ.get("ILK_WORKER_MODE")=="code-only":
+ operation_context=dict(run_id=a[7],run_registry_dir=os.environ["_ILK_CONTEXT_REGISTRY"],
+  runner_owner_pid=int(os.environ["_ILK_CONTEXT_OWNER"]),
+  iteration_deadline_monotonic=float(os.environ["_ILK_ITERATION_STARTED_MONOTONIC"])+int(os.environ["_ILK_CONTEXT_TIMEOUT"]))
+context=resolve_context(operation_context=operation_context,clone=a[2],exec_tree=a[3],plans_dir=a[4],runtime_dir=a[5],
  code_root=Path(a[1]).parent,data_root=ilk_data_root(),mode=a[6],run_id=a[7],
  iteration=int(a[8]),dispatch=identity,observe_tree=dict(zip(a[10::2],a[11::2])))
 context["launch_contract"]=dict(max_iterations=int(os.environ["_ILK_CONTEXT_MAX_ITERATIONS"]),
@@ -6361,7 +6370,7 @@ if os.environ.get("ILK_WORKER_MODE")=="code-only":
  if not os.environ.get("ILK_RUN_INPUTS") or not os.environ.get("_ILK_CONTEXT_REGISTRY"):
   raise ValueError("code-only dispatch requires private inputs and verified registry")
  prepare(context,Path(a[9]),inputs=Path(os.environ["ILK_RUN_INPUTS"]),
-  deadline=monotonic()+int(os.environ["_ILK_CONTEXT_TIMEOUT"]),
+  deadline=operation_context["iteration_deadline_monotonic"],
   registry=Path(os.environ["_ILK_CONTEXT_REGISTRY"]),owner_pid=int(os.environ["_ILK_CONTEXT_OWNER"]))
 else:write_context(Path(a[9]),context)
 ' "$_SKILL_ROOT" "$_context_clone" "$_context_exec" "$_dispatch_plans_dir" \

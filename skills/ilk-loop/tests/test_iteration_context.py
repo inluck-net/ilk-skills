@@ -221,3 +221,47 @@ def test_declared_worktree_requires_exact_master_and_shared_store(tmp_path,monke
     if bad!='missing-master':args['dispatch']['master_path']=str(master)
     with pytest.raises(ValueError):resolve_context(**args)
     assert not (Path(args['plans_dir'])/'.state-transitions.lock').exists()
+
+
+def test_preparation_cannot_start_after_original_deadline(tmp_path):
+    from iteration_clock import monotonic
+    from iteration_context import ContextError
+    with pytest.raises(ContextError,match='deadline'):
+        resolve_context(**fixture(tmp_path),operation_context={'iteration_deadline_monotonic':monotonic()-1})
+
+
+def test_preparation_git_timeout_is_not_missing_identity(tmp_path,monkeypatch):
+    import bounded_run
+    from iteration_clock import monotonic
+    from iteration_context import ContextError
+    args=fixture(tmp_path)
+    monkeypatch.setattr(bounded_run,'run',lambda *args,**kwargs:(None,'','',True))
+    with pytest.raises(ContextError,match='deadline'):
+        resolve_context(**args,operation_context={'iteration_deadline_monotonic':monotonic()+10})
+
+
+def test_preparation_refuses_stale_owner_before_state_creation(tmp_path,monkeypatch):
+    import run_registry
+    from iteration_clock import monotonic
+    args=fixture(tmp_path)
+    def stale(context):
+        raise run_registry.RegistryError('owning runner identity is no longer live')
+    monkeypatch.setattr(run_registry,'require_driver',stale)
+    with pytest.raises(run_registry.RegistryError,match='no longer live'):
+        resolve_context(**args,operation_context={'iteration_deadline_monotonic':monotonic()+10})
+    assert not (args['plans_dir']/'.state-transitions.lock').exists()
+
+
+@pytest.mark.skipif(sys.platform=='win32',reason='POSIX held-lock adapter')
+def test_preparation_lock_obeys_original_deadline(tmp_path):
+    import fcntl
+    from iteration_clock import monotonic
+    from plan_state import TransitionError
+    args=fixture(tmp_path)
+    lock=args['plans_dir']/'.state-transitions.lock'
+    # Fixture-only 60ms spans three existing 20ms readiness polls. A slower
+    # valid acquisition would falsify this bound; no production default added.
+    with lock.open('a+b') as held:
+        fcntl.flock(held.fileno(),fcntl.LOCK_EX)
+        with pytest.raises(TransitionError,match='deadline'):
+            resolve_context(**args,operation_context={'iteration_deadline_monotonic':monotonic()+.06})

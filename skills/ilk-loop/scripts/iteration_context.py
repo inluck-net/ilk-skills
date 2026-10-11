@@ -9,6 +9,9 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+from contextvars import ContextVar
+
+_preparation_owner = ContextVar("iteration_preparation_owner", default=None)
 
 
 class ContextError(ValueError):
@@ -83,11 +86,40 @@ def validate_work_tree_binding(context):
             raise ContextError('declared worktree Git store changed')
 
 
+def _git_result(root, *args):
+    owner = _preparation_owner.get()
+    argv = ['git', '-C', str(root), *args]
+    if not owner:
+        return subprocess.run(argv, capture_output=True, text=True)
+    from iteration_clock import monotonic
+    from run_registry import require_driver
+    from owned_command import wrap_command
+    from bounded_run import run
+    require_driver(owner)
+    remaining = owner['iteration_deadline_monotonic'] - monotonic()
+    if remaining <= 0:
+        raise ContextError('context preparation reached original iteration deadline')
+    code, stdout, stderr, timed_out = run(wrap_command(argv, owner), cwd=str(root), timeout=remaining)
+    if timed_out:
+        raise ContextError('context preparation Git reached original iteration deadline')
+    return subprocess.CompletedProcess(argv, code, stdout, stderr)
+
+
 def git_value(root: Path, name: str) -> str | None:
-    try:
-        return subprocess.check_output(['git','-C',str(root),'rev-parse',name],text=True,stderr=subprocess.DEVNULL).strip()
-    except subprocess.CalledProcessError:
-        return None # Installed release roots and meta-project containers lack .git.
+    result = _git_result(root, 'rev-parse', name)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _git_status(root):
+    result = _git_result(root, 'status', '--porcelain')
+    if result.returncode:
+        raise ContextError('context preparation Git status failed')
+    return bool(result.stdout)
+
+
+def _common_dir(root):
+    result = _git_result(root, 'rev-parse', '--git-common-dir')
+    return str((Path(root) / result.stdout.strip()).resolve()) if result.returncode == 0 else None
 
 
 def plan_snapshot(path: Path) -> dict:
@@ -133,7 +165,21 @@ def capture_execution(context: dict) -> dict:
     return result
 
 
-def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
+def resolve_context(*, operation_context=None, **kwargs):
+    token = _preparation_owner.set(operation_context)
+    try:
+        if operation_context:
+            from iteration_clock import monotonic
+            from run_registry import require_driver
+            require_driver(operation_context)
+            if monotonic() >= operation_context['iteration_deadline_monotonic']:
+                raise ContextError('context preparation reached original iteration deadline')
+        return _resolve_context(**kwargs)
+    finally:
+        _preparation_owner.reset(token)
+
+
+def _resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
                     runtime_dir, data_root, dispatch, run_id, iteration, mode):
     # Empty paths must not resolve to cwd and create control metadata there.
     # Validate all supplied roots before any journal lock or state recovery.
@@ -180,15 +226,19 @@ def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
         declared=parse_frontmatter(Path(master).read_text()).get('work_tree','')
         if not declared or not Path(declared).is_absolute() or str(Path(declared).resolve())!=exec_tree:
             raise ValueError('execution root differs from exact master work_tree')
-        from work_tree import _git_common_dir
-        common=_git_common_dir(Path(clone))
-        if not common or common!=_git_common_dir(Path(exec_tree)):
+        common=_common_dir(Path(clone))
+        if not common or common!=_common_dir(Path(exec_tree)):
             raise ValueError('declared worktree belongs to another Git store')
         metadata=(Path(exec_tree)/'.git').stat()
         work_tree_contract=dict(master_path=master,exec_tree=exec_tree,common_dir=common,
             git_indirection_identity=[metadata.st_dev,metadata.st_ino,metadata.st_ctime_ns])
     from plan_state import _lock,journal_cursor,_recover
-    with _lock(Path(plans_dir)/'.state-transitions.lock'):
+    owner = _preparation_owner.get()
+    lock_options = {}
+    if owner:
+        from run_registry import require_driver
+        lock_options = dict(deadline=owner['iteration_deadline_monotonic'],guard=lambda:require_driver(owner))
+    with _lock(Path(plans_dir)/'.state-transitions.lock', **lock_options):
         snapshots={}
         master_snapshot=None
         if dispatch:
@@ -217,11 +267,11 @@ def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
     if (Path(exec_tree)/'skills/ilk-loop/safety-kernel.json').exists():
         from safety_kernel import load
         kernel_list=load(Path(exec_tree))
-    clone_ref=subprocess.run(['git','-C',clone,'symbolic-ref','-q','HEAD'],capture_output=True,text=True)
+    clone_ref=_git_result(clone,'symbolic-ref','-q','HEAD')
     return dict(schema_version=1,run_id=run_id,iteration=int(iteration),
                 clone_base_commit=git_value(Path(clone),'HEAD'),
                 clone_ref=clone_ref.stdout.strip() if clone_ref.returncode==0 else None,
-                clone_entry_dirty=bool(subprocess.check_output(['git','-C',clone,'status','--porcelain'],text=True)) if git_value(Path(clone),'HEAD') else None,
+                clone_entry_dirty=_git_status(clone) if git_value(Path(clone),'HEAD') else None,
                 clone=clone,exec_tree=exec_tree,observe_tree=observed,mode=mode,
                 plans_dir=plans_dir,runtime_dir=str(runtime),
                 ledger_path=str(runtime/'launcher/ship-proof.jsonl'),
@@ -231,7 +281,7 @@ def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
                 toolkit_sha=git_value(Path(code_root),'HEAD') or os.environ.get('ILK_TOOLKIT_SHA'),
                 base_commit=git_value(Path(exec_tree),'HEAD'),
                 base_tree=git_value(Path(exec_tree),'HEAD^{tree}'),
-                entry_dirty=bool(subprocess.check_output(['git','-C',exec_tree,'status','--porcelain'],text=True)) if git_value(Path(exec_tree),'HEAD') else None,
+                entry_dirty=_git_status(exec_tree) if git_value(Path(exec_tree),'HEAD') else None,
                 dispatch=dispatch or None, plans=snapshots, master_snapshot=master_snapshot,
                 mention_gate_policy=mention_gate_policy,kernel_list=kernel_list,work_tree_contract=work_tree_contract,state_journal_cursor=state_journal_cursor)
 
