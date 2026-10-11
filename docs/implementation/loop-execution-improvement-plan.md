@@ -93,7 +93,7 @@ Designs:
 - [ ] B3 Durable gate attempts/output and diagnostic recovery across launches;
   fix failing-ID read path; transcript salvage after interruption. Preserve
   attempts, frozen base and caps; diagnostic history never carries green proof.
-- [ ] B4 Record separate driver gates, commit/hooks, integrity, landing and
+- [x] B4 Supported Mac code-only path records separate driver gates, commit/hooks, integrity, landing and
   cleanup intervals. Count identical driver gates; retain overlapping spans.
 
 ### C. Driver-owned execution and state
@@ -108,7 +108,7 @@ Designs:
   valid gates, and imports findings; worker code-only prompt and hooks agree.
 - [ ] C4 D3 compare-and-set transition API for all plan/master writers; human
   holds/drafts and unmerged work remain respected; explainable transition log.
-- [ ] C5 Validate same-session resume/red recovery under actual provider/hooks.
+- [x] C5 Supported opt-in Mac path validated same-session resume/red recovery under actual provider/hooks.
   Move authoritative gates fully to driver only when recovery is viable;
   otherwise measure the fresh-session fallback and retain worker-run gates.
 - [ ] C6 Retire redundant policing checks individually only after replacement
@@ -161,6 +161,34 @@ an actual safe landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- Fresh read-only production observation: last-launch run 20261011-215532
+  names installed 2ed78097; matching last-exit still running (owner PID 53493).
+  This is a liveness observation, not a progress or acceptance claim. No pause,
+  controller, plan, launch metadata or installation write followed it.
+- Native comparison discovery inspection: 30 unique tool IDs comprised 7 Bash,
+  11 Grep, 7 Read, 5 Edit; native file/path calls included consumer repair/test
+  files and toolkit design/baseline/drain inputs. This is observed discovery,
+  not evidence those reads were unnecessary. Preserve referenced instructions
+  and measure further before adding read restrictions or shorter limits.
+
+- 24c22a2f candidate context preparation now starts its deadline at the existing
+  code-only iteration entry, before Git identities/snapshots/state-lock work.
+  Fresh driver authority checked before creation; Git groups register before
+  exec and use remaining original budget, including declared-worktree common
+  store queries. Snapshot lock reuses deadline and fresh owner guard. Legacy
+  callers remain explicit legacy behavior, not a new safety claim.
+  Twenty-one context checks passed in 1.94s; four focused preparation checks
+  (expired, Git timeout, stale owner, held lock) passed 0.29s. Archived normal
+  and declared-worktree callers passed 2 in 15.44s; candidate is not installed.
+  Initial two new deadline checks failed because the preparation API had no
+  owned-operation input. No numeric production limit or renewed budget added.
+- B4/C5 checklist audit: mark their supported-path capabilities complete based
+  on existing installed phase records and actual provider same-session red then
+  green (55.559s, same session, two gates, one accepted commit/CAS, eight hooks).
+  This is not representative quality/speed proof or Windows/interruption parity;
+  broader rollout, comparisons and lifecycle items remain open. No new run was
+  needed to repeat already established capability evidence.
 
 - Candidate 2ccbd2a8 provider provenance: configured scheme/host/port only,
   explicit actual-provider-unobserved label; private worker URL remains intact.

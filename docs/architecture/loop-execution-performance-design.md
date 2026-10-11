@@ -677,3 +677,32 @@ a drain and a measured adapter. Arbitrary imports/references outside the snapsho
 are not claimed pinned. Existing descriptors without this inventory retain
 historical capability/limitations; an explicitly frozen fingerprint cannot fall
 back to missing inventory. Final verification stays opt-in.
+
+### Owned preparation deadline and public provider provenance (new candidate)
+
+`iteration_context.resolve_context` now accepts an explicit owned operation for
+code-only preparation. The Bash code-only caller establishes its existing
+iteration deadline at iteration entry, before context Git queries and snapshot
+lock acquisition. Preparation checks fresh registry ownership, registers Git
+groups before exec, bounds them by the remaining original deadline, and uses
+that same deadline/guard for the snapshot lock. `worker_dispatch.prepare`
+receives the same deadline; preparation no longer renews it. Legacy unowned
+callers retain legacy semantics. No new numeric production timeout is added.
+
+`provider_provenance.configured_provider` is a new protected helper used by
+private launch manifests and open/close JSONL. Public URL provenance is only
+scheme, hostname and port; userinfo/path/query/fragment are excluded. The field
+explicitly labels configured identity with actual provider unobserved. Driver
+environment and private worker manifest are distinct sources; CLI stream model
+identity remains independently observed. Unknown or malformed URL is unknown,
+not an invented provider. Private settings retain the original URL unchanged.
+Six sanitizer/preparation checks and an archived real runner checked absence of
+a planted URL secret in both open and close records. This candidate is isolated;
+it has not changed the installed inputs of the progressing live batch.
+
+The isolated brief comparison accepted the same red consumer repair in
+199.194s versus 229.799s in the earlier corrected-policy sample. Parser-v5 test
+intervals were 4.868s versus 46.607s, but first-edit discovery grew to 146.443s
+from 87.640s. See the consumer baseline document for model, clocks, pins and
+limitations. This is a hypothesis-supporting observation, not a causal speed
+claim or reason to relax acceptance. Thinking time remains unknown.
