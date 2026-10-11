@@ -9,7 +9,8 @@ Keep it updated after each checked increment and before any context handoff.
 1. Read this file and the linked designs. Do not reconstruct scope from chat.
 2. Work in `/Users/chad/Projects/github/inluck-net/ilk-skills-worktrees/owner-loop-performance-20261011`, branch `owner/loop-performance-20261011`.
 3. Inspect source and git status before changes. The shared main checkout has
-   old worker has exited; back up and reconcile owner prose before integration.
+   an old runner idling at pause; back up and reconcile owner prose only at a
+   fresh verified quiescent integration boundary.
    Do not stage, revert or overwrite unknown files.
 4. Finish the first unchecked item below. Record actual check output, affected
    paths, remaining limitations, and the next action here. Candidate-tested,
@@ -534,3 +535,13 @@ No completion/ship/proof markers are inferred from this human tracker.
   Explicit unpark retains the previous privileged operator-release semantics;
   ordinary driver advancement still cannot lift a hold. Projection writers,
   integrity restores, quarantine and PowerShell state writes remain open.
+
+- C4 quarantine migration: strike count/status/finding update is one CAS;
+  exact frozen identity is used when available, legacy ambiguous aliases refuse
+  instead of first-glob matching. A driver green may clear only a recorded
+  automatic block with positive strike history; bare manual blocks and human
+  holds stay byte-for-byte unchanged. Existing quarantine threshold remains 2,
+  not a new default. Findings are appended inside the transaction; write-ahead
+  journal retains byte hashes without raw finding content. Quarantine/CAS/
+  driver checks: 28 passed in 4.78s. No real plan was mutated. Integrity restore,
+  registry projection and PowerShell writers still need migration.

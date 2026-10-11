@@ -32,28 +32,21 @@ FAILS_LINE_RE = re.compile(r"^(\s*)auto_block_fails\s*:\s*(\d+)\s*$", re.MULTILI
 
 def _find_subplan_file(plans_dir: Path, slug: str) -> Path | None:
     """Find the sub-plan file matching a slug (``*-<slug>.md``)."""
-    for p in plans_dir.glob(f"*-{slug}.md"):
-        if p.name.startswith("MASTER"):
-            continue
-        return p
-    return None
+    from iteration_context import read_context
+    from dispatch_target import identities,pinned_subplan,TargetError
+    pinned=pinned_subplan(plans_dir,slug)
+    if pinned:return pinned
+    context=read_context()
+    paths=[Path(row['path']) for row in context['plans'].values()] if context else list(plans_dir.glob('*.md'))
+    matches=[path for path in paths if not path.name.startswith('MASTER') and slug in identities(path)]
+    if len(matches)>1:raise TargetError('ambiguous quarantine identity')
+    return matches[0] if matches else None
 
 
 def _read_frontmatter(text: str) -> dict[str, str]:
     """Parse flat key: value frontmatter."""
-    m = FRONTMATTER_RE.match(text)
-    if not m:
-        return {}
-    fm: dict[str, str] = {}
-    for raw in m.group(2).splitlines():
-        s = raw.strip()
-        if not s or s.startswith("#"):
-            continue
-        if ":" not in s:
-            continue
-        k, _, v = s.partition(":")
-        fm[k.strip()] = v.strip()
-    return fm
+    from plan_status import parse_frontmatter
+    return parse_frontmatter(text)
 
 
 def _set_status(text: str, new_status: str) -> str:
@@ -123,19 +116,20 @@ def quarantine_subplan(
     text = sub_path.read_text(encoding="utf-8-sig")
     fm = _read_frontmatter(text)
 
-    # If already blocked, only a pass can reset (unblock).
-    if fm.get("status", "").strip() == "blocked":
-        if outcome == "pass":
-            # Green gate resets counter and unblocks.
-            text = _set_status(text, "in-progress")
-            text = _set_or_bump_fails(text, 0)
-            tmp = sub_path.with_suffix(sub_path.suffix + ".tmp")
-            tmp.write_text(text, encoding="utf-8")
-            os.replace(tmp, sub_path)
-            return {"blocked": False, "fails": 0, "threshold": threshold,
-                    "slug": slug, "reset": True}
-        return {"blocked": True, "fails": int(fm.get("auto_block_fails", 0)),
-                "threshold": threshold, "slug": slug, "already_blocked": True}
+    from plan_state import transition
+    status=fm.get('status','').strip()
+    if fm.get('hold')=='human' or status in {'draft','parked'}:
+        return {'blocked':True,'fails':int(fm.get('auto_block_fails',0)),
+                'threshold':threshold,'slug':slug,'held':True}
+    if status=='blocked':
+        current_fails=int(fm.get('auto_block_fails',0))
+        if outcome=='pass' and current_fails>0:
+            transition(sub_path,{'status':'blocked','auto_block_fails':fm['auto_block_fails']},
+                       {'status':'in-progress','auto_block_fails':0},actor='driver',
+                       reason='quarantine reset after driver gate pass',release_auto_block=True)
+            return {'blocked':False,'fails':0,'threshold':threshold,'slug':slug,'reset':True}
+        return {'blocked':True,'fails':current_fails,'threshold':threshold,'slug':slug,
+                'already_blocked':True,'held':current_fails==0}
 
     current_fails = int(fm.get("auto_block_fails", "0"))
 
@@ -157,29 +151,15 @@ def quarantine_subplan(
         return {"blocked": False, "fails": current_fails, "threshold": threshold,
                 "slug": slug, "not_counted": True}
 
-    # Update the counter.
-    text = _set_or_bump_fails(text, new_fails)
-
-    if new_fails >= threshold:
-        # Quarantine: set blocked + append Findings note.
-        text = _set_status(text, "blocked")
-        today = date.today().isoformat()
-        note = f"- [{today}] auto-quarantined after {new_fails} consecutive local_checks failures. Failing check: `{failing_check}`"
-        text = _append_findings(text, note)
-
-        # Atomic write.
-        tmp = sub_path.with_suffix(sub_path.suffix + ".tmp")
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, sub_path)
-
-        return {"blocked": True, "fails": new_fails, "threshold": threshold, "slug": slug}
-    else:
-        # Below threshold — just persist the counter bump.
-        tmp = sub_path.with_suffix(sub_path.suffix + ".tmp")
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, sub_path)
-
-        return {"blocked": False, "fails": new_fails, "threshold": threshold, "slug": slug}
+    changes={'auto_block_fails':new_fails}
+    note=None
+    if new_fails>=threshold:
+        changes['status']='blocked'
+        today=date.today().isoformat()
+        note=f"- [{today}] auto-quarantined after {new_fails} consecutive local_checks failures. Failing check: `{failing_check}`"
+    transition(sub_path,{key:fm.get(key) for key in changes},changes,actor='driver',
+               reason='quarantine strike accounting',findings_note=note)
+    return {'blocked':new_fails>=threshold,'fails':new_fails,'threshold':threshold,'slug':slug}
 
 
 def main(argv: list[str]) -> int:

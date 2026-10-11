@@ -65,7 +65,8 @@ def _recover(log,path,content):
         _append(log,dict(row,phase=phase))
 
 
-def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, guards=None) -> bool:
+def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, guards=None,
+               findings_note=None,release_auto_block=False) -> bool:
     """Change only requested scalar state fields if every expected value matches.
 
     Human holds cannot be lifted or progressed by driver calls. The worker
@@ -75,6 +76,8 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
         raise TransitionError('workers cannot mutate plan state')
     if not actor or not reason or not from_ or not to:
         raise TransitionError('expected state, requested state, actor and reason required')
+    if findings_note is not None and (not isinstance(findings_note,str) or '\x00' in findings_note):
+        raise TransitionError('invalid finding text')
     path=Path(path).resolve(strict=True)
     guards={Path(guard).resolve(strict=True):expected for guard,expected in (guards or {}).items()}
     if any(guard.parent!=path.parent for guard in guards):
@@ -106,7 +109,12 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
         text=content.decode('utf-8-sig');state=parse_frontmatter(text)
         if any(state.get(key)!=str(value) if value is not None else key in state for key,value in from_.items()):
             raise TransitionError('state changed since dispatch; compare-and-set refused')
-        if (state.get('status') in {'draft','parked','blocked'} or state.get('hold')=='human') and actor!='human':
+        auto_release=(release_auto_block and state.get('status')=='blocked' and state.get('hold')!='human'
+                      and str(state.get('auto_block_fails','')).isdigit() and int(state['auto_block_fails'])>0
+                      and from_.get('status')=='blocked' and str(from_.get('auto_block_fails'))==state['auto_block_fails']
+                      and to=={'status':'in-progress','auto_block_fails':0})
+        if release_auto_block and not auto_release:raise TransitionError('automatic block release is not justified')
+        if (state.get('status') in {'draft','parked','blocked'} or state.get('hold')=='human') and actor!='human' and not auto_release:
             raise TransitionError('human hold cannot be changed by driver')
         if not text.startswith('---') or (end:=text.find('\n---',3))<0:
             raise TransitionError('frontmatter missing')
@@ -118,7 +126,15 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
             replacement='' if value is None else f'{key}: {value}\n'
             if hits: head=pattern.sub(lambda _:replacement,head,count=1)
             elif value is not None: head=head.rstrip('\n')+'\n'+replacement
-        new=('---'+head.rstrip('\n')+text[end:]).encode('utf-8')
+        projected='---'+head.rstrip('\n')+text[end:]
+        if findings_note is not None:
+            marker=re.search(r'^## Findings[ \t]*$',projected,re.M)
+            if marker:
+                position=projected.find('\n',marker.end())
+                if position<0:projected+='\n'+findings_note+'\n'
+                else:projected=projected[:position+1]+findings_note+'\n'+projected[position+1:]
+            else:projected=projected.rstrip()+'\n\n## Findings\n\n'+findings_note+'\n'
+        new=projected.encode('utf-8')
         if new==content: return False
         row=dict(id=str(uuid.uuid4()),path=str(path),actor=actor,reason=reason,
                  from_=from_,to=to,before_sha256=_digest(content),after_sha256=_digest(new),phase='intent')
