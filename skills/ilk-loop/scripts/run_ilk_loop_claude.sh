@@ -5888,6 +5888,23 @@ print(fm.get('result_file', ''))
 
   # Write remote type to file for agent consumption
   echo "$remote_type" > "${PROJECT_PATH}/.ilk-remote-type"
+  if [[ "${ILK_WORKER_MODE:-}" == "code-only" ]]; then
+    # Preserve the consumer artifact path, while keeping driver-generated
+    # untracked metadata out of accepted code trees. Tracked files are never
+    # hidden: a changed tracked artifact still fails clean-entry admission.
+    python3 - "$PROJECT_PATH" <<'PY'
+import subprocess,sys
+from pathlib import Path
+root=Path(sys.argv[1])
+path=Path(subprocess.check_output(['git','-C',str(root),'rev-parse','--git-path','info/exclude'],text=True).strip())
+if not path.is_absolute():path=root/path
+path.parent.mkdir(parents=True,exist_ok=True)
+text=path.read_text() if path.exists() else ''
+rule='/.ilk-remote-type'
+if rule not in text.splitlines():
+ with path.open('a') as stream:stream.write(('\n' if text and not text.endswith('\n') else '')+rule+'\n')
+PY
+  fi
 
   # Sentinel setup (state=running)
   local runtime_dir

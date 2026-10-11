@@ -46,6 +46,7 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
             kernel_paths.append(root/relative)
         protected.extend(kernel_paths)
     # Git commands may read metadata, but workers may not mutate it.
+    protected.extend([root/'.ilk-remote-type',root/'.ilk/findings.md'])
     protected.append(root/'.git')
     common=subprocess.run(['git','-C',str(root),'rev-parse','--git-common-dir'],capture_output=True,text=True)
     if common.returncode==0:
