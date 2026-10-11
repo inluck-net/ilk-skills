@@ -23,7 +23,7 @@ request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: close remaining legacy reader/recovery/parity requirements
-and delivery documentation in this isolated worktree. Toolkit preview 311265c2
+and delivery documentation in this isolated worktree. Toolkit preview d95493d6
 and consumer compatibility 2cb713ae are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -166,7 +166,7 @@ an explicit owned-profile refusal does not prove an unbuilt adapter.
 | Requirement | Implemented mechanism / source anchor | Evidence and delivery limit |
 |---|---|---|
 | Exact target and roots (A1/B1/I1) | iteration_context.py:186 resolves canonical roles before snapshots; :67 validates declared worktree binding. dispatch_target resolves pinned master identity. | Normal/declared/selfmod archived callers passed. Member and arbitrary/timeout dirty owned entry refuse; exact closed-red re-entry is checked below; legacy remains. |
-| Durable open/close (B2/I2) | Bash and PowerShell existing JSONL open/close; iteration_context.py:151 captures execution; iteration_record.py:11 finalizes provisional proof. | Close checks require positive integrity/state/landing on owned Mac path; no inferred open-only proof. Full legacy reader migration remains open. |
+| Durable open/close (B2/I2) | Bash and PowerShell existing JSONL open/close; iteration_context.py:151 captures execution; iteration_record.py:11 finalizes provisional proof. | Close checks require positive integrity/state/landing on owned Mac path; no inferred open-only proof. Status now uses the frozen exact master/plans/runtime/execution identity; unattended results project closed recorded ranges. Other legacy reader migration remains open. |
 | Recovery (B3/C5) | recovery.py:112 transcript salvage; acceptance_recovery.py:81 original transaction recovery; worker_iteration preserves same-session diagnostics. | Actual provider red→repair→green, archived commit/staged/selfmod/worktree recovery; salvage is diagnostic only. PowerShell retry parity remains open. |
 | Kernel freeze (C1) | safety_kernel.py:203 admission and :293 frozen-base range policy; safety-kernel.json owner-only new bases. | Focused kernel/sandbox checks; historical bases retain their own policy. Supported runtime-tier loop changes remain eligible. |
 | Worker scope (C2/C3) | worker_dispatch.py private settings/broker plus worker_sandbox OS policy; driver_step.py:167 gates/commit/CAS. | Real native tools and driver gate scopes checked on Mac, source home unchanged. Windows/network/nested-sandbox adapters refuse new profiles. |
@@ -175,7 +175,7 @@ an explicit owned-profile refusal does not prove an unbuilt adapter.
 | Input pinning (D2/I6) | run_inputs private code/settings/hooks/MCP/inventory; instruction_inputs.py:9 named inputs; provider_provenance.py configured origin. | Actual provider with eight copied hooks, immutable homes and sanitized records. Managed settings, system libraries and arbitrary external imports require explicit coordination/adapters. |
 | Consumer compatibility (D3) | gh-resolve claim readers installed at 8472771f; installed 2cb713ae adds hermetic explicit toolkit fixture and quoted runtime pin rendering/probe. | Consumer negative ambient poison reproduced; 7 pin/integration checks and 8 adjacent focused checks passed. Installed consumer/toolkit 4de pair: 4 focused checks passed in 0.91s; rezmac unchanged. |
 | Upgrade (D4) | upgrade_drain.py:18 positive accepted boundary, :92 activation, :150 consume. | Archived real launcher preserves limits/master/budget/holds, refuses live old children and tampering. Global opt-in remains off. Production local activation separate below. |
-| All-attempt verdicts (E2/I5) | driver_step.attempt_verdict groups same frozen input tree and scope/command; driver history retained before commit. | Same-tree red→pass flaky leaves HEAD/pointer unchanged; changed repaired tree green. Legacy rolling flaky history and measured strike reader are now checked below; PowerShell actual-base adapter and owned baseline-red advancement remain incomplete. |
+| All-attempt verdicts (E2/I5) | driver_step.attempt_verdict groups same frozen input tree and scope/command; driver history retained before commit. | Same-tree red→pass flaky leaves HEAD/pointer unchanged; changed repaired tree green. Legacy rolling flaky history, shared capped actual-base attribution and portable PowerShell transport are checked below. Native Windows ownership/recovery and owned baseline-red advancement remain incomplete. |
 | Measurements (A4/E1/E3) | report.py parser v6 and phase_observation driver clocks. | Same MiMo consumer task 230s vs 199s; eligible toolkit repair 98s. One pair, uncontrolled concurrency, no causal/default-model speed claim. Shell/native pairing is recorded below with one failed shell arm; no accepted-work speed ratio is justified. |
 | Hermeticity (I7) | Private HOME + both data variables; consumer fixture explicit committed toolkit snapshot, isolated parser processes; fixture identity-loss spawn seam. | Focused checks above. Missing integration input is explicitly unknown/skip, strict full-coverage existing guard rejects it; no full suite run. Whole-repository lint eligibility audit remains open. |
 
@@ -2559,3 +2559,42 @@ anchors at the time of inspection and can move as integration changes code.
   private run 20261011-234448; remote pointer remains v0.9.193. Remote rg
   was absent from noninteractive PATH, so that service-list filter yielded
   no evidence; do not infer idleness from it.
+
+
+### Checked local delivery and updated remote standby
+
+- Committed d95493d6 archived unattended selfmod and two-plan entries: 2
+  passed/13 deselected in 55.97s. Frozen status still advances within the
+  same master and automatic result evidence remains positive. No model.
+- Activated local immutable d95493d6 only after the exact paused/undispatched
+  controller, no worker children and idle scheduler were independently
+  rechecked. PID/PGID/start stayed unchanged and all 1,891 protected hashes
+  matched. Scheduler restored; no plan/pause/private input or consumer claim
+  was changed. Evidence: toolkit-delivery-preview-20261012h/installed.json.
+- Rezmac private independent toolkit checkout and immutable standby now
+  d95493d6, superseding prepared e434e346. Shared clones and installed
+  v0.9.193 are untouched. Isolated result/transport/root/status checks:
+  29 passed in 0.95s, local fixtures only, no agent/model or full suite.
+- Fresh remote service list observed active reap, gc and scheduler, so no
+  remote activation boundary is claimed. New source remains private.
+
+
+### Audit keeps frozen identity; rollback fixture uses real step evidence
+
+- Three audit negatives measured silent fallback for an unregistered plan,
+  absent plan and competing master (3 failed/1 passed in 0.06s). An available
+  context now requires the registered exact plan and matching master before
+  selecting its execution root. No-context legacy root behavior remains.
+- Audit/worktree/status caller selection: 45 passed and 1 failed in 52.37s.
+  The existing status-revert fixture failed also on an isolated archive of
+  committed predecessor d95493d6 (1 failed/22 deselected in 0.84s). Its red
+  record omitted step; actual rollback output says gate step is invalid.
+  Missing step cannot safely select a pointer rollback.
+- Corrected three historic defect fixtures to record actual authored step 2;
+  kept a separate missing-step negative requiring nonzero return and bytewise
+  unchanged plan. Their Bash helper now provisions private HOME and both data
+  variables as its comment promised. Rollback policy was not weakened.
+- Exact audit and rollback fixtures: 8 passed/20 deselected in 2.04s. Existing
+  other caller passes above remain evidence; no suite was repeated. Local
+  fixture validation dispatches no model. Commit before archived production
+  validation; installed local/remote standby stay d95493d6 until that check.

@@ -894,9 +894,18 @@ def audit_execution_root(cwd,subplan_path,master_path):
     """Use the exact frozen tree, or a validated exact master's declared tree."""
     from iteration_context import read_context,root_for_plan,validate_work_tree_binding,ContextError
     context=read_context()
-    if context and subplan_path and Path(subplan_path).name in context.get("plans",{}):
+    if context is not None:
+        if not subplan_path:
+            raise ContextError('audit plan is absent from frozen scope')
+        frozen_master=(context.get('dispatch') or {}).get('master_path')
+        if not frozen_master or (master_path and Path(master_path).resolve()!=Path(frozen_master).resolve()):
+            raise ContextError('audit master differs from frozen scope')
+        plan=Path(subplan_path).resolve()
+        registered=context.get('plans',{}).get(plan.name)
+        if not registered or Path(registered['path']).resolve()!=plan:
+            raise ContextError('audit plan is outside frozen registry')
         validate_work_tree_binding(context)
-        return root_for_plan(context,Path(subplan_path))
+        return root_for_plan(context,plan)
     if not cwd or not master_path:return cwd
     from plan_status import parse_frontmatter
     declared=parse_frontmatter(Path(master_path).read_text(encoding='utf-8-sig')).get('work_tree','')

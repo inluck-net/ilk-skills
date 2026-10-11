@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import subprocess
 import textwrap
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -52,10 +53,14 @@ def _source_runner_and_call(
         f"set +e; "  # driver sets -e; the function handles errors internally
         f"{func_call}"
     )
-    return subprocess.run(
-        ["bash", "-c", script],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, env=env,
-    )
+    with tempfile.TemporaryDirectory(prefix='ilk-audit-home-') as private:
+        env.setdefault('HOME', private)
+        env.setdefault('ILK_DATA_HOME', str(Path(private)/'data'))
+        env.setdefault('ILK_DATA_DIR', env['ILK_DATA_HOME'])
+        return subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, env=env,
+        )
 
 
 def _make_plans_dir(tmp: Path) -> tuple[Path, Path]:
@@ -99,7 +104,7 @@ def test_defect1_ship_integrity_detects_violation(tmp_path: Path) -> None:
     """
     plans, subplan = _make_plans_dir(tmp_path)
     lc_file = plans / "results.jsonl"
-    lc_file.write_text('{"slug":"test-slug","outcome":"fail"}\n')
+    lc_file.write_text('{"slug":"test-slug","step":2,"outcome":"fail"}\n')
 
     result = _source_runner_and_call(
         f"test_ship_integrity '{plans}' '{lc_file}'",
@@ -123,7 +128,7 @@ def test_defect2_slug_extraction_portable(tmp_path: Path) -> None:
     """
     plans, subplan = _make_plans_dir(tmp_path)
     lc_file = plans / "results.jsonl"
-    lc_file.write_text('{"slug":"test-slug","outcome":"fail"}\n')
+    lc_file.write_text('{"slug":"test-slug","step":2,"outcome":"fail"}\n')
 
     result = _source_runner_and_call(
         f"test_ship_integrity '{plans}' '{lc_file}'",
@@ -146,7 +151,7 @@ def test_defect3_status_revert_works(tmp_path: Path) -> None:
     """
     plans, subplan = _make_plans_dir(tmp_path)
     lc_file = plans / "results.jsonl"
-    lc_file.write_text('{"slug":"test-slug","outcome":"fail"}\n')
+    lc_file.write_text('{"slug":"test-slug","step":2,"outcome":"fail"}\n')
 
     _source_runner_and_call(
         f"test_ship_integrity '{plans}' '{lc_file}'",
@@ -156,6 +161,17 @@ def test_defect3_status_revert_works(tmp_path: Path) -> None:
     assert "status: in-progress" in content, (
         f"Expected status revert to in-progress, but file still contains:\n{content}"
     )
+
+
+def test_missing_gate_step_cannot_select_a_rollback(tmp_path):
+    plans,subplan=_make_plans_dir(tmp_path)
+    before=subplan.read_bytes()
+    history=plans/'results.jsonl'
+    history.write_text('{"slug":"test-slug","outcome":"fail"}\n')
+    result=_source_runner_and_call(f"test_ship_integrity '{plans}' '{history}'",project_path=str(tmp_path))
+    assert result.returncode!=0
+    assert 'rollback gate step is invalid' in result.stdout+result.stderr
+    assert subplan.read_bytes()==before
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

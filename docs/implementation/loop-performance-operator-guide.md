@@ -107,3 +107,9 @@ invalid paths refuse before parent-directory creation. The frozen context
 checks this again against its resolved roots. A result reader with the existing
 close log reports its exact recorded run range; missing/conflicting capture
 stays unknown. A current Git parent is not a run baseline.
+
+
+During a frozen iteration, status uses the recorded master, plans directory,
+runtime and execution root. It cannot switch to another queue candidate through
+an ambient master setting. Invalid or missing frozen identity returns an error;
+status outside an iteration retains existing queue selection.
