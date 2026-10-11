@@ -103,6 +103,7 @@ def strike_targets(path: Path) -> list[str]:
         attribution=row.get('attribution')
         if row.get('verdict')!='red' or not isinstance(attribution,dict):continue
         if attribution.get('verdict') not in {'owned','inherited'}:continue
+        if attribution.get('batch_base_green') is not True:continue
         if not all(isinstance(attribution.get(key),str) and
                    re.fullmatch(r'[0-9a-f]{40,64}',attribution[key])
                    for key in ('owner_sha','iteration_base','batch_base')):continue

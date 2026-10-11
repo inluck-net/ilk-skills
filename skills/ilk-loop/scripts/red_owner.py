@@ -494,16 +494,16 @@ def attribute_red(
             )
             batch_green = batch_results.get("_command") == "passed"
     except (RuntimeError, subprocess.TimeoutExpired):
-        # Can't measure at batch base — pre-existing.
+        # Missing baseline measurement is unknown, never a baseline-red waiver.
         nodes = []
         if node_ids:
             nodes = [
-                {"node_id": nid, "verdict": "pre-existing",
+                {"node_id": nid, "verdict": "unmeasured",
                  "owner_sha": None, "owner_slug": None}
                 for nid in node_ids
             ]
         return {
-            "verdict": "pre-existing",
+            "verdict": "unmeasured",
             "iteration_base": iteration_base,
             "batch_base": batch_base,
             "node_ids": node_ids,
@@ -514,6 +514,16 @@ def attribute_red(
             "elapsed_s": round(time.monotonic() - start, 2),
             "nodes": nodes,
         }
+
+    values=list(batch_results.values())
+    if (not values or any(value not in {'passed','failed'} for value in values)
+            or (not batch_green and any(value=='passed' for value in values))):
+        # A mixed node set needs per-node ownership; never excuse the entire
+        # head gate because one sibling was already red. Keep measured details.
+        return dict(verdict='unmeasured',iteration_base=iteration_base,batch_base=batch_base,
+                    node_ids=node_ids,owner_sha=None,owner_subject=None,owner_slug=None,
+                    reason='batch base measurement unavailable or mixed; per-node attribution required',
+                    batch_results=batch_results,elapsed_s=round(time.monotonic()-start,2),nodes=[])
 
     if batch_green:
         # Red at iteration base, green at batch base — inherited.
@@ -587,6 +597,7 @@ def attribute_red(
             "verdict": record_verdict,
             "iteration_base": iteration_base,
             "batch_base": batch_base,
+            "batch_base_green": True,
             "node_ids": node_ids,
             "owner_sha": owner_sha,
             "owner_subject": owner_subject,

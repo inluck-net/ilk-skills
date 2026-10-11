@@ -2059,3 +2059,23 @@ anchors at the time of inspection and can move as integration changes code.
   evidence remains). No provider call, production mutation or full suite.
 - Next: frozen-context baseline/root reader migration, then installation of
   the accumulated checked candidate and remaining whole-plan requirements.
+
+### Baseline attribution cannot excuse unmeasured failures
+
+- Verified production red_owner branches: a batch-base exception, any
+  unmeasured batch node, or a mixture of green/red batch nodes returned a
+  coarse pre-existing waiver. Three negative actual-function checks failed
+  in 0.17s with private Git fixtures and controlled measurement results.
+- These paths now return unmeasured, retaining mixed measurement details.
+  They cannot excuse all current failures or authorize strikes. Confirmed
+  all-red baseline remains pre-existing; all-green baseline remains eligible
+  for inherited ownership. Full per-node mixed attribution remains open.
+- Tightened strike-reader evidence: a commit-shaped base string is insufficient;
+  the attribution must explicitly record batch_base_green from a measured
+  baseline. The inherited all-green branch supplies that field. An owned
+  iteration-only result does not yet measure batch-base green, so cannot grant
+  a strike through this reader. This is deliberate refusal until the full
+  actual-base ownership adapter is finished, not implementation of that adapter.
+- Baseline-unknown, complete output and both strike readers: 13 passed in
+  0.95s including actual portable PowerShell. No test suite/provider/active
+  run changed. Next: original-budget attribution and frozen baseline readers.
