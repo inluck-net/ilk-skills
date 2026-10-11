@@ -346,9 +346,22 @@ def find_subplan(project: Path, slug: str) -> Path | None:
     loop-stop against a gate declaring ``bun run test, timeout: 300``.  No test
     ever ran.
 
-    Frontmatter is still tried FIRST, so nothing that resolved before resolves
-    differently now; the filename glob is a fallback, not a replacement.
+    When a frozen iteration context exists, its unique registered target is
+    authoritative and no discovery fallback runs. Without a context,
+    frontmatter is tried first and the filename glob remains a fallback.
     """
+    from iteration_context import read_context,ContextError,plan_snapshot
+    context=read_context()
+    if context:
+        allowed={context['clone'],context['exec_tree'],*context.get('observe_tree',{}).keys(),*context.get('observe_tree',{}).values()}
+        if str(project.resolve()) not in allowed:raise ContextError('gate project outside frozen root map')
+        matches=[row for row in context.get('plans',{}).values() if row.get('slug')==slug]
+        if len(matches)!=1:raise ContextError('gate target is not unique in frozen registry')
+        selected=Path(matches[0]['path'])
+        if selected.parent!=Path(context['plans_dir']):raise ContextError('gate target escapes frozen plans root')
+        if plan_snapshot(selected).get('fingerprint')!=matches[0].get('fingerprint'):
+            raise ContextError('frozen gate contract changed')
+        return selected
     plans_dir, _ = _resolve_plans_dir(project)
     if plans_dir is None or not plans_dir.is_dir():
         return None
@@ -2343,7 +2356,13 @@ def main(argv: list[str]) -> int:
     slug = args.slug
     step = args.step
 
-    subplan = find_subplan(project, slug)
+    from iteration_context import read_context,root_for_plan,ContextError
+    try:
+        context=read_context()
+        subplan = find_subplan(project, slug)
+    except ContextError as error:
+        print(json.dumps({'error':str(error),'outcome':'inconclusive','all_passed':False,'slug':slug,'step':step}))
+        return 2
     if subplan is None:
         print(json.dumps({"error": f"sub-plan not found for slug={slug!r} under {project}/docs/plans/"}))
         return 2
@@ -2352,7 +2371,19 @@ def main(argv: list[str]) -> int:
 
     # In meta projects, resolve the member repo to cd into for each check.
     # In single mode this is a no-op (cwd stays as `project`).
-    run_cwd, repo_error = resolve_run_cwd(project, subplan, fm_text)
+    if context:
+        try:
+            run_cwd=root_for_plan(context,subplan);repo_error=None
+            frozen=context['plans'][subplan.name]
+            if step is not None and int(frozen.get('step') or 0)!=step:
+                raise ContextError('gate step differs from frozen registry')
+            if args.repo_root is not None and args.repo_root.resolve()!=run_cwd:
+                raise ContextError('gate repo override differs from frozen root')
+        except (ContextError,ValueError) as error:
+            print(json.dumps({'error':str(error),'outcome':'inconclusive','all_passed':False,'slug':slug,'step':step}))
+            return 2
+    else:
+        run_cwd, repo_error = resolve_run_cwd(project, subplan, fm_text)
     if repo_error:
         print(json.dumps({"error": repo_error, "slug": slug, "subplan_path": str(subplan)}))
         return 2
@@ -2365,7 +2396,7 @@ def main(argv: list[str]) -> int:
     # verify a tree without the iteration's commits. Honoured in single mode
     # only: a meta project's run cwd comes from `repo:` frontmatter and must
     # not be overridden.
-    if args.repo_root is not None:
+    if args.repo_root is not None and not context:
         _root, _kind = find_project_root(project)
         if _kind != "single":
             print(json.dumps({
@@ -2429,7 +2460,10 @@ def main(argv: list[str]) -> int:
     if step is not None:
         # Get pre-iteration head from environment (set by runner)
         pre_iter_head = os.environ.get("ILK_PRE_ITER_HEAD")
-        changed_files = _get_changed_files_for_step(project, slug, step, pre_iter_head)
+        if context:
+            pre_iter_head=context.get('repository_bases',{}).get(str(run_cwd))
+            if not pre_iter_head and run_cwd==Path(context['exec_tree']):pre_iter_head=context.get('base_commit')
+        changed_files = _get_changed_files_for_step(run_cwd if context else project, slug, step, pre_iter_head)
         if changed_files is None:
             # No trailers and no pre-iteration head — skip with logged warning
             print(
@@ -2441,9 +2475,9 @@ def main(argv: list[str]) -> int:
             existing_commands = {
                 c.get("command", "") for c in subplan_checks + step_checks
             }
-            baseline_red = _read_declared_reds(project)
+            baseline_red = _read_declared_reds(run_cwd if context else project)
             mention_checks = build_mention_gate_inventory(
-                project, changed_files, existing_commands, baseline_red
+                run_cwd if context else project, changed_files, existing_commands, baseline_red
             )
 
     # ── batch-verification gate deselection ──────────────────────────────
@@ -2485,7 +2519,7 @@ def main(argv: list[str]) -> int:
                             chk["command"] = shlex.join(parts)
 
     results: list[CheckResult] = []
-    iso_tree = args.repo_root if args.repo_root is not None else project
+    iso_tree = run_cwd if context else (args.repo_root if args.repo_root is not None else project)
     iso_ctx = contextlib.nullcontext(IsolationState()) if args.no_isolate else isolate_to_head(iso_tree)
     with iso_ctx as iso:
         for c in subplan_checks:

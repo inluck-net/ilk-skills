@@ -2261,3 +2261,33 @@ anchors at the time of inspection and can move as integration changes code.
   are recorded in detached-component-contracts.md; no new routine suite gate.
 - Next: commit and check the changed legacy caller contract, prepare the
   candidate for the next safe activation; continue remaining whole-plan gaps.
+
+
+### Actual PowerShell gate producer and frozen gate-entry reader
+
+- The real Invoke-LocalChecks measurement (private fixture) initially failed:
+  a spaced execution path yielded no parsed results, and no persistent complete
+  capture had been requested. After literal argument quoting and capture
+  wiring, the helper correctly reported that its rediscovered plans root was
+  wrong. That second failure identified a frozen-context reader gap, rather
+  than a failing authored gate. Neither failed run is counted as verification.
+- New Format-NativeArgumentList preserves literal Start-Process arguments.
+  Invoke-LocalChecks retains helper stdout/stderr plus full per-check captures
+  under the current context's run directory and restores the caller's capture
+  environment. Retained helper files originate from private temporary files.
+- run_local_checks.find_subplan/main now use the unique frozen plan, contract,
+  execution/member root and entry base when context exists. Legacy discovery
+  remains only without context. Root overrides and stale/different steps
+  refuse. Isolation and mention inventory use that execution root.
+- Actual portable PowerShell caller, spaced worktree path and clone argument,
+  shared attribution and legacy target/capture regressions: 22 passed in 5.46s.
+  In the clone case, clone code would pass but frozen worktree code is red,
+  establishing the measured root rather than just matching a string.
+- Actual Python gate CLI negatives/positive: 5 passed in 1.11s. Wrong frozen
+  step, duplicate target, changed gate contract and foreign project root return
+  inconclusive before capture/gate creation. No model/provider was dispatched
+  by these measurements; they establish caller correctness, not batch speed.
+- Completion question queued for Chad: whether native Windows/member adapters
+  must ship in this effort or follow Mac/consumer delivery. Until answered,
+  they remain open; their unchecked boxes are not silently removed. Continue
+  independent Mac integration and required checks while the question is pending.

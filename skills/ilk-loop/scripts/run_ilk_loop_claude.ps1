@@ -682,6 +682,16 @@ function Get-MeasuredStrikeTargets {
   } finally { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
 }
 
+function Format-NativeArgumentList {
+  param([string[]]$Values)
+  # Start-Process joins its array and reparses it. Quote literal arguments
+  # with the standard backslash-before-quote/trailing-backslash rules.
+  return (($Values | ForEach-Object {
+    $value = [regex]::Replace($_, '(\\*)"', '$1$1\"')
+    '"' + [regex]::Replace($value, '(\\+)$', '$1$1') + '"'
+  }) -join ' ')
+}
+
 function Invoke-LocalChecks {
   <#
     Run run_local_checks.py for every target. Each invocation has the
@@ -739,10 +749,23 @@ function Invoke-LocalChecks {
       $perTarget = $declared + 60
       if ($perTarget -gt $remainSec) { $remainSec = $perTarget }
     }
+    $captureBefore = $env:ILK_GATE_OUTPUT_DIR
+    $preserveCapture = $false
     $tmpOut = [IO.Path]::GetTempFileName()
+    if ($env:ILK_ITER_CONTEXT) {
+      $captureRoot = Join-Path (Split-Path $env:ILK_ITER_CONTEXT -Parent) ('local-checks-' + [guid]::NewGuid().ToString())
+      New-Item -ItemType Directory -Path $captureRoot | Out-Null
+      $persistentOut = Join-Path $captureRoot 'helper.stdout.log'
+      Move-Item -LiteralPath $tmpOut -Destination $persistentOut
+      $tmpOut = $persistentOut
+      $temporaryErr = [IO.Path]::GetTempFileName()
+      Move-Item -LiteralPath $temporaryErr -Destination "$tmpOut.err"
+      $env:ILK_GATE_OUTPUT_DIR = $captureRoot
+      $preserveCapture = $true
+    }
     $args = @($HelperScript, "--project", $Project, "--slug", $t.slug, "--step", $t.step.ToString())
     try {
-      $proc = Start-Process -FilePath "python" -ArgumentList $args `
+      $proc = Start-Process -FilePath "python" -ArgumentList (Format-NativeArgumentList -Values $args) `
         -NoNewWindow -PassThru -RedirectStandardOutput $tmpOut -RedirectStandardError "$tmpOut.err"
       if (-not $proc.WaitForExit($remainSec * 1000)) {
         try { $proc.Kill($true) } catch {}
@@ -765,10 +788,16 @@ function Invoke-LocalChecks {
       $outcome = Get-LocalCheckOutcome -Parsed $parsed -ExitCode $exit
       $out += [PSCustomObject]@{
         slug = $t.slug; step = $t.step; outcome = $outcome; exit_code = $exit; raw = $parsed
+        helper_stdout_path = if ($preserveCapture) { $tmpOut } else { $null }
+        helper_stderr_path = if ($preserveCapture) { "$tmpOut.err" } else { $null }
       }
     } finally {
-      Remove-Item $tmpOut -ErrorAction SilentlyContinue
-      Remove-Item "$tmpOut.err" -ErrorAction SilentlyContinue
+      if ($null -eq $captureBefore) { Remove-Item Env:ILK_GATE_OUTPUT_DIR -ErrorAction SilentlyContinue }
+      else { $env:ILK_GATE_OUTPUT_DIR = $captureBefore }
+      if (-not $preserveCapture) {
+        Remove-Item $tmpOut -ErrorAction SilentlyContinue
+        Remove-Item "$tmpOut.err" -ErrorAction SilentlyContinue
+      }
     }
   }
   return $out

@@ -82,3 +82,26 @@ def test_one_existing_budget_is_shared_across_records(tmp_path,monkeypatch):
     assert len(calls)==2 and calls[1]<calls[0]
     assert updated[-1]['attribution']['verdict']=='unmeasured'
     assert all(record['outcome']=='fail' for record in updated)
+
+
+@pytest.mark.parametrize('project_role',['clone','exec'])
+def test_actual_powershell_gate_preserves_capture_and_space_path(tmp_path,project_role):
+    pwsh=os.environ.get('ILK_TEST_PWSH') or shutil.which('pwsh')
+    if not pwsh:pytest.skip('PowerShell runtime unavailable')
+    context,path,row=world(tmp_path);old=Path(context['exec_tree']);root=old.with_name('work with spaces')
+    git(Path(context['clone']),'worktree','move',str(old),str(root))
+    context.update(exec_tree=str(root),observe_tree={context['clone']:str(root)},repository_bases={str(root):context['base_commit']})
+    plan=Path(context['dispatch']['subplan_path']);plan.write_text(plan.read_text().replace('assert f(4)==6','assert f(4)==5'))
+    context['plans'][plan.name]=plan_snapshot(plan)
+    ctx=tmp_path/'ctx.json';write_context(ctx,context)
+    skills=Path(__file__).resolve().parents[2];source=(skills/'ilk-loop/scripts/run_ilk_loop_claude.ps1').read_text()
+    names=['Get-LocalCheckOutcome','Invoke-LocalChecks']
+    if 'function Format-NativeArgumentList ' in source:names.insert(0,'Format-NativeArgumentList')
+    definitions='\n'.join(re.search(r'^function '+name+r' \{.*?^\}',source,re.M|re.S).group() for name in names)
+    bins=tmp_path/'bin';bins.mkdir();(bins/'python').symlink_to(sys.executable)
+    probe=tmp_path/'actual-gate.ps1'
+    probe.write_text("$ErrorActionPreference='Stop'\n$env:ILK_ITER_CONTEXT=$args[0]\nfunction Get-StepDeclaredTimeout {return 0}\n"+definitions+"\n$target=[PSCustomObject]@{slug='counter';step=0}\n$result=@(Invoke-LocalChecks -Project $args[1] -Targets @($target) -HelperScript $args[2] -OuterTimeoutSec 10)\nif ($result.Count -ne 1 -or -not $result[0].raw -or -not $result[0].raw.results -or $result[0].outcome -ne 'fail' -or -not $result[0].raw.results[0].stdout_path -or -not (Test-Path $result[0].raw.results[0].stdout_path)) {throw ($result | ConvertTo-Json -Depth 40)}\nif ($env:ILK_GATE_OUTPUT_DIR) {throw 'capture environment leaked'}\nWrite-Output 'persistent gate capture: PASS'\n")
+    env=dict(os.environ,PATH=str(bins)+os.pathsep+os.environ['PATH']);env.pop('ILK_GATE_OUTPUT_DIR',None)
+    result=subprocess.run([pwsh,'-NoProfile','-File',str(probe),str(ctx),context['clone'] if project_role=='clone' else str(root),str(skills/'ilk-loop/scripts/run_local_checks.py')],env=env,capture_output=True,text=True,timeout=15)
+    assert result.returncode==0,result.stdout+result.stderr
+    assert 'persistent gate capture: PASS' in result.stdout
