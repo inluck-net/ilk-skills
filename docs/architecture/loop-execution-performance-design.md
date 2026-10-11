@@ -1,22 +1,24 @@
 # Loop execution performance
 
-**Status:** revised after independently checking the 2026-10-11 review.
-Prose only; no implementation, deployment, or batch changes are authorized by
-this document. Final verification stays opt-in; focused step/caller checks stay.
+**Status:** accepted design, with a checked manual owner implementation and an
+installed Mac preview. Final verification stays opt-in. The durable
+[implementation tracker](../implementation/loop-execution-improvement-plan.md)
+records exact candidate/installed/measured distinctions and remaining delivery.
 
 This extends [state and ownership](loop-state-and-ownership-design.md) and
-[worker writes code only](worker-writes-code-only-design.md). **I1's canonical
-iteration context and I2's unified open/close record are not built yet.**
-The accepted ownership design describes targets, not existing APIs. No
-`resolve_iteration_context`, `ctx-`, `base_tree`, `head_tree`, or `"attempts"`
-occurs in the current bash runner; no `def transition` occurs in its scripts.
-An initial performance change must not create a competing context/record.
+[worker writes code only](worker-writes-code-only-design.md). At the independent
+review snapshot I1/I2 were not built; the initial increment therefore extended
+existing JSONL first. The later authorized owner implementation now provides
+canonical context, driver ownership, open/close observations and supported Mac
+recovery. See section 9 and later capability notes. Historical review anchors
+and measurements below remain dated evidence, not claims that these mechanisms
+are still absent. There is no competing context/proof format.
 
 Source notation: **R** = `skills/ilk-loop/scripts/run_ilk_loop_claude.sh`.
 Code anchors below were opened on 2026-10-11; line numbers describe that
-working-tree snapshot, not every installed release. Mechanisms are explicitly
-labelled existing, partial, or new. Current source may include ongoing worker
-changes; none were edited during this revision.
+historical review snapshot, not current candidate line numbers or every installed release. Mechanisms are explicitly
+labelled existing, partial, or new. No code was changed during the prose-only review revision; subsequent
+authorized owner implementation is recorded separately below.
 
 ## Problem: measured thinking, turns, discovery, and tests
 

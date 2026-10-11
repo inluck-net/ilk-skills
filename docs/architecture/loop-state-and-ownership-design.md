@@ -3,18 +3,19 @@
 **Performance extension (2026-10-11):**
 [Loop execution performance](loop-execution-performance-design.md) specifies
 model-specific thinking/turn measurements, additive JSONL fields, and compact
-worker dispatch. I1's canonical context and I2's unified record are not built
-yet; the first increment does not create another context or proof record.
-Gate-outcome reuse is removed, stall handling is observation-only, and later
-gate ownership/drain activation have explicit dependencies. Existing ownership
-and verdict invariants still apply; these are targets, not shipped behavior.
+worker dispatch. The review snapshot preceded canonical I1/I2; the later
+manual owner candidate implements context and supported Mac close records.
+Gate-outcome reuse remains removed; stalls remain observation-only. New
+code-only/drain mechanisms stay opt-in with explicit platform/entry refusals.
+The implementation tracker distinguishes installed capabilities from candidates.
 
-**Status:** accepted 2026-09-28 (Chad). This is the target design, and the
-code does not meet it yet. Section 7 lists every current divergence, and
-section 8 gives the order in which to remove them. When this document and
-`skills/ilk-loop/references/detached-component-contracts.md` disagree on
-anything listed in section 7, **this document is the intended behaviour**
-and the contracts document describes the code as it stands.
+**Status:** accepted 2026-09-28 (Chad), with later manual owner implementation.
+Section 7 preserves the historical divergence snapshot at HEAD 90513da; it is
+not the current remaining-work list. Section 8 preserves the intended order.
+See [the durable tracker](../implementation/loop-execution-improvement-plan.md)
+for current evidence and unresolved adapters. Where historical detached
+contracts disagree with an accepted invariant, this design defines the target;
+only measured implemented behavior may be claimed as delivered.
 
 **Why.** On 2026-09-28 the toolkit surfaced about 35 defects in one day, and
 three consecutive point fixes each exposed the next defect in the same code.

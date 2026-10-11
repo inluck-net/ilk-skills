@@ -2,15 +2,15 @@
 
 **Execution performance extension (2026-10-11):**
 [Loop execution performance](loop-execution-performance-design.md) adds a
-compact dispatch brief and additive observations first; canonical I1/I2 are
-not built. Driver-only authoritative gates remain a later ownership change,
-dependent on enforced write scope and a measured red-recovery/resume path.
-The existing worker-runs-gates protocol stays until then. Worker reports are
-never sufficient proof, and gate-outcome reuse is removed from this proposal.
-Chad confirmed the expanded freeze on 2026-10-11: every loop-built kernel
-change uses a supervised owner build, including session-planned work. The
-expanded landing paths are included. Template/report work remains non-kernel;
-this policy approval does not declare its enforcement implemented.
+compact dispatch and additive observations first. The subsequent manual owner
+candidate implements canonical context and an explicit Mac code-only profile:
+enforced write scope, driver gates/commits/state and actual provider same-session
+red recovery. Legacy worker-runs-gates remains available for unsupported paths;
+worker reports never establish proof. Gate-outcome reuse remains removed.
+Chad confirmed the expanded freeze on 2026-10-11: every new owner-only-base
+loop-built kernel change requires a supervised owner build, including session
+plans and expanded landing paths. Historical base policy is preserved. See the
+checked implementation note below and durable tracker for rollout limitations.
 
 **Status:** accepted 2026-10-10 (Chad): all three decisions in section 7,
 built before the 09-28 transition API. Written by the RSI owner session

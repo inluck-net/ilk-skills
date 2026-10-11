@@ -167,6 +167,22 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- Consumer owner candidate 2cb713ae closes verifier pin parsing/quoting and
+  hermetic toolkit integration fixtures. The canary-lint negative read a
+  poisoned ambient install despite an explicit source (1 failed 0.18s).
+  Explicit temporary skill/data/home fixtures and isolated parser subprocesses
+  remove that dependency; missing explicit fixture is unknown/skipped and the
+  existing REQUIRE_FULL_COVERAGE guard rejects skipped coverage.
+  The fixture accepts explicit ILK_TEST_TOOLKIT_ROOT or the runner's ILK_CODE_ROOT,
+  never an ambient ~/.claude path. Six existing parser/fields integrations use it.
+  This exposed our installed consumer's pinned attribution probe using split()
+  on a runtime expression: it dropped --remeasure-if-stale and malformed fields
+  import paths. Three real harmless emitted gate calls now follow the execution
+  pin with spaces; probe alone resolves the planning pin. Seven pin/integration
+  checks passed 2.25s, then eight existing attribution/actual-fields checks passed
+  0.84s. No suite, skip-list change, production install or worker interruption.
+  Consumer main remains 8472771f; candidate deployment waits for safe boundary.
+
 - Reporter-v6 measurement correction: exact native execution-root search was
   falsely counted as bootstrap under a .ilk-data fixture root. Negative failed
   1 in 0.03s; seven reporter checks passed 0.03s after exact-root normalization.
