@@ -2472,3 +2472,23 @@ anchors at the time of inspection and can move as integration changes code.
   deselected in 0.46s; shell syntax passed. Focused fixture-only validation,
   no agent/model or full suite. New source is candidate only; installed local
   e434e346 and prepared/unactivated rezmac e434e346 remain separate states.
+
+
+### Pinned readers do not remove mutable checkout ownership
+
+- Four injected-identity negatives reproduced host_blockers ignoring a run
+  with private pinned code even when its clone/execution root overlapped the
+  update target (4 failed/23 deselected in 0.09s): exact clone, exact execution,
+  nested execution and ancestor execution. No live run was touched.
+- host_blockers now separates code-reader independence from checkout write/
+  landing ownership. Pinned unrelated consumers still do not block toolkit
+  updates; overlapping working roots remain blockers. Existing explicit caller
+  group exclusion is retained for its own checked landing boundary.
+- Registry identity/cleanup/migration tests: 27 passed in 0.84s. No new timeout
+  or threshold. Owned selfmod/upgrade callers are checked separately below.
+- Future manual local activation must observe the exact paused/undispatched
+  controller, private pin, no worker/registered children and protected hashes
+  before excluding that verified group from the source-update query. It must
+  not use a pin alone or --force to ignore working checkout ownership. Earlier
+  local activations already made these independent checks and preserved the
+  controller and protected files; this fixes the reusable guard itself.

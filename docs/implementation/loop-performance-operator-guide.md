@@ -92,3 +92,10 @@ An additional hand edit, changed toolkit/input, missing close, timeout with
 unobserved work, or unknown state requires owner handling and cannot silently
 be attributed to the previous worker. Accepted-transaction recovery continues
 to use its separate original transaction adapter.
+
+
+A private toolkit pin permits an unrelated consumer batch to keep running
+while future toolkit inputs are updated. It does not permit updating the
+checkout that a batch is editing or will land into. The registry host guard
+checks both cloned and execution roots for overlap with that update target.
+Leave a working batch alone; activate at its checked accepted/idle boundary.

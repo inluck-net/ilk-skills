@@ -257,6 +257,29 @@ def test_merge_and_migration_share_registry_without_argv(tmp_path,monkeypatch):
     assert rr.host_blockers(data_root=data,clone=tmp_path/'toolkit')==[]
 
 
+@pytest.mark.parametrize('role', ['clone', 'exec', 'nested-exec', 'ancestor-exec'])
+def test_pinned_code_does_not_excuse_a_mutable_checkout_collision(tmp_path,monkeypatch,role):
+    import time
+    import run_registry as rr
+    data=tmp_path/'data';runtime=data/'projects/fixture/runtime/launcher'
+    target=tmp_path/'toolkit';clone=tmp_path/'consumer';execution=clone
+    if role=='clone':clone=target;execution=tmp_path/'isolated-worktree'
+    elif role=='exec':execution=target
+    elif role=='nested-exec':execution=target/'nested'
+    elif role=='ancestor-exec':execution=tmp_path
+    identity=dict(pid=271,pgid=271,lstart='fixed')
+    reserve(runtime,run_id='collision',project_key='fixture',clone=clone,
+        exec_tree=execution,toolkit_sha='pin',expires_at=time.time()+120)
+    bind_running(runtime,'collision',pid=271,probe=lambda _:identity)
+    row=read(runtime/'runs/collision.json');row.update(inputs_pinned=True,
+        code_root=str(tmp_path/'immutable-code'))
+    rr._write(runtime/'runs/collision.json',row)
+    original=rr.project_status
+    monkeypatch.setattr(rr,'project_status',lambda p:original(p,probe=lambda _:identity,locked=False))
+    assert rr.host_blockers(data_root=data,clone=target)==[271]
+    assert rr.host_blockers(data_root=data,clone=target,exclude_group=271)==[]
+
+
 def test_shared_caller_group_cannot_be_registered_as_run(tmp_path):
     runtime,identity=fixture(tmp_path)
     with pytest.raises(RegistryError,match='own its process group'):

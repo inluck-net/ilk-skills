@@ -259,7 +259,15 @@ def host_blockers(*, projects=None, clone=None, exclude_group=None, data_root=No
         for row in status['runs']:
             if wanted and row['clone'] not in wanted:continue
             if row['liveness']=='running' and row['pgid']==exclude_group:continue
-            if clone and row.get('inputs_pinned') is True and row.get('code_root') and not Path(row['code_root']).resolve().is_relative_to(Path(clone).resolve()):continue
+            if clone and row.get('inputs_pinned') is True and row.get('code_root'):
+                target=Path(clone).resolve()
+                working_roots=[Path(row[name]).resolve() for name in ('clone','exec_tree')]
+                overlaps=any(root.is_relative_to(target) or target.is_relative_to(root)
+                             for root in working_roots)
+                # A private code pin removes a reader dependency, not the
+                # running batch's write/landing dependency on its checkout.
+                if not overlaps and not Path(row['code_root']).resolve().is_relative_to(target):
+                    continue
             result.append(row['pid'] if row['liveness']=='running' else -1)
     return sorted(set(result))
 
