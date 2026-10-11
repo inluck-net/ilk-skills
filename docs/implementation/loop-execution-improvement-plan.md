@@ -24,7 +24,7 @@ required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: wire candidate measured-red progress into opt-in Mac
 worker/loop, close/result and consumer readers, then finish remaining
-legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview d74d6631
+legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview c59dccf4
 and consumer compatibility 3987a299 are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -3413,3 +3413,23 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
 - D2 acceptance descriptor archived normal and opt-in measured-red entry checks
   passed two in 20.41s at 445e15bc before extending project-rule fixtures. The
   latter still shipped-unproven; no false green or full baseline suite.
+
+
+- D2/B3 private global transport identity correction: two separately prepared
+  homes carrying unchanged global instructions produced different gate input
+  fingerprints. This would refuse retained-red work ownership on a fresh-home
+  relaunch. Negative reproduced in a generated two-home fixture. Gate identity
+  now normalizes only exact verified global-copy rows to their source path/hash;
+  arbitrary private references retain full identity. Changed global bytes still
+  change identity. Six focused descriptor/relocation checks passed in 1.14s.
+  The first combined command filtered retained-red tests out with -k; those
+  excluded tests are not counted as coverage. Separate retained-red check follows.
+  No gate outcome is reused: relaunch ownership remains diagnostic, and fresh
+  gates are required. Next: strengthened archived fresh-home red recovery.
+
+- Delivery t: shell/native project-rule bootstrap checks passed two in 16.32s.
+  Combined portable observations, acceptance-input fingerprint and bootstrap
+  preview c59dccf4 installed locally with controller 94556 / 4de1eb06 original
+  inputs and all 1,891 protected file hashes preserved. Consumer remains
+  3987a299. Source main is clean; profiles remain opt-in. Remote private standby
+  is d74d6631 until refreshed; shared rezmac remains v0.9.193.

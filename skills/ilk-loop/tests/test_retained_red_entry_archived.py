@@ -13,7 +13,8 @@ ROOT=Path(__file__).resolve().parents[3]
 pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='Mac production entry')
 
 
-def test_closed_red_launch_is_resumed_with_fresh_driver_gate(tmp_path):
+@pytest.mark.parametrize('fresh_inputs',[False,True])
+def test_closed_red_launch_is_resumed_with_fresh_driver_gate(tmp_path,fresh_inputs):
     spec=importlib.util.spec_from_file_location('red_fixture',Path(__file__).with_name('test_pre_loop_exit_sentinel.py'))
     fixtures=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixtures)
     world=fixtures._build_world_shipped(tmp_path,with_steps=True);work=world['project']
@@ -23,6 +24,7 @@ def test_closed_red_launch_is_resumed_with_fresh_driver_gate(tmp_path):
     plan=world['plans']/(fixtures.STEM+'.md')
     plan.write_text('---\nplan: '+fixtures.SLUG+'\nstatus: pending\ncurrent_step: 0\nestimated_steps: 1\nverification_tier: loop-verified\n---\n# Counter\n## Steps\n### Step 0: fix counter\n```yaml\nlocal_checks:\n  - command: python3 -I -c "from pathlib import Path;assert Path(\'counter.py\').read_text()==\'value = 2\\n\'"\n```\n')
     home=tmp_path/'source-home';home.mkdir();(home/'settings.json').write_text(json.dumps({'env':{'ANTHROPIC_AUTH_TOKEN':'fixture-token','ANTHROPIC_BASE_URL':'https://example.invalid','ANTHROPIC_MODEL':'fixture-model'}}))
+    (home/'CLAUDE.md').write_text('unchanged global instruction')
     cli=world['bin']/'claude'
     cli.write_text('#!'+sys.executable+'\n'+'''import json,os
 from pathlib import Path
@@ -46,6 +48,14 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         terminal=json.loads((runtime/'last-exit.json').read_text());assert terminal['state']=='local_checks_failed',(terminal,first.stdout[-3000:],first.stderr[-3000:])
         assert git('rev-parse','HEAD')==base and (work/'counter.py').read_text()=='value = 0\n'
         assert 'current_step: 0' in plan.read_text() and not project_status(runtime)['busy']
+        if fresh_inputs:
+            inputs=tmp_path/'fresh-inputs';manifest=prepare(ROOT,home,inputs,project=work,worker_tools='native')
+            pin_launch_resources(inputs,project=work,executables={'python':sys.executable,'claude':str(cli)})
+            code=Path(manifest['code_root'])
+            env.update(ILK_SKILL_HOME=str(code/'skills'),ILK_CODE_ROOT=str(code),ILK_RUN_INPUTS=str(inputs),
+                CLAUDE_CONFIG_DIR=manifest['worker_home'],PYTHONPATH=str(code/'skills/ilk-loop/scripts'))
+            argv[1]=str(code/'skills/ilk-loop/scripts/run_ilk_loop_claude.sh')
+            argv[-1]=str(inputs/'mcp.json')
         second=subprocess.run(argv,env=env,capture_output=True,text=True,timeout=40,start_new_session=True)
         terminal=json.loads((runtime/'last-exit.json').read_text());assert terminal['state']=='all-shipped',(terminal,second.stdout[-5000:],second.stderr[-5000:])
         assert git('rev-parse','HEAD')!=base and 'current_step: 1' in plan.read_text()

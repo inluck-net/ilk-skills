@@ -288,6 +288,31 @@ def test_driver_acceptance_rechecks_non_code_launch_inputs(tmp_path,monkeypatch,
     assert 'current_step: 0' in plan.read_text()
 
 
+def test_relocated_private_global_instructions_keep_gate_identity(tmp_path,monkeypatch):
+    from test_owner_driver_step import fixture as driver_fixture
+    from driver_step import gate_input_fingerprint
+    from instruction_inputs import inventory
+    from run_inputs import pin_launch_resources
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    pins=tmp_path/'pins';pins.mkdir();work=tmp_path/'work';work.mkdir()
+    repo,home,_=fixture(pins);(home/'CLAUDE.md').write_text('unchanged global instructions')
+    context,root,plan=driver_fixture(work);fingerprints=[]
+    for name in ('first','second'):
+        destination=pins/name;manifest=prepare(repo,home,destination)
+        manifest=pin_launch_resources(destination,project=repo,executables={'python':sys.executable})
+        current=dict(context,code_root=manifest['code_root'],worker_inputs_dir=str(destination),
+            private_worker_home=manifest['worker_home'],toolkit_code_inventory_sha256=manifest['code_inventory_sha256'],
+            instruction_input_inventory_protocol=2)
+        current['instruction_input_inventory']=inventory(current)
+        fingerprints.append(gate_input_fingerprint(current,current['dispatch']))
+    assert fingerprints[0]==fingerprints[1]
+    changed=Path(manifest['global_instruction_inputs'][0]['path']);changed.chmod(0o600);changed.write_text('changed global instructions')
+    manifest['global_instruction_inputs'][0]['sha256']=digest(changed)
+    (destination/'inputs.json').write_text(json.dumps(manifest))
+    current['instruction_input_inventory']=inventory(current)
+    assert gate_input_fingerprint(current,current['dispatch'])!=fingerprints[1]
+
+
 @pytest.mark.parametrize('mutation',['edit','add','manifest'])
 def test_complete_code_inventory_detects_changed_or_added_runtime_inputs(tmp_path,mutation):
     from run_inputs import verify_code_snapshot

@@ -233,6 +233,12 @@ def gate_input_fingerprint(context,selected):
     inputs['master']=(context.get('master_snapshot') or {}).get('fingerprint')
     if context.get('worker_inputs_dir'):
         manifest=json.loads((Path(context['worker_inputs_dir'])/'inputs.json').read_text())
+        globals={(row['path'],row['sha256']) for row in manifest.get('global_instruction_inputs',[])}
+        # Copied global filenames change with every private run home. Their
+        # source path/hash below preserves semantic identity across relaunches;
+        # arbitrary references into private home retain their full identity.
+        inputs['instruction_input_inventory']=[row for row in inputs.get('instruction_input_inventory') or []
+            if (row.get('path'),row.get('sha256')) not in globals or row.get('resolved_path')!=row.get('path')]
         inputs['settings_sources']=manifest.get('settings_sources')
         inputs['hooks']=[{key:row.get(key) for key in ('phase','source_name','source_sha256','pinned_sha256')}
                          for row in manifest.get('hooks',[])]
