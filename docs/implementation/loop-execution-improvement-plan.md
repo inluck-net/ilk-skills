@@ -494,7 +494,7 @@ No completion/ship/proof markers are inferred from this human tracker.
   Frozen master state guards are checked under the shared state lock so a hold
   cannot race step advancement. Driver/CAS/context checks: 29 passed in 3.13s.
   This API is not runner-wired. Clean entry is required; member-repo dispatch,
-  baseline-red attribution, driver finding import, bounded commit hooks,
+  baseline-red attribution, driver finding import,
   provisional proof/ship integration and accepted-tree attempt projection are
   still open. Do not enable code-only prompts globally until those callers
   are complete. No I3/I5/production-completion claim.
@@ -508,3 +508,19 @@ No completion/ship/proof markers are inferred from this human tracker.
   Fixture ten-second expiry/wait are test judgments for subsecond startup; a
   slow valid host falsifies them. Launch/runner/readers, broker identity, Windows
   adapter, orphan reconciliation and drain activation remain open. No I4 claim.
+
+- Real provider through C3 API: frozen snapshot 518cbc75 and private copied
+  hooks, actual MiMo PRO/Bash-only enforced scope. First driver gate red,
+  zero commits/no pointer advance (12.557s/two CLI turns). Same-session repair
+  green, exactly one driver commit/one pointer advance/one gate attempt
+  (12.450s/two CLI turns). Evidence `driver-accept-resume-capability-probe.json`.
+  Proof remains explicitly provisional; no actual batch shipping claim.
+- C3 commit budget: accept_step now requires the caller's existing iteration
+  monotonic deadline; Git operations/commit hooks use existing bounded_run
+  owned-group cleanup, gates are capped by remaining budget. No new loop
+  timeout default. Six driver checks passed in 3.61s, including an actual
+  intentionally waiting owned commit hook terminated at the supplied budget
+  with no HEAD/pointer advance. Initial one-second fixture budget could never
+  reach a gate because its existing parser uses whole seconds; corrected to
+  two seconds, a test judgment for that granularity plus sampled subsecond
+  index/gate startup. A slower valid host would falsify the fixture bound.

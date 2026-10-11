@@ -154,7 +154,7 @@ local_checks:
                 init,result,_=collect(cp.stdout)
                 if args.driver_accept:
                     from driver_step import accept_step
-                    accepted=accept_step(context,default_timeout=args.timeout)
+                    accepted=accept_step(context,default_timeout=args.timeout,deadline=broker.deadline)
                     row.update(driver_accepted=accepted['accepted'],driver_commit_count=len(accepted.get('commits',[])),
                         driver_attempt_count=len(accepted['attempts']),pointer_advanced='current_step: 1' in subplan.read_text(),
                         shipping_proof_provisional=accepted.get('proof_provisional'))

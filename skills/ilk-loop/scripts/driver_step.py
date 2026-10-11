@@ -9,6 +9,7 @@ their migration adapters before rollout; this candidate refuses them.
 """
 from __future__ import annotations
 from dataclasses import asdict
+from contextvars import ContextVar
 import json
 import os
 from pathlib import Path
@@ -19,12 +20,28 @@ import uuid
 from iteration_context import read_dispatch,plan_snapshot,root_for_plan,ContextError
 from plan_status import parse_frontmatter
 from plan_state import transition
+_deadline=ContextVar('driver_step_deadline',default=None)
+
+
+def remaining():
+    deadline=_deadline.get()
+    if deadline is None:return None
+    value=deadline-time.monotonic()
+    if value<=0:raise ContextError('iteration deadline reached')
+    return value
 
 
 def git(root,*args,env=None):
-    cp=subprocess.run(['git','-C',str(root),*args],capture_output=True,text=True,env=env)
-    if cp.returncode:raise ContextError('driver Git operation failed: '+cp.stderr[-1000:])
-    return cp.stdout.strip()
+    timeout=remaining()
+    if timeout is None:
+        cp=subprocess.run(['git','-C',str(root),*args],capture_output=True,text=True,env=env)
+        code,stdout,stderr,timed_out=cp.returncode,cp.stdout,cp.stderr,False
+    else:
+        from bounded_run import run
+        code,stdout,stderr,timed_out=run(['git','-C',str(root),*args],cwd=str(root),timeout=timeout,env=env)
+    if timed_out:raise ContextError('driver Git operation reached iteration deadline')
+    if code!=0:raise ContextError('driver Git operation failed: '+stderr[-1000:])
+    return stdout.strip()
 
 
 def working_tree(root: Path) -> str:
@@ -80,8 +97,16 @@ def gate(context,root,path,selected,*,default_timeout):
     previous=os.environ.get('ILK_GATE_OUTPUT_DIR');os.environ['ILK_GATE_OUTPUT_DIR']=str(directory)
     started=time.monotonic()
     try:
-        results=[run_one(item,scope,root,default_timeout=default_timeout)
-                 for scope,items in (('subplan',sub),('step',step),('mention',mention)) for item in items]
+        results=[]
+        for scope,items in (('subplan',sub),('step',step),('mention',mention)):
+            for item in items:
+                limit=remaining()
+                check=dict(item)
+                if limit is not None:
+                    # Existing run_one timeout parser has whole-second units.
+                    if int(limit)<=0:raise ContextError('iteration deadline reached at whole-second gate boundary')
+                    check['timeout']=min(int(check.get('timeout',default_timeout)),int(limit))
+                results.append(run_one(check,scope,root,default_timeout=default_timeout))
     finally:
         if previous is None:os.environ.pop('ILK_GATE_OUTPUT_DIR',None)
         else:os.environ['ILK_GATE_OUTPUT_DIR']=previous
@@ -96,7 +121,16 @@ def gate(context,root,path,selected,*,default_timeout):
     return record
 
 
-def accept_step(context,*,default_timeout):
+def accept_step(context,*,default_timeout,deadline):
+    """Use the caller's existing iteration deadline, including commit hooks."""
+    token=_deadline.set(deadline)
+    try:
+        remaining()
+        return _accept_step(context,default_timeout=default_timeout)
+    finally:_deadline.reset(token)
+
+
+def _accept_step(context,*,default_timeout):
     selected,path,root,state=validate(context)
     if git(root,'rev-parse','HEAD')!=context['base_commit']:raise ContextError('worker changed HEAD')
     if git(root,'diff','--cached','--name-only'):raise ContextError('worker changed real index')
