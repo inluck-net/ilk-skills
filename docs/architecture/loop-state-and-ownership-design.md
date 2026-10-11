@@ -412,3 +412,12 @@ checked candidates. Sample cleanup now shares the attribution allowance and
 retains refused/expired worktrees; existing subprocess termination grace and
 retained-sample recovery still need integration. Unproven-progress
 transaction wiring remain open. This is not Windows/member or timeout entry support.
+
+New candidate base_samples.measure_nodes/load_measurement retain complete
+exact-node outputs at both frozen bases, with context/role identity, output
+hashes and sample unchanged/cleanup observations. They are diagnostic APIs;
+accepted stays false. Simple Python/pytest commands are the supported sampling
+subset; compound/custom runners explicitly refuse instead of widening a gate.
+The typed progress decision and transaction callers remain unbuilt. Selected
+real Mac checks and local/remote delivery states are in the implementation
+tracker; these APIs do not establish native Windows or general hermeticity.

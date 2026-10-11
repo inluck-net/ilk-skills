@@ -23,7 +23,7 @@ request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: close remaining legacy reader/recovery/parity requirements
-and delivery documentation in this isolated worktree. Toolkit preview 2991c82a
+and delivery documentation in this isolated worktree. Toolkit preview bb0e7d31
 and consumer compatibility 2cb713ae are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -2819,3 +2819,45 @@ anchors at the time of inspection and can move as integration changes code.
 - Candidate only. Local 2991c82a and remote v0.9.193 remain installed.
   B2 is still open across remaining readers/terminal adapters; this removes
   two measured competing derivations rather than declaring all readers done.
+
+### Scoped sample and frozen-reader increment installed locally
+
+- Malformed registry and actual frozen reader checks: 9 passed in 0.52s.
+  Committed production entry, actual two-plan continuation plus selfmod
+  landing/result: 2 passed in 56.09s. No agent/model or full suite.
+- Immutable bb0e7d31 activated after fresh exact paused/undispatched
+  controller checks, no registered worker children, idle consumer and idle
+  scheduler. All 1,891 protected hashes and PID/PGID/start tuple 94556
+  unchanged; idle scheduler restored. Evidence:
+  toolkit-delivery-preview-20261012l/installed.json.
+- No public release, push, global owned/native/default change or pause edit.
+  Whole tracked scope remains active; next durable exact-base artifacts and
+  typed unproven-progress transaction remain required. Supersede remote
+  18454a64 standby before any independently safe remote activation.
+
+### Complete base output retained for owned recovery
+
+- New base_samples.measure_nodes/load_measurement are observation APIs, not
+  yet wired into acceptance. They require actual driver authority and the
+  frozen context, narrow simple Python/pytest node eligibility, both exact
+  bases, and the original deadline/shared caller allowance. Equal bases
+  share one fresh observation within that call only; no prior outcome reuse
+  or broad gate/suite fallback.
+- Optional red_owner captures retain full outputs before later metadata or
+  cleanup refusal. Durable private stdout/stderr and metadata bind exact
+  bases, selectors, actual exits, sample identity/unchanged observations,
+  shared monotonic spans and frozen context identity. Reader rejects changed
+  logs; accepted stays false and diagnostic_only true. These records alone
+  grant neither progress nor green proof.
+- Real registered two-base pytest check retains >3,000 output bytes per
+  sample, rejects compound runner before execution, reloads receipt and
+  rejects tampered output. Combined shared budget/cleanup/exact node checks:
+  14 passed in 2.92s. Reload, owned sample scope and per-node owner callers:
+  6 passed in 6.42s. Local fixture model: none. No suite run.
+- Rezmac private independent checkout/immutable standby superseded unsafe
+  18454a64 with checked bb0e7d31, active pointer remains v0.9.193. Remote
+  scope/sample/sandbox/cleanup selection: 24 passed in 3.34s. No shared repo,
+  daemon, active worker, claim or plan was changed. Evidence:
+  rezmac-preview-20261012/release-prepared-bb0e7d31.json.
+- Next: typed measured-red progress decision plus transaction/recovery/close
+  adapters. Strict owned raw-green acceptance remains installed.

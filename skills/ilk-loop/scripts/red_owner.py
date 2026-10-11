@@ -312,7 +312,7 @@ _USAGE_COLLECTION_EXITS = {2, 3, 4, 5}
 
 
 def _measure_at_base_worktree(
-    repo: Path, base_sha: str, cmd: str, nodes: list[str], budget_s: int,
+    repo: Path, base_sha: str, cmd: str, nodes: list[str], budget_s: int, captures=None,
 ) -> dict:
     """Run the command (or specific nodes) at base_sha in a detached worktree.
 
@@ -367,17 +367,28 @@ def _measure_at_base_worktree(
                     return 'unmeasured'
             return "failed"
 
-        if nodes:
-            results: dict[str, str] = {}
-            for nid in nodes:
-                sample_head=_prepare_sample(wt,base_sha)
-                rc, stdout, stderr, timed_out = _run_base_sample(f"{runner} {shlex.quote(nid)}",wt,budget_s)
-                results[nid] = 'unmeasured' if timed_out or rc is None or not _sample_unchanged(wt,sample_head) else _classify(rc, stdout, stderr, nid)
-            return results
-        else:
+        def measure(command,node):
             sample_head=_prepare_sample(wt,base_sha)
-            rc, stdout, stderr, timed_out = _run_base_sample(runner,wt,budget_s)
-            return {"_command": 'unmeasured' if timed_out or rc is None or not _sample_unchanged(wt,sample_head) else _classify(rc, stdout, stderr)}
+            from iteration_clock import monotonic
+            started=monotonic()
+            rc,stdout,stderr,timed_out=_run_base_sample(command,wt,budget_s)
+            capture=dict(base_commit=base_sha,sample_head=sample_head,node=node,
+                command=command,exit_code=rc,timed_out=timed_out,
+                stdout=stdout,stderr=stderr,started_monotonic=started,
+                ended_monotonic=monotonic(),sample_unchanged=None,outcome='unmeasured')
+            # Retain complete output before a later metadata/deadline refusal.
+            # These optional diagnostic captures grant no green/progress proof.
+            if captures is not None:captures.append(capture)
+            unchanged=False
+            if not timed_out and rc is not None:
+                unchanged=_sample_unchanged(wt,sample_head)
+            outcome=_classify(rc,stdout,stderr,node) if unchanged else 'unmeasured'
+            capture.update(sample_unchanged=unchanged,outcome=outcome)
+            return outcome
+
+        if nodes:
+            return {nid:measure(f"{runner} {shlex.quote(nid)}",nid) for nid in nodes}
+        return {"_command":measure(runner,None)}
     except Exception as error:
         from run_registry import RegistryError
         if isinstance(error,RegistryError):retain=True
@@ -761,9 +772,12 @@ def _attribute_red(
         }
 
 
-def _run_at_base_worktree(repo, base_sha, cmd, nodes, budget_s):
+def _run_at_base_worktree(repo, base_sha, cmd, nodes, budget_s, *, captures=None):
     with _budget_scope(budget_s):
-        try:return _measure_at_base_worktree(repo, base_sha, cmd, nodes, budget_s)
+        try:
+            if captures is None:
+                return _measure_at_base_worktree(repo,base_sha,cmd,nodes,budget_s)
+            return _measure_at_base_worktree(repo,base_sha,cmd,nodes,budget_s,captures=captures)
         except subprocess.TimeoutExpired:return {node:'unmeasured' for node in nodes or ['_command']}
 
 
