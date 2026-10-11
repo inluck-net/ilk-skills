@@ -12,10 +12,43 @@ import pytest
 from iteration_clock import monotonic
 from iteration_context import write_context
 from owned_command import wrap_command
-from run_registry import reserve,bind_running,register_child,process_identity,project_status
+from run_registry import reserve,bind_running,register_child,process_identity,project_status,cleanup_children
 from test_owner_worker_sandbox import fixture
 
 pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='Mac native owner-exit adapter')
+
+
+def test_exited_unreaped_group_leader_retains_exact_cleanup_identity(tmp_path):
+    owner=subprocess.Popen([sys.executable,'-u','-c','import threading;print("ready");threading.Event().wait()'],
+        stdout=subprocess.PIPE,text=True,start_new_session=True)
+    leader=None
+    try:
+        assert owner.stdout.readline().strip()=='ready'
+        identity=process_identity(owner.pid);registry=tmp_path/'launcher'
+        reserve(registry,run_id='exited-leader',project_key='fixture',clone=tmp_path,exec_tree=tmp_path,
+            toolkit_sha='fixture',expires_at=time.time()+30)
+        bind_running(registry,'exited-leader',pid=owner.pid)
+        context=dict(run_registry_dir=str(registry),runner_owner_pid=owner.pid,run_id='exited-leader')
+        source='import subprocess,sys;subprocess.Popen([sys.executable,"-c","import threading;threading.Event().wait()"]);print("ready",flush=True)'
+        leader=subprocess.Popen(wrap_command([sys.executable,'-u','-c',source],context),
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=True)
+        assert leader.stdout.readline().strip()=='ready'
+        # Three seconds is fixture-only startup/exit responsiveness judgment.
+        # Do not poll/wait the leader: its unreaped PID still owns the group.
+        deadline=monotonic()+3
+        while process_identity(leader.pid) is not None:
+            assert monotonic()<deadline
+            threading.Event().wait(.02)
+        assert cleanup_children(registry,'exited-leader',owner=identity)==[]
+        leader.communicate(timeout=3)
+    finally:
+        # Before reaping on failure, this exact Popen PID remains reserved;
+        # its group cannot have been reassigned to another process.
+        for process in (leader,owner):
+            if process is not None and process.returncode is None:
+                try:os.killpg(process.pid,signal.SIGKILL)
+                except ProcessLookupError:pass
+                process.wait()
 
 
 def test_native_owner_exit_kills_registered_worker_and_gate_groups(tmp_path):

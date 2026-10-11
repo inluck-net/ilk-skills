@@ -153,6 +153,18 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- 2026-10-11 D1 exited-group measurement: a real registered command exited
+  leaving a descendant; cleanup refused its unreaped leader (0.13s failing
+  fixture). Added a separate exact PID/PGID/start probe allowing a zombie only
+  for group cleanup: its unreaped PID remains reserved. Driver authority still
+  treats zombies as dead. Reaped/reused/missing leaders remain unknown and are
+  never signaled. Owner-loss invariant now checks that a durable commit intent
+  is provisional/accepted=false and cannot recover under a dead owner; it no
+  longer assumes no intent was written. Focused result recorded next.
+  Gate-first focused transaction checks: 2 passed in 0.80s. Archived Bash green
+  and red cases at `219c3d9a`: 2 passed in 11.83s; zero turns for green, one
+  worker turn/two fresh gate attempts for red, truthful closed ship proof.
+
 - 2026-10-11 B3 archived commit recovery at `e4e67d0a`: staged and committed
   pre-receipt startup cases passed (2 in 4.94s), original run closed with zero
   provider dispatch, no duplicate code commit and completed master.

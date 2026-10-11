@@ -36,4 +36,10 @@ def test_owning_runner_loss_never_advances_pointer(tmp_path,monkeypatch,loss):
         driver_step.accept_step(context,default_timeout=10,deadline=monotonic()+10)
     assert 'current_step: 0' in plan.read_text()
     if loss!='after-commit':assert real_git(root,'rev-parse','HEAD')==base
-    assert not driver_step._acceptance_receipt(context).exists()
+    receipt=driver_step._acceptance_receipt(context)
+    if loss=='after-commit':
+        pending=json.loads(receipt.read_text())
+        assert pending['phase']=='commit-intent' and pending['result']['accepted'] is False
+        with pytest.raises(run_registry.RegistryError,match='no longer live'):
+            driver_step.recover_acceptance(context,deadline=monotonic()+10)
+    else:assert not receipt.exists()

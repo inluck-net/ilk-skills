@@ -78,12 +78,25 @@ def code_sha(root):
 
 
 def process_identity(pid):
+    return _process_identity(pid,include_zombie=False)
+
+
+def group_identity(pid):
+    """An unreaped zombie still reserves PID/PGID/start for group cleanup.
+
+    It grants no driver authority and is never considered a running worker.
+    A reaped/missing/reused leader cannot establish ownership of descendants.
+    """
+    return _process_identity(pid,include_zombie=True)
+
+
+def _process_identity(pid,*,include_zombie):
     if os.name=='nt':raise RegistryError('Windows process identity adapter not built')
     if isinstance(pid,bool) or not isinstance(pid,int) or pid<=0:raise RegistryError('invalid process PID')
     cp=subprocess.run(['ps','-p',str(pid),'-o','pid=','-o','pgid=','-o','stat=','-o','lstart='],capture_output=True,text=True,env=dict(os.environ,LC_ALL='C'))
     if cp.returncode:return None
     fields=cp.stdout.strip().split(None,3)
-    if len(fields)!=4 or fields[2].startswith(('Z','X')):return None
+    if len(fields)!=4 or fields[2].startswith('X') or (not include_zombie and fields[2].startswith('Z')):return None
     return {'pid':int(fields[0]),'pgid':int(fields[1]),'lstart':fields[3]}
 
 
@@ -322,7 +335,9 @@ def signal_run(runtime,run_id,*,probe=process_identity,send=os.killpg,signum=sig
             if child['pgid']==os.getpgrp():raise RegistryError('refusing caller child process group')
             send(child['pgid'],signum)
         elif state=='dead' and group_exists(child['pgid']):
-            raise RegistryError('child group ownership unavailable; no unverified signal')
+            if group_identity(child['pid'])=={key:child[key] for key in ('pid','pgid','lstart')}:
+                send(child['pgid'],signum)
+            else:raise RegistryError('child group ownership unavailable; no unverified signal')
     if parent_state=='running':send(row['pgid'],signum)
     return row
 
@@ -370,8 +385,12 @@ def cleanup_children(runtime,run_id,*,owner,owner_exited=False,probe=process_ide
         if observed=={key:child[key] for key in ('pid','pgid','lstart')}:
             try:send(child['pgid'],signal.SIGKILL)
             except ProcessLookupError:pass
-        elif observed is not None or group_exists(child['pgid']):
-            refused.append(child['pid'])
+        elif observed is not None:refused.append(child['pid'])
+        elif group_exists(child['pgid']):
+            if group_identity(child['pid'])=={key:child[key] for key in ('pid','pgid','lstart')}:
+                try:send(child['pgid'],signal.SIGKILL)
+                except ProcessLookupError:pass
+            else:refused.append(child['pid'])
     return refused
 
 
