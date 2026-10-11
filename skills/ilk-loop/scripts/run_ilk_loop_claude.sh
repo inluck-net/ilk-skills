@@ -6296,6 +6296,12 @@ write_context(Path(a[9]),context)
     fi
     _CONTEXT_OBSERVATIONS=("${_context_observed[@]}")
     export ILK_ITER_CONTEXT
+    if ! python3 "${_SKILL_ROOT}/ilk-loop/scripts/iteration_record.py" \
+         --log "$JSONL_LOG" --replay-ledger "$(jq -r '.ledger_path' "$ILK_ITER_CONTEXT")"; then
+      stop_reason="iteration_record_recovery_failed"
+      echo "  ! [runner] close-record recovery failed; refusing worker dispatch" >&2
+      break
+    fi
     export ILK_ITER_RECORD_STAGE="driver-check"
     _CONTEXT_PLANS_DIR="$_dispatch_plans_dir"
     _CONTEXT_LAUNCHER_DIR="$_context_launcher"

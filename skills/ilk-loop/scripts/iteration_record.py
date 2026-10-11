@@ -45,11 +45,46 @@ def latest_close(log: Path, run_id: str, iteration: int) -> dict:
     return found
 
 
+def replay_closed_records(log: Path, ledger: Path) -> int:
+    """Recover only pending proof rows with an actual matching close record.
+
+    The caller holds the runner lock and supplies its resolved ledger path.
+    Missing or partial closes remain provisional, never guessed successful.
+    """
+    raw=read_raw_records(ledger)
+    finalized={r.get('proof_id') for r in raw if r.get('record_phase')=='close'}
+    pending={(r.get('run_id'),r.get('iteration')) for r in raw
+             if r.get('record_phase')=='provisional' and r.get('proof_id')
+             and r['proof_id'] not in finalized}
+    if not pending or not log.exists(): return 0
+    closes={}
+    with log.open(encoding='utf-8-sig') as source:
+        for line in source:
+            try: row=json.loads(line)
+            except ValueError: continue
+            if not isinstance(row,dict) or row.get('record_phase')!='close': continue
+            key=(row.get('run_id'),row.get('iteration'))
+            if key in pending: closes[key]=row
+    # Validate all selected paths before making any mutation.
+    for close in closes.values():
+        context=close.get('context') or {}
+        if Path(context.get('ledger_path','')).resolve()!=ledger.resolve():
+            raise ValueError('recovered close ledger differs from current project ledger')
+        if close.get('run_id')!=context.get('run_id') or close.get('iteration')!=context.get('iteration'):
+            raise ValueError('recovered close contradicts frozen identity')
+    return sum(project_close_record(close) for close in closes.values())
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--log',type=Path,required=True)
-    p.add_argument('--run-id',required=True)
-    p.add_argument('--iteration',type=int,required=True)
+    p.add_argument('--replay-ledger',type=Path)
+    p.add_argument('--run-id')
+    p.add_argument('--iteration',type=int)
     a=p.parse_args()
-    print(project_close_record(latest_close(a.log,a.run_id,a.iteration)))
+    if a.replay_ledger:
+        print(replay_closed_records(a.log,a.replay_ledger))
+    else:
+        if not a.run_id or a.iteration is None: p.error('run-id and iteration required for close projection')
+        print(project_close_record(latest_close(a.log,a.run_id,a.iteration)))
 if __name__=='__main__':main()

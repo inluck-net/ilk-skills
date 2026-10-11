@@ -129,3 +129,45 @@ def test_corrupted_persistent_retry_count_is_not_reset_to_zero(tmp_path,monkeypa
     result=subprocess.run(['bash','-c',code,'fixture',str(SCRIPTS/'run_ilk_loop_claude.sh'),str(recovery)],env=env,capture_output=True,text=True,timeout=20)
     assert result.returncode!=0
     assert result.stdout.strip()!='0'
+
+
+def test_next_launch_projects_closed_evidence_once(tmp_path,monkeypatch):
+    import json
+    from iteration_record import replay_closed_records
+    ctx,ledger,close=setup(tmp_path,monkeypatch)
+    log=tmp_path/'loop.jsonl'
+    log.write_text(json.dumps({'record_phase':'open','run_id':'test','iteration':1})+'\n'+json.dumps(close)+'\n{"partial":')
+    assert replay_closed_records(log,ledger)==1
+    assert replay_closed_records(log,ledger)==0
+    assert len(read_raw_records(ledger))==2
+    assert ledger_record_is_reachable(read_records(ledger)[0],Path(ctx['clone']))
+
+
+def test_replay_keeps_open_only_evidence_provisional(tmp_path,monkeypatch):
+    import json
+    from iteration_record import replay_closed_records
+    _,ledger,close=setup(tmp_path,monkeypatch)
+    log=tmp_path/'loop.jsonl';log.write_text(json.dumps(dict(close,record_phase='open'))+'\n')
+    assert replay_closed_records(log,ledger)==0
+    assert read_records(ledger)==[]
+
+
+def test_replay_refuses_foreign_ledger_path(tmp_path,monkeypatch):
+    import json
+    from iteration_record import replay_closed_records
+    _,ledger,close=setup(tmp_path,monkeypatch)
+    close['context']['ledger_path']=str(tmp_path/'foreign.jsonl')
+    log=tmp_path/'loop.jsonl';log.write_text(json.dumps(close)+'\n')
+    with pytest.raises(ValueError,match='ledger'):
+        replay_closed_records(log,ledger)
+    assert read_records(ledger)==[]
+    assert not (tmp_path/'foreign.jsonl').exists()
+
+
+def test_replay_does_not_make_failed_integrity_green(tmp_path,monkeypatch):
+    import json
+    from iteration_record import replay_closed_records
+    ctx,ledger,close=setup(tmp_path,monkeypatch)
+    log=tmp_path/'loop.jsonl';log.write_text(json.dumps(dict(close,stop_reason='ship_integrity_violation'))+'\n')
+    assert replay_closed_records(log,ledger)==1
+    assert not ledger_record_is_reachable(read_records(ledger)[0],Path(ctx['clone']))

@@ -2307,6 +2307,8 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
   $preIterTarget = Get-ActiveSubplanTarget -Project $ProjectPath -LoopStatusScript $LoopStatusScript
   $dispatchContext = Get-WorkerDispatchContext -Project $ProjectPath -Target $preIterTarget
   $iterationContext = New-IterationContext -Project $ProjectPath -Repos $repos -Dispatch $dispatchContext -Run $RunId -Iteration $i -Directory $RunLogDir
+  & python (Join-Path $SkillRoot 'ilk-loop/scripts/iteration_record.py') --log $JsonlLog --replay-ledger $iterationContext.ledger_path | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'close-record recovery failed; refusing worker dispatch' }
   $headsBefore = Get-RepoHeads -Repos $repos
   $iterLog      = Join-Path $RunLogDir ("iter-{0:D2}.log" -f $i)
   $timeoutSec   = $IterationTimeoutMin * 60

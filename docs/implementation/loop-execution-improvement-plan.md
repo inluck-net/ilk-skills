@@ -289,3 +289,13 @@ No completion/ship/proof markers are inferred from this human tracker.
   admission checks: 34 passed in 0.95s. Diff whitespace check passed.
   Updated the old clean-preflight fixture to edit a test, because its previous
   kernel edit is now correctly refused; a new caller test asserts that refusal.
+
+- Interruption recovery increment: `iteration_record.replay_closed_records`
+  projects only pending provisional evidence with an actual matching close,
+  using the current project's resolved ledger path. Missing/partial closes stay
+  provisional; foreign ledger/contradictory identities refuse dispatch. Both
+  runners invoke replay before worker dispatch. Repeated recovery is idempotent
+  and integrity-red closes remain unusable as proof. Focused recovery and real
+  entry checks: 19 passed in 10.21s; Bash and PowerShell syntax and diff checks
+  passed. This covers the close/projection interruption gap, not death before a
+  close record or the full lifecycle registry (D1).
