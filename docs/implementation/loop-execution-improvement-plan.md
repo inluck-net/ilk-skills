@@ -1864,3 +1864,26 @@ anchors at the time of inspection and can move as integration changes code.
   read, and legacy-only migration still works. Legacy PID policy itself is
   unchanged; this does not establish Windows registry/process ownership.
 - Candidate only. No active scheduler or installed pin changed.
+
+### Detached profile transport defect and correction
+
+- While preparing operator instructions, executed the launcher's prior command
+  builder and reproduced missing ILK_WORKER_MODE/ILK_ENABLE_UPGRADE_DRAIN exports.
+  Direct-entry tests inherit environment; a new Terminal need not. Native inputs
+  could otherwise be prepared for an owned profile but launched under legacy
+  authority. No affected production launch was performed.
+- One shared pinned_runner_command now exports explicit mode/drain choices in
+  the generated detached command, clearing ambient choices for default launches.
+  Unsupported modes and legacy drain refuse. Prepared upgrade activation sets
+  the attested code-only/drain profile before command construction. Tool/thinking
+  settings still come from the private frozen input manifest.
+- Actual generated command executed in a clean/poisoned environment: three
+  profiles retain the exact selection and quoted code root; invalid legacy
+  drain emits no command. Eight adjacent profile/preflight checks passed in
+  0.36s; one portable PowerShell check skipped because this invocation did not
+  supply its runtime (earlier actual PowerShell adapter evidence remains).
+- Against prior committed 093d67d6, archived real red→repair and upgrade→relaunch
+  callers passed in 36.28s. An earlier underscore -k selection selected zero
+  cases (15 deselected), so the corrected hyphen selection was run; zero-case
+  invocation was not verification. Recheck these callers after committing
+  the profile transport correction because the archive uses committed HEAD.

@@ -601,6 +601,24 @@ print(sha)' "$inputs/inputs.json"
   fi
 }
 
+pinned_runner_command() {
+  python3 -c 'import shlex,sys
+keys=["CLAUDE_CONFIG_DIR","ILK_SKILL_HOME","ILK_CODE_ROOT","ILK_RUN_INPUTS","ILK_TOOLKIT_SOURCE_ROOT","ILK_SOURCE_HOME","ILK_CLAUDE_BIN"]
+prefix="".join("export "+key+"="+shlex.quote(value)+"; " for key,value in zip(keys,sys.argv[1:8]))
+if sys.argv[8]:prefix+="export ILK_MASTER="+shlex.quote(sys.argv[8])+"; "
+args=["bash",sys.argv[9],"--project-path",sys.argv[10],"--max-iterations",sys.argv[11],"--iteration-timeout-min",sys.argv[12],"--mcp-config-path",sys.argv[13],"--log-dir",sys.argv[14],"--jsonl-log",sys.argv[15]]
+if sys.argv[16]=="true":args.append("--run-local-checks")
+if sys.argv[17]=="true":args.append("--run-batch-gate")
+mode,drain=sys.argv[18:20]
+if mode not in ("", "code-only") or drain not in ("", "0", "1"):
+    raise SystemExit("unsupported detached worker profile")
+if drain=="1" and mode!="code-only":
+    raise SystemExit("upgrade drain requires owned code-only dispatch")
+prefix+="export ILK_WORKER_MODE="+shlex.quote(mode)+"; "
+prefix+="export ILK_ENABLE_UPGRADE_DRAIN="+shlex.quote(drain)+"; "
+print(prefix+shlex.join(args))' "$@"
+}
+
 start_ilk_window() {
   local project_path="$1"
   local project_name="$2"
@@ -821,16 +839,13 @@ start_ilk_window() {
     mcp_config_path="${inputs_dir}/mcp.json"
     local pinned_cli
     pinned_cli=$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(next(r["path"] for r in d["executables"] if r["name"]=="claude"))' "$inputs_dir/inputs.json") || return 1
-    runner_cmd=$(python3 -c 'import shlex,sys
-keys=["CLAUDE_CONFIG_DIR","ILK_SKILL_HOME","ILK_CODE_ROOT","ILK_RUN_INPUTS","ILK_TOOLKIT_SOURCE_ROOT","ILK_SOURCE_HOME","ILK_CLAUDE_BIN"]
-prefix="".join("export "+key+"="+shlex.quote(value)+"; " for key,value in zip(keys,sys.argv[1:8]))
-if sys.argv[8]:prefix+="export ILK_MASTER="+shlex.quote(sys.argv[8])+"; "
-args=["bash",sys.argv[9],"--project-path",sys.argv[10],"--max-iterations",sys.argv[11],"--iteration-timeout-min",sys.argv[12],"--mcp-config-path",sys.argv[13],"--log-dir",sys.argv[14],"--jsonl-log",sys.argv[15]]
-if sys.argv[16]=="true":args.append("--run-local-checks")
-if sys.argv[17]=="true":args.append("--run-batch-gate")
-print(prefix+shlex.join(args))
-' "$private_home" "$pinned_root/skills" "$pinned_root" "$inputs_dir" "$pinned_source_root" "$HOME" "$pinned_cli" \
-  "$master_override" "$loop_script" "$project_path" "$max_iterations" "$timeout_min" "$mcp_config_path" "$per_run_dir" "$jsonl_log" "$run_local_checks" "$run_batch_gate") || return 1
+    local detached_mode="${ILK_WORKER_MODE:-}" detached_drain="${ILK_ENABLE_UPGRADE_DRAIN:-}"
+    if [[ -n "$upgrade_from_run" ]]; then
+      detached_mode=code-only
+      detached_drain=1
+    fi
+    runner_cmd=$(pinned_runner_command "$private_home" "$pinned_root/skills" "$pinned_root" "$inputs_dir" "$pinned_source_root" "$HOME" "$pinned_cli" \
+  "$master_override" "$loop_script" "$project_path" "$max_iterations" "$timeout_min" "$mcp_config_path" "$per_run_dir" "$jsonl_log" "$run_local_checks" "$run_batch_gate" "$detached_mode" "$detached_drain") || return 1
     if [[ -n "$upgrade_from_run" ]]; then
       local quoted_upgrade_run quoted_upgrade_guard
       quoted_upgrade_run=$(python3 -c 'import shlex,sys;print(shlex.quote(sys.argv[1]))' "$upgrade_from_run") || return 1
