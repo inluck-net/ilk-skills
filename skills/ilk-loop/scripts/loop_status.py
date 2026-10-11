@@ -522,7 +522,7 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
     _batch_slug = None
     if _ship_audit_available and plans_dir is not None:
         try:
-            _batch_slug = _ship_audit_mod.resolve_batch_slug_from_master(plans_dir)
+            _batch_slug = _ship_audit_mod.resolve_batch_slug_from_master(plans_dir, master_path=master)
         except Exception:
             _batch_slug = None
 

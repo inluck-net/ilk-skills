@@ -112,7 +112,8 @@ def test_loop_status_uses_the_ledger_like_ship_audit(tmp_path: Path) -> None:
 
     rows = _ledger(tmp_path, [
         {"slug": "shared-remote-work", "step_from": 0, "step_to": 2,
-         "commits": ["a" * 40, "b" * 40], "provenance": "loop-executed"},
+         "commits": _git(repo, 'rev-list', '--reverse', 'HEAD').splitlines(),
+         "provenance": "loop-executed"},
     ])
 
     # ship_audit, given the ledger, proves it.
@@ -155,3 +156,12 @@ def test_ledger_adds_evidence_but_never_invents_it(tmp_path: Path) -> None:
         "a ledger row for another slug must not prove this one; "
         f"reasons={result['reasons']}"
     )
+
+
+def test_counterfeit_commit_ids_cannot_prove_the_matching_slug(tmp_path: Path) -> None:
+    repo = _shared_remote_repo(tmp_path)
+    sp = tmp_path / '2026-09-09-shared-remote-work.md'
+    sp.write_text(SUBPLAN)
+    rows = _ledger(tmp_path, [dict(slug='shared-remote-work', step_from=0,
+        step_to=2, commits=['a'*40, 'b'*40], provenance='loop-executed')])
+    assert _audit(repo, sp, rows)['proven'] is False

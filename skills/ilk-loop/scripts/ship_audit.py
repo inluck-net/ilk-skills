@@ -198,13 +198,22 @@ def _slug_has_any_trailer(slug: str, git_output: str) -> bool:
     ) is not None
 
 
-def resolve_batch_slug_from_master(plans_dir: Path) -> str | None:
+def resolve_batch_slug_from_master(plans_dir: Path, *, master_path: Path | None = None) -> str | None:
     """Derive the batch slug from the active MASTER plan's filename.
 
     The batch slug is ``batch-<master-slug>`` where ``<master-slug>`` is the
     MASTER's ``slug:`` frontmatter field.  Returns None when no active MASTER
-    is found or the slug is missing.
+    is found or the slug is missing. Readers that already selected a master
+    pass its exact path; this must not independently pick another queue item.
     """
+    if master_path is not None:
+        selected = Path(master_path).resolve(strict=True)
+        if selected.parent != plans_dir.resolve() or not selected.name.startswith('MASTER-'):
+            raise ValueError('selected master is outside the plans directory')
+        from plan_status import parse_frontmatter
+        slug = parse_frontmatter(selected.read_text(encoding='utf-8-sig')).get('slug', '').strip()
+        return 'batch-' + slug if slug else None
+
     masters = sorted(plans_dir.glob("MASTER-*.md"))
     if not masters:
         return None

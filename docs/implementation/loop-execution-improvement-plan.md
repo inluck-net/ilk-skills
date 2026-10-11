@@ -23,7 +23,7 @@ request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: close remaining legacy reader/recovery/parity requirements
-and delivery documentation in this isolated worktree. Toolkit preview 02bcfa7f
+and delivery documentation in this isolated worktree. Toolkit preview e434e346
 and consumer compatibility 2cb713ae are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -2412,3 +2412,44 @@ anchors at the time of inspection and can move as integration changes code.
   23 passed/7 deselected in 6.71s; shell syntax and diff checks passed.
   Source candidate only; installed current pointer remains 02bcfa7f. Windows/member/timeout adapters
   remain open and are not marked complete by this reader migration.
+
+
+### Result migration installed; rezmac prepared separately
+
+- Local immutable e434e346 activated at another freshly verified sleep-only
+  boundary. Controller 94556, private 4de1eb06 pin, pause and all 1,891
+  protected hashes stayed unchanged; idle scheduler restored. Evidence:
+  toolkit-delivery-preview-20261012f/installed.json. No public release/push.
+- Prepared independent rezmac owner repositories from private Git bundles;
+  existing toolkit 3e935f4f and consumer 8d079263 are ancestors of candidates
+  e434e346 / 2cb713ae. No shared clone or installed-pointer replacement.
+- Rezmac isolated candidates: 28 toolkit deadline/selector/result checks
+  passed in 1.44s; 28 consumer pin/drain checks passed in 0.44s. No agent model
+  dispatched. These scoped results do not establish unselected suite results.
+  Preview release is extracted read-only but .ilk/current remains v0.9.193.
+- Reaper is active with a Python/gh child. Read-only log/ps measurement shows
+  GitHub network timeouts, 32/115 stranded terminal claims, and launcher-unknown
+  refusals. A legacy busy scan returning [] is not complete host ownership
+  proof and does not authorize interrupting that work. Leave the reaper/host
+  inputs unchanged until a freshly observed safe boundary. Evidence lives in
+  analysis/design-revision-20261011/rezmac-preview-20261012 on both hosts.
+
+### Status proof selects the already chosen master
+
+- Actual fixture with active alpha (unfinished sibling) and priority-100
+  queued beta displayed alpha but sent batch-beta to its proof reader:
+  1 failed in 0.04s. Initial fixture had alpha fully shipped and correctly
+  selected beta; corrected the fixture rather than rejecting queue behavior.
+- loop_status now passes its already selected master to the existing
+  ship_audit batch resolver. The explicit-path branch reads only that master
+  and refuses a foreign plans directory; legacy independent calls retain their
+  historical resolver. No gate outcome/count is carried or reused.
+- An adjacent ledger fixture failed its own proof precondition on both the
+  candidate and committed predecessor (old modules loaded from e434e346:
+  1 failed/1 deselected in 0.19s). It used invented a*/b* commit IDs absent
+  from its Git fixture. Replaced the positive data with actual reachable
+  commits and retained a separate counterfeit same-slug negative. Audit
+  reachability was not weakened.
+- Status/ledger/record-identity callers: 32 passed in 0.54s. Local Python/Git
+  fixtures dispatch no agent/model; no routine suite or verifier was run.
+  Candidate only; installed local e434e346 and remote v0.9.193 remain separate.
