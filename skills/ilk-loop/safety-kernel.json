@@ -327,7 +327,8 @@
     },
     {
       "path": "skills/ilk-loop/scripts/ilk_run_lock.py",
-      "group": "ownership"
+      "group": "ownership",
+      "why": "Serializes authoritative loop ownership and excludes concurrent state writers."
     }
   ],
   "kernel_basenames": [

@@ -165,6 +165,9 @@ No completion/ship/proof markers are inferred from this human tracker.
   (1 failed, 26 passed in 6.61s); corrected run 27 passed in 6.01s.
   Normal Bash entry is wired; archived selfmod caller pending this checkpoint.
   Historical unmerged bases and member/dirty-entry adapters remain unsupported.
+  Archived selfmod entry caught a pre-existing candidate kernel entry missing
+  its required why field (1 failed in 2.26s, before provider dispatch). Corrected
+  metadata is pending caller recheck; refusal was truthful, not a green result.
 - `274668ea` archived ordinary entry passed 1 in 6.72s. Consumer task profiles
   and report-v5 execution-root normalization are recorded in
   docs/verification/consumer-step-profile-baseline-2026-10-11.md and CSV.
