@@ -379,3 +379,13 @@ No completion/ship/proof markers are inferred from this human tracker.
   correcting a new held-ship fixture's positional arguments). Corrected API/
   held-ship check: 12 passed in 0.20s; HEAD and ship intent unchanged on hold.
   No ownership-completion or activated-driver-only-gates claim.
+
+- Write-scope observation candidate: `hooks/worker-write-scope.py` classifies
+  native targets against frozen worktree/plans/data/runtime/Git metadata and
+  resolves symlink escapes. Private diagnostic JSONL records only categories
+  and command/target hashes. Report-only is default; optional native denial is
+  tested but not registered/enabled in production. Shell hints explicitly do
+  not prove containment: arbitrary Bash remains unclassified. Full C2 needs
+  the stronger shell boundary and consumer report-first validation before
+  claiming/enabling enforcement. Scope/API checks: 22 passed in 0.42s, including
+  actual hook CLI observe/deny and no target mutation. Hook is kernel-protected.
