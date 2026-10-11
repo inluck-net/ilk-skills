@@ -29,6 +29,11 @@
       "path": "skills/ilk-loop/scripts/worker_broker.py",
       "guard": "owner",
       "why": "driver-owned scoped shell execution and cleanup authority"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/driver_step.py",
+      "guard": "owner",
+      "why": "driver gate, accepted commit and pointer authority"
     }
   ],
   "kernel": [

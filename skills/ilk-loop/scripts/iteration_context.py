@@ -80,6 +80,7 @@ def plan_snapshot(path: Path) -> dict:
     immutable=surface(text,master=path.name.startswith('MASTER-'))
     return dict(path=str(path),slug=strip_date_prefix(path.stem),
                 status=fm.get('status'),step=fm.get('current_step'),repo=fm.get('repo'),estimated_steps=fm.get('estimated_steps'),
+                owned_state={key:fm.get(key) for key in ('status','hold','yield','parked_at','parked_reason')},
                 fingerprint=hashlib.sha256(immutable.encode()).hexdigest())
 
 
@@ -172,6 +173,7 @@ def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
                 toolkit_sha=git_value(Path(code_root),'HEAD'),
                 base_commit=git_value(Path(exec_tree),'HEAD'),
                 base_tree=git_value(Path(exec_tree),'HEAD^{tree}'),
+                entry_dirty=bool(subprocess.check_output(['git','-C',exec_tree,'status','--porcelain'],text=True)) if git_value(Path(exec_tree),'HEAD') else None,
                 dispatch=dispatch or None, plans=snapshots, master_snapshot=master_snapshot,
                 kernel_list=kernel_list)
 

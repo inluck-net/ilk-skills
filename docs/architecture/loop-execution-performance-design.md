@@ -493,3 +493,12 @@ CLAUDE_TMPDIR pinned to private temp. Kernel list is frozen in context;
 OS denial includes listed paths, basename creation and ancestor renames.
 Broker cleanup handles idle connections and background descendants, but the
 shared lifecycle registry is not built. Driver-controller wiring remains new.
+
+The owner candidate now contains `driver_step.py:1`: alternate-index tree
+capture, driver gates, driver commit and one-step CAS advancement. It checks
+that gates did not mutate the shipping tree; changed commit-hook output needs
+another measured gate, while an unchanged commit does not repeat identical
+gates. `plan_state.transition` has same-journal master guards checked under
+lock. Caller integration, member-repo/baseline-red adapters, finding import,
+bounded commit hooks and close/ship projection remain new/unbuilt prerequisites;
+existing worker-runs-gates instructions still apply to the installed runner.

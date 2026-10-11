@@ -65,7 +65,7 @@ def _recover(log,path,content):
         _append(log,dict(row,phase=phase))
 
 
-def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str) -> bool:
+def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, guards=None) -> bool:
     """Change only requested scalar state fields if every expected value matches.
 
     Human holds cannot be lifted or progressed by driver calls. The worker
@@ -76,6 +76,9 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str) ->
     if not actor or not reason or not from_ or not to:
         raise TransitionError('expected state, requested state, actor and reason required')
     path=Path(path).resolve(strict=True)
+    guards={Path(guard).resolve(strict=True):expected for guard,expected in (guards or {}).items()}
+    if any(guard.parent!=path.parent for guard in guards):
+        raise TransitionError('guard must share the state journal directory')
     from iteration_context import read_context
     context=read_context()
     if context:
@@ -83,6 +86,7 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str) ->
         master=(context.get('dispatch') or {}).get('master_path')
         if master: allowed.add(Path(master).resolve())
         if path not in allowed: raise TransitionError('plan is outside frozen registry')
+        if not set(guards)<=allowed:raise TransitionError('guard is outside frozen registry')
     allowed_fields={'status','current_step','parked_at','parked_reason','pre_park_status','yield','last_updated'}
     if not set(to)<=allowed_fields or not set(from_)<=allowed_fields:
         raise TransitionError('transition cannot edit plan contract fields')
@@ -91,6 +95,13 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str) ->
             raise TransitionError('state values must be single-line scalars')
     log=path.parent/'state-transitions.jsonl'
     with _lock(path.parent/'.state-transitions.lock'):
+        for guard,expected in guards.items():
+            raw=guard.read_bytes();_recover(log,guard,raw)
+            observed=parse_frontmatter(raw.decode('utf-8-sig'))
+            if any(observed.get(key)!=str(value) if value is not None else key in observed for key,value in expected.items()):
+                raise TransitionError('guard state changed since dispatch')
+            if (observed.get('status') in {'draft','parked','blocked'} or observed.get('hold')=='human') and actor!='human':
+                raise TransitionError('human hold on guard cannot be progressed')
         content=path.read_bytes();_recover(log,path,content)
         text=content.decode('utf-8-sig');state=parse_frontmatter(text)
         if any(state.get(key)!=str(value) if value is not None else key in state for key,value in from_.items()):

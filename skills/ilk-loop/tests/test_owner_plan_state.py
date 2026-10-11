@@ -38,6 +38,19 @@ def test_worker_cannot_spoof_human_actor(tmp_path,monkeypatch):
         transition(path,{'current_step':0},{'current_step':1},actor='human',reason='spoof')
 
 
+def test_guarded_master_hold_and_changed_status_refuse_step_advance(tmp_path,monkeypatch):
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    path=plan(tmp_path);master=tmp_path/'MASTER-fixture.md'
+    master.write_text('---\nstatus: active\n---\n')
+    expected={'status':'active','hold':None}
+    master.write_text('---\nstatus: blocked\nhold: human\n---\n')
+    with pytest.raises(TransitionError,match='guard state changed'):
+        transition(path,{'current_step':0},{'current_step':1},actor='driver',reason='gate green',guards={master:expected})
+    with pytest.raises(TransitionError,match='human hold on guard'):
+        transition(path,{'current_step':0},{'current_step':1},actor='driver',reason='gate green',guards={master:{'status':'blocked','hold':'human'}})
+    assert 'current_step: 0' in path.read_text()
+
+
 @pytest.mark.parametrize('applied',[False,True])
 def test_interrupted_intent_is_explained_without_fabrication(tmp_path,monkeypatch,applied):
     monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)

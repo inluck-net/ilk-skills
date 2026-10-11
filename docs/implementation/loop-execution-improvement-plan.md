@@ -483,3 +483,18 @@ No completion/ship/proof markers are inferred from this human tracker.
   relative sibling path under wrong cwd; corrected to absolute target. No
   production activation. Short background fixture delay/bound is a judgment
   (0.2s child delay, 0.4s observation); a slow valid host falsifies that check.
+
+- C3 acceptance candidate: `driver_step.accept_step` captures a working-tree
+  object via an alternate index, runs declared plus canonical mention gates,
+  retains full attempts/output, refuses malformed/absent/mutating gates, then
+  driver-commits and CAS-advances exactly one step. An unchanged shipping tree
+  uses the measured attempt once; commit-hook tree mutation requires a new
+  gate. Red leaves pointer unchanged even if an owner hook created an unaccepted
+  commit. Kernel changes and dirty Git state refuse; worker cannot call API.
+  Frozen master state guards are checked under the shared state lock so a hold
+  cannot race step advancement. Driver/CAS/context checks: 29 passed in 3.13s.
+  This API is not runner-wired. Clean entry is required; member-repo dispatch,
+  baseline-red attribution, driver finding import, bounded commit hooks,
+  provisional proof/ship integration and accepted-tree attempt projection are
+  still open. Do not enable code-only prompts globally until those callers
+  are complete. No I3/I5/production-completion claim.
