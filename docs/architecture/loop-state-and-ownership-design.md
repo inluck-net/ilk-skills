@@ -319,3 +319,30 @@ the implementation):
      28d-1 by D4;
    - **folded in:** 28d-4 into D2;
    - **superseded:** 28c-0 by the D1 selfmod state machine.
+
+
+### 2026-10-11 owner candidate: exact selfmod landing and recovery
+
+New candidate mechanism `selfmod_landing.py:39` supports a clean source clone
+whose frozen base equals the execution base. It independently validates the
+accepted receipt, exact commit chain/tree, source branch/base, shared Git store
+and host registry before a bounded fast-forward. It retains the worktree through
+close. Historical unmerged bases, moved/dirty source inputs and unsupported
+platforms refuse; no generic WIP merge or daemon restart is implied.
+
+`selfmod_state.py:41` now distinguishes a retained landed worktree from a newly
+created one at the same path and commit using its Git-indirection identity.
+Uncommitted work returns to ISOLATED; only the exact clean landing can establish
+MERGED. New optional deadline/guard handling in `plan_state.py:25` bounds owned
+state-lock readiness. Existing registry locking retains its prior contract.
+State Git queries use bounded children; `acceptance_recovery.py:65` retains the
+recovery caller's supplied deadline across the original-context transaction.
+This does not grant another worker turn or provider budget. The 20ms readiness
+interval is a responsiveness judgment shared with owned cleanup; sustained CPU
+or delayed valid release would falsify it.
+
+Evidence: archived Mac normal selfmod and zero-provider recovery callers passed
+2 in 16.76s before the latest state-deadline increment. The state/recovery/driver
+checks passed 40 in 15.95s; retained dirty-work and lock-deadline checks then
+passed 8 in 4.35s. The latest archived caller recheck is pending. These are
+candidate results, not installed-host or all-platform completion.

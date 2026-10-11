@@ -48,6 +48,8 @@ def test_pending_selfmod_acceptance_lands_and_closes_without_new_gate(tmp_path,m
     assert reconcile(clone,root,state)['state']=='MERGED'
 
     assert recover_pending(runtime=Path(context['runtime_dir']),project=clone,log=log,deadline=monotonic()+10)==[]
+    (root/'counter.py').write_text('uncommitted next work\n')
+    assert reconcile(clone,root,state)['state']=='ISOLATED'
 
 
 @pytest.mark.parametrize('changed',['dirty-clone','moved-clone','branch','historical-base','receipt','tree'])
@@ -63,3 +65,29 @@ def test_changed_selfmod_landing_inputs_never_merge(tmp_path,monkeypatch,changed
     with pytest.raises(ContextError):land(context,accepted,deadline=monotonic()+10)
     assert driver_step.git(clone,'rev-parse','HEAD')==before
     assert 'status: shipped' not in plan.read_text()
+
+
+def test_selfmod_state_lock_obeys_existing_deadline_and_keeps_prior_bytes(tmp_path,monkeypatch):
+    import fcntl,threading
+    from selfmod_state import reconcile
+    from plan_state import TransitionError
+    context,root,clone,plan,accepted=fixture(tmp_path,monkeypatch)
+    state=Path(context['runtime_dir'])/'launcher/selfmod-state.json'
+    reconcile(clone,root,state);before=state.read_bytes()
+    ready=threading.Event();release=threading.Event()
+    def holder():
+        with state.with_name(state.name+'.lock').open('a+b') as stream:
+            fcntl.flock(stream.fileno(),fcntl.LOCK_EX);ready.set();release.wait()
+            fcntl.flock(stream.fileno(),fcntl.LOCK_UN)
+    thread=threading.Thread(target=holder);thread.start()
+    # 2s startup and 0.1s lock cap are fixture judgments for local readiness,
+    # not production timeout defaults. A slow valid host falsifies these.
+    token=driver_step._deadline.set(monotonic()+.1)
+    try:
+        assert ready.wait(2)
+        with pytest.raises(TransitionError,match='existing iteration deadline'):
+            reconcile(clone,root,state)
+        assert state.read_bytes()==before
+    finally:
+        driver_step._deadline.reset(token);release.set();thread.join(2)
+    assert not thread.is_alive()

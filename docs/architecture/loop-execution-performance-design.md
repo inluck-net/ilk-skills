@@ -599,3 +599,22 @@ Shell-only remains default. Native tools do not gain plan/data/proof/Git/kernel
 write authority, commit or shipping authority. Native entry checks pass ordinary
 code edits while refusing plan/Git writes; actual consumer feasibility and
 controlled speed/quality comparison remain required before selecting a default.
+
+
+### Strict selected-gate coverage (owner candidate)
+
+New candidate behavior in `driver_step.py:88` allows existing suite baseline-red
+declarations while granting no waiver: every selected subplan, step and mention
+gate must pass on its raw exit. Attempts record this policy and the declarations
+as diagnostics. This requires no full-suite baseline measurement. Baseline-red
+exception attribution remains unbuilt and cannot establish acceptance.
+
+`run_local_checks.build_mention_gate_inventory` adds an opt-in complete-inventory
+mode for this driver. It subtracts declared full-file coverage and refuses
+uncovered inventory beyond the existing 20-file cap, rather than dropping those
+gates and claiming green. Legacy callers retain their existing warning/skip
+behavior. The cap remains an existing scope judgment; valid focused coverage
+larger than it would falsify the threshold. Refusal does not trigger a suite or
+increase the cap. Regression evidence: 21 related files reproduced acceptance
+after an empty skipped inventory (negative check failed in 0.49s); corrected
+strict/legacy cap and baseline-policy checks passed 5 in 1.26s.

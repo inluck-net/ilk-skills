@@ -106,7 +106,8 @@ def gate(context,root,path,selected,*,default_timeout):
     tree=working_tree(root);sub,step=gate_contract(root,path,selected)
     changed=git(root,'diff','--name-only',context['base_commit'],tree).splitlines()
     commands={item.get('command','') for item in sub+step}
-    mention=build_mention_gate_inventory(root,changed,commands)
+    try:mention=build_mention_gate_inventory(root,changed,commands,require_complete=True)
+    except ValueError as error:raise ContextError(str(error)) from error
     identifier=uuid.uuid4().hex
     directory=Path(context['runtime_dir'])/'launcher/driver-step'/identifier
     directory.mkdir(parents=True,exist_ok=False)

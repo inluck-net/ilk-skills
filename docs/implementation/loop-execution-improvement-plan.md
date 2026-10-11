@@ -155,13 +155,31 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- Selfmod state Git queries and lock readiness now use the existing owned
+  deadline, fresh driver checks and bounded registered children. The generic
+  lock adds optional deadline/guard arguments; owned transitions/audits also
+  use them. Recovery retains its supplied caller deadline throughout original
+  context, Git and state operations; no new provider budget. Registry callers retain
+  their prior contract. Focused state/selfmod/registry checks: 43 passed in 6.44s.
+  Extended state/recovery/driver checks: 40 passed in 15.95s; subsequent dirty
+  retained-worktree and lock-deadline checks: 8 passed in 4.35s.
+  Latest archived caller pending this checkpoint.
+- Strict driver acceptance reproduced a skipped-mention false green: 21 related
+  files exceeded the existing 20-file cap, inventory returned empty, and step
+  accepted (negative regression failed in 0.49s). New complete-inventory mode
+  subtracts already declared full-file coverage and refuses remaining over-cap
+  scope; no larger suite or cap increase. Legacy inventory callers retain
+  existing behavior. Corrected strict/legacy cap and baseline-policy checks
+  passed 5 in 1.26s. Latest archived caller pending.
+
 - `b580f423` strict baseline-presence driver checks passed 8 in 4.87s.
   Archived selfmod recovery passed with zero provider dispatches; normal entry
   accepted and exactly landed but ended max-iterations because terminal status
   still used the worktree project key (1 failed, 1 passed in 16.49s). Retained
   fixture output independently confirmed landing and shipped plan. Normal
   landing now restores source PROJECT_PATH for terminal selection while frozen
-  execution observations remain available through close. Caller recheck pending.
+  execution observations remain available through close. Archived normal and
+  zero-provider recovered selfmod callers passed 2 in 16.76s at `6b415fba`.
 
 - Fresh-base selfmod landing/recovery candidate: exact accepted receipt and
   transaction, clean frozen source branch/base, registered Git children and

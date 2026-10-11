@@ -9,8 +9,32 @@ import subprocess
 import tempfile
 
 
+def _git(root,*args):
+    from iteration_context import read_context
+    from run_registry import require_driver
+    from driver_step import _deadline
+    from iteration_clock import monotonic
+    context=read_context();require_driver(context)
+    deadline=_deadline.get() or (context or {}).get('iteration_deadline_monotonic')
+    if deadline is None:
+        return subprocess.run(['git','-C',str(root),*args],capture_output=True,text=True)
+    from bounded_run import run
+    from iteration_context import ContextError
+    remaining=deadline-monotonic()
+    if remaining<=0:raise ContextError('selfmod state reached existing iteration deadline')
+    code,out,err,timed_out=run(['git','-C',str(root),*args],cwd=root,timeout=remaining)
+    if timed_out:raise ContextError('selfmod state Git reached existing iteration deadline')
+    return subprocess.CompletedProcess(args,code,out,err)
+
+
+def _value(root,*args):
+    result=_git(root,*args)
+    if result.returncode:raise ValueError('cannot verify selfmod Git identity: '+result.stderr[-1000:])
+    return result.stdout.strip()
+
+
 def common_dir(root: Path) -> Path:
-    value=subprocess.check_output(['git','-C',str(root),'rev-parse','--git-common-dir'],text=True,stderr=subprocess.DEVNULL).strip()
+    value=_value(root,'rev-parse','--git-common-dir')
     return (root/value).resolve()
 
 
@@ -18,9 +42,11 @@ def reconcile(clone: Path, worktree: Path, state_file: Path, *, landed_head=None
     from iteration_context import read_context
     from run_registry import require_driver
     from plan_state import _lock
-    require_driver(read_context())
+    context=read_context();require_driver(context)
+    from driver_step import _deadline
+    deadline=_deadline.get() or (context or {}).get('iteration_deadline_monotonic')
     state_file.parent.mkdir(parents=True,exist_ok=True)
-    with _lock(state_file.with_name(state_file.name+'.lock')):
+    with _lock(state_file.with_name(state_file.name+'.lock'),deadline=deadline,guard=lambda:require_driver(context)):
         return _reconcile(clone,worktree,state_file,landed_head=landed_head)
 
 
@@ -49,15 +75,16 @@ def _reconcile(clone: Path, worktree: Path, state_file: Path, *, landed_head=Non
         if worktree==clone or common_dir(worktree)!=common_dir(clone):
             raise ValueError('selfmod worktree does not belong to the clone')
         state='MERGE_DEFERRED' if (worktree/'.ilk-merge-deferred').exists() else 'ISOLATED'
-        worktree_head=subprocess.check_output(['git','-C',str(worktree),'rev-parse','HEAD'],text=True).strip()
+        worktree_head=_value(worktree,'rev-parse','HEAD')
+        dirty=bool(_value(worktree,'status','--porcelain'))
         if landed_head is not None:
-            clone_head=subprocess.check_output(['git','-C',str(clone),'rev-parse','HEAD'],text=True).strip()
-            if landed_head!=worktree_head or landed_head!=clone_head:
+            clone_head=_value(clone,'rev-parse','HEAD')
+            if landed_head!=worktree_head or landed_head!=clone_head or dirty or _value(clone,'status','--porcelain'):
                 raise ValueError('landed state differs from exact clone/worktree commit')
             state='MERGED'
         elif (previous['state']=='MERGED' and previous.get('worktree_head')==worktree_head
-              and previous.get('worktree_identity')==worktree_identity):
-            proof=subprocess.run(['git','-C',str(clone),'merge-base','--is-ancestor',worktree_head,'HEAD'],capture_output=True)
+              and previous.get('worktree_identity')==worktree_identity and not dirty):
+            proof=_git(clone,'merge-base','--is-ancestor',worktree_head,'HEAD')
             if proof.returncode==0:state='MERGED'
             elif proof.returncode!=1:raise ValueError('cannot verify retained landed worktree state')
 
@@ -67,7 +94,7 @@ def _reconcile(clone: Path, worktree: Path, state_file: Path, *, landed_head=Non
         if previous['state']!='NONE':
             if not worktree_head:
                 raise ValueError('removed isolation has no persisted commit identity')
-            proof=subprocess.run(['git','-C',str(clone),'merge-base','--is-ancestor',worktree_head,'HEAD'],capture_output=True)
+            proof=_git(clone,'merge-base','--is-ancestor',worktree_head,'HEAD')
             if proof.returncode:
                 raise ValueError('isolated worktree disappeared before its commits landed')
             state='MERGED'

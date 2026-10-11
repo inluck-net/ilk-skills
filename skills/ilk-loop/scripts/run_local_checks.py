@@ -1377,6 +1377,7 @@ def build_mention_gate_inventory(
     changed_files: list[str],
     existing_commands: set[str],
     baseline_red: list[dict] | None = None,
+    *, require_complete: bool = False,
 ) -> list[dict]:
     """Canonical mention-gate inventory (AC-3).
 
@@ -1448,7 +1449,7 @@ def build_mention_gate_inventory(
     # cap the gate is skipped with an explicit warning.  Partitions are never
     # dropped to squeeze a set under the cap: a larger reference set must not
     # execute fewer tests.
-    if len(test_files) > _MENTION_GATE_CAP:
+    if len(test_files) > _MENTION_GATE_CAP and not require_complete:
         print(
             f"WARN mention-gate: {len(test_files)} files cite "
             f"{changed_files[0]}:<line> — over cap, not gated",
@@ -1467,6 +1468,12 @@ def build_mention_gate_inventory(
         if parseable:
             covered |= whole
     new_test_files = [tf for tf in test_files if not _covered_by(tf, covered)]
+
+    if require_complete and len(new_test_files)>_MENTION_GATE_CAP:
+        # Existing 20-file cap remains a scope judgment, not permission to
+        # accept skipped coverage. Valid focused scopes larger than it would
+        # falsify that cap; do not silently expand into a routine suite.
+        raise ValueError(f'mention inventory exceeds existing cap: {len(new_test_files)} uncovered files')
 
     if not new_test_files:
         return []

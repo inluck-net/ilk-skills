@@ -62,13 +62,17 @@ def _complete_original_master(context,root,ledger):
 
 
 @contextmanager
-def original_context(path):
+def original_context(path, *, deadline=None):
     keys=('ILK_ITER_CONTEXT','ILK_ITER_RECORD_STAGE','ILK_WORKER_SESSION','ILK_ITERATION_SUBPLAN')
     saved={key:os.environ.get(key) for key in keys}
     os.environ.update(ILK_ITER_CONTEXT=str(path),ILK_ITER_RECORD_STAGE='driver-check')
     os.environ.pop('ILK_WORKER_SESSION',None);os.environ.pop('ILK_ITERATION_SUBPLAN',None)
+    import driver_step
+    token=driver_step._deadline.set(deadline)
+    owner_token=driver_step._operation_context.set(read_context(path))
     try:yield
     finally:
+        driver_step._operation_context.reset(owner_token);driver_step._deadline.reset(token)
         for key,value in saved.items():
             if value is None:os.environ.pop(key,None)
             else:os.environ[key]=value
@@ -116,7 +120,7 @@ def _recover_pending(*,runtime,project,log,deadline):
     if len(pending)>1:raise ContextError('multiple pending accepted transactions; refusing ambiguous recovery')
     completed=[]
     for context,path in pending:
-        with original_context(path):
+        with original_context(path,deadline=deadline):
             accepted=recover_acceptance(context,deadline=deadline)
             if not accepted:raise ContextError('pending acceptance disappeared')
             accepted.update(run_id=context['run_id'],iteration=context['iteration'],worker_turns=[])

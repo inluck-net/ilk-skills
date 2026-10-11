@@ -22,20 +22,53 @@ class TransitionError(RuntimeError):
 
 
 @contextmanager
-def _lock(path):
+def _lock(path, *, deadline=None, guard=None):
+    if guard:guard()
     with path.open('a+b') as stream:
-        if os.name=='nt':
+        if deadline is not None or guard is not None:
+            import threading
+            from iteration_clock import monotonic
+            while True:
+                if guard:guard()
+                if deadline is not None and monotonic()>=deadline:
+                    raise TransitionError('state lock reached existing iteration deadline')
+                try:
+                    if os.name=='nt':
+                        import msvcrt
+                        if path.stat().st_size==0:stream.write(b'0');stream.flush()
+                        stream.seek(0);msvcrt.locking(stream.fileno(),msvcrt.LK_NBLCK,1)
+                    else:
+                        import fcntl
+                        fcntl.flock(stream.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+                    break
+                except OSError as error:
+                    import errno
+                    if error.errno not in (errno.EACCES,errno.EAGAIN):raise
+                    # 20ms readiness judgment matches owned child cleanup;
+                    # sustained CPU or slow valid release falsifies it.
+                    threading.Event().wait(.02 if deadline is None else min(.02,max(deadline-monotonic(),0)))
+        elif os.name=='nt':
             import msvcrt
             if path.stat().st_size==0: stream.write(b'0');stream.flush()
             stream.seek(0);msvcrt.locking(stream.fileno(),msvcrt.LK_LOCK,1)
         else:
             import fcntl
             fcntl.flock(stream.fileno(),fcntl.LOCK_EX)
-        try: yield
+        try:
+            if guard:guard()
+            yield
         finally:
             if os.name=='nt':
                 stream.seek(0);msvcrt.locking(stream.fileno(),msvcrt.LK_UNLCK,1)
             else: fcntl.flock(stream.fileno(),fcntl.LOCK_UN)
+
+
+def _driver_lock_options(context):
+    if not context or context.get('worker_sandbox_adapter')!='macos-brokered-shell':return {}
+    from driver_step import _deadline
+    from run_registry import require_driver
+    deadline=_deadline.get() or context.get('iteration_deadline_monotonic')
+    return dict(deadline=deadline,guard=lambda:require_driver(context))
 
 
 def _digest(content):
@@ -54,7 +87,7 @@ def audit_context(context):
     if not isinstance(cursor,dict):raise TransitionError('state journal cursor absent')
     snapshots=list(context.get('plans',{}).values())
     if context.get('master_snapshot'):snapshots.append(context['master_snapshot'])
-    with _lock(plans/'.state-transitions.lock'):
+    with _lock(plans/'.state-transitions.lock',**_driver_lock_options(context)):
         log=plans/'state-transitions.jsonl';raw=log.read_bytes() if log.exists() else b''
         length=cursor.get('bytes')
         if isinstance(length,bool) or not isinstance(length,int) or length<0 or length>len(raw) or _digest(raw[:length])!=cursor.get('sha256'):
@@ -157,7 +190,7 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
         if value is not None and (not isinstance(value,(str,int)) or isinstance(value,bool) or '\n' in str(value) or '\r' in str(value)):
             raise TransitionError('state values must be single-line scalars')
     log=path.parent/'state-transitions.jsonl'
-    with _lock(path.parent/'.state-transitions.lock'):
+    with _lock(path.parent/'.state-transitions.lock',**(_driver_lock_options(context) if actor!='human' else {})):
         if context and actor!='human' and context.get('worker_sandbox_adapter')=='macos-brokered-shell':
             require_driver(context)
         for guard,expected in guards.items():
