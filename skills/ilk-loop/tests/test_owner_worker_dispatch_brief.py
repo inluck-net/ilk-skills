@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import pytest
 from pathlib import Path
 
 ROOT = Path(__file__).parents[3]
@@ -100,23 +101,28 @@ def test_actual_summary_adds_cost_without_changing_red_authority(tmp_path):
     stream = {'type':'system','subtype':'init','model':'actual-model','session_id':'s'}
     Path(str(log)+'.jsonl').write_text(json.dumps(stream)+'\n')
     out = tmp_path / 'summary.jsonl'
+    context = tmp_path / 'ctx-1.json'
+    context.write_text(json.dumps({'exec_tree':'/tmp/project','iteration':1}))
     script = '''
 main() {
 local PROJECT_PATH=/tmp/project MODEL=configured-model MAX_BUDGET_USD=0 RUN_ID=fixture
-local i=1 iter_dur_sec=7 ITER_EXIT_CODE=0 total_new=1 iter_stop_reason=local_checks_failed
+local i=1 iter_start=$(date +%s) iter_dur_sec=7 ITER_EXIT_CODE=0 total_new=1 iter_stop_reason=local_checks_failed _iteration_merge_outcome=blocked
 local new_commits_json='{}' local_checks_json='[{"outcome":"failed"}]' _SHIP_GAP_JSON=''
 local wip_preserved=0 iter_tool_calls=0 iter_test_invocations=0 _amend_flag=/nonexistent
 ''' + source[start:end] + '\n}\nmain\n'
     env = dict(os.environ, HOME=str(tmp_path), ILK_DATA_HOME=str(tmp_path/'data'),
                ILK_DATA_DIR=str(tmp_path/'data'), iter_log=str(log),JSONL_LOG=str(out),
-               _SKILL_ROOT=str(ROOT/'skills'))
+               _SKILL_ROOT=str(ROOT/'skills'), ILK_ITER_CONTEXT=str(context))
     cp = subprocess.run(['bash','-c',script],env=env,capture_output=True,text=True,timeout=20)
     assert cp.returncode == 0, cp.stderr
     record = json.loads(out.read_text())
+    assert record['context']['exec_tree'] == '/tmp/project'
     assert record['model'] == 'configured-model'
     assert record['worker_cost_observation']['models_actual_init'] == ['actual-model']
     assert record['worker_cost_observation']['worker_elapsed_seconds'] is None
     assert record['duration_sec'] == 7
+    assert record['record_phase'] == 'close'
+    assert record['merge_outcome'] == 'blocked'
     assert record['stop_reason'] == 'local_checks_failed'
     assert record['local_checks'] == [{'outcome':'failed'}]
 
@@ -139,7 +145,8 @@ def test_red_notice_contains_stdout_evidence(tmp_path):
     assert 'stderr: diagnostic' in notice.read_text()
 
 
-def test_detached_entry_delivers_brief_to_stub_cli(tmp_path):
+@pytest.mark.parametrize("tamper_gate", [False, True])
+def test_detached_entry_delivers_brief_to_stub_cli(tmp_path, tamper_gate):
     import shutil
     import sys
     skills = tmp_path/'skills'
@@ -192,6 +199,8 @@ from pathlib import Path
 if '-p' not in sys.argv:
  print('fixture-cli');sys.exit(0)
 Path(os.environ['CAPTURE']).write_text(sys.argv[-1])
+if os.environ.get('TAMPER_GATE') == '1':
+ p=Path(os.environ['SELECTED_PLAN']);p.write_text(p.read_text().replace('printf green','printf invented-green'))
 print(json.dumps({'type':'system','subtype':'init','model':'stub-model','session_id':'stub-session'}))
 print(json.dumps({'type':'result','subtype':'success','duration_ms':1,'duration_api_ms':1,'result':'fixture complete'}))
 ''')
@@ -202,6 +211,7 @@ print(json.dumps({'type':'result','subtype':'success','duration_ms':1,'duration_
     env.update(HOME=str(home),ILK_DATA_HOME=str(data),ILK_DATA_DIR=str(data),
                ILK_SKILL_HOME=str(skills),ILK_MASTER=master.name,
                CLAUDE_CONFIG_DIR=str(home/'.claude'),CAPTURE=str(capture),
+               SELECTED_PLAN=str(selected),TAMPER_GATE='1' if tamper_gate else '0',
                PATH=str(bin_dir)+os.pathsep+os.environ['PATH'])
     for name in ['BASH_ENV','ILK_WORKER_SESSION','ILK_RUN_LOCK_HELD']:
         env.pop(name,None)
@@ -222,6 +232,28 @@ print(json.dumps({'type':'result','subtype':'success','duration_ms':1,'duration_
     measured = [r for r in records if 'worker_cost_observation' in r]
     assert measured, cp.stdout[-2500:]+cp.stderr[-2500:]
     assert measured[0]['worker_cost_observation']['models_actual_init'] == ['stub-model']
+    assert measured[0]['record_phase'] == 'close'
+    if tamper_gate:
+        assert measured[0]['stop_reason'] == 'ship_integrity_violation'
+        assert 'invented-green' not in selected.read_text()
     assert measured[0]['dispatch']['subplan_path'] == str(selected)
     assert measured[0]['dispatch']['master_path'] == str(master)
+    assert measured[0]['context']['exec_tree'] == str(project)
+    assert measured[0]['context']['base_commit'] == base
+    assert measured[0]['context']['runtime_dir'] == str(plans.parent/'runtime')
+    assert measured[0]['context']['ledger_path'] == str(plans.parent/'runtime/launcher/ship-proof.jsonl')
+    assert measured[0]['context']['dispatch']['subplan_path'] == str(selected)
+    contexts = list(data.rglob('ctx-1.json'))
+    assert len(contexts) == 1
+    assert json.loads(contexts[0].read_text()) == measured[0]['context']
     assert any(r.get('status') == 'started' and r.get('dispatch',{}).get('step') == 0 for r in records)
+
+
+def test_close_record_follows_integrity_and_landing_before_cleanup():
+    source=RUNNER.read_text()
+    close=source.index('    # Write JSONL record via Python')
+    assert source.index('    # -- Selfmod merge-back: land or report') < close
+    assert source.index('    # One-ship-per-iteration enforcement:') < close
+    assert close < source.index('    # Every reader in this iteration is done with it.')
+    section=source[source.index('    # Waste bounding:'):close]
+    assert '      break' not in section

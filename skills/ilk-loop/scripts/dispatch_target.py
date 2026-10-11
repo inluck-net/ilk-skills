@@ -62,9 +62,25 @@ def resolve(plans: Path, slug: str, *, master: Path | None = None,
 
 def pinned_subplan(plans: Path, slug: str) -> Path | None:
     """Validate and return the driver's selected path, without re-selection."""
-    if os.environ.get('ILK_DISPATCH_SLUG') != slug:
-        return None
-    raw = os.environ.get('ILK_DISPATCH_SUBPLAN', '')
+    context_path = os.environ.get('ILK_ITER_CONTEXT')
+    selected = None
+    if context_path:
+        try:
+            context = json.loads(Path(context_path).read_text())
+            if Path(context['plans_dir']).resolve() != plans.resolve():
+                raise TargetError('iteration context belongs to another plans root')
+            selected = context.get('dispatch')
+        except (OSError, ValueError, KeyError) as exc:
+            raise TargetError(f'iteration context unreadable or inconsistent: {exc}') from exc
+    if selected and selected.get('slug') == slug:
+        raw = selected['subplan_path']
+        legacy = os.environ.get('ILK_DISPATCH_SUBPLAN')
+        if os.environ.get('ILK_DISPATCH_SLUG') == slug and legacy and Path(legacy).resolve() != Path(raw).resolve():
+            raise TargetError('legacy dispatch contradicts frozen iteration context')
+    else:
+        if os.environ.get('ILK_DISPATCH_SLUG') != slug:
+            return None
+        raw = os.environ.get('ILK_DISPATCH_SUBPLAN', '')
     if not raw:
         raise TargetError('pinned selected plan is absent')
     path = Path(raw).resolve()

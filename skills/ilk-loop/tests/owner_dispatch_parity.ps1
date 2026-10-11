@@ -14,4 +14,9 @@ if ($context.Identity.step -ne 0 -or $context.Identity.batch_base_sha -ne 'base1
 if (-not $context.Brief.Contains($context.Identity.subplan_path)) { throw 'brief misses exact path' }
 $missing=Get-WorkerCostObservation -LogFile (Join-Path $Fixture 'absent.log')
 if ($null -ne $missing) { throw 'missing observation invented' }
-'PowerShell parser, exact dispatch, brief and unknown observation: PASS'
+New-Item -ItemType Directory -Path (Join-Path $Fixture 'logs') -Force | Out-Null
+$iteration=New-IterationContext -Project $Fixture -Repos @($Fixture) -Dispatch $context -Run 'fixture' -Iteration 1 -Directory (Join-Path $Fixture 'logs')
+if ($iteration.dispatch.subplan_path -ne $context.Identity.subplan_path) { throw 'context identity mismatch' }
+$canonicalFixture = (& python -c 'import pathlib,sys;print(pathlib.Path(sys.argv[1]).resolve())' $Fixture | Out-String).Trim()
+if ($iteration.exec_tree -ne $canonicalFixture) { throw 'context execution mismatch' }
+'PowerShell parser, exact dispatch, brief, unknown observation and context: PASS'

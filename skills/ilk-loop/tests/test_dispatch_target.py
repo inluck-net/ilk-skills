@@ -71,3 +71,35 @@ def test_gate_and_snapshot_read_the_pinned_path(tmp_path,monkeypatch):
         run_local_checks.find_subplan(tmp_path,'work-run')
     with pytest.raises(TargetError,match='missing'):
         gate_snapshot.take(tmp_path,'work-run')
+
+
+def test_context_pin_wins_and_conflicting_legacy_pin_is_refused(tmp_path,monkeypatch):
+    from dispatch_target import pinned_subplan
+    selected=plan(tmp_path,'2026-10-11-work.md','work')
+    wrong=plan(tmp_path,'2026-10-11b-work.md','work')
+    context=tmp_path/'ctx.json'
+    context.write_text(json.dumps({'plans_dir':str(tmp_path),'dispatch':{'slug':'work','subplan_path':str(selected)}}))
+    monkeypatch.setenv('ILK_ITER_CONTEXT',str(context))
+    monkeypatch.delenv('ILK_DISPATCH_SLUG',raising=False)
+    assert pinned_subplan(tmp_path,'work') == selected
+    monkeypatch.setenv('ILK_DISPATCH_SLUG','work')
+    monkeypatch.setenv('ILK_DISPATCH_SUBPLAN',str(wrong))
+    with pytest.raises(TargetError,match='contradicts'):
+        pinned_subplan(tmp_path,'work')
+
+
+def test_runner_uses_scheduler_next_and_refuses_null(tmp_path):
+    import os
+    runner=SCRIPTS/'run_ilk_loop_claude.sh'
+    payload={'master_status':'active','subplans':[
+        {'slug':'blocked','fname':'blocked.md','status':'in-progress','current_step':'0'},
+        {'slug':'ready','fname':'ready.md','status':'pending','current_step':'1'}],
+        'next':{'fname':'ready.md'}}
+    env=dict(os.environ,ILK_DOTSOURCE_ONLY='1',ILK_DISPATCH_STATUS_JSON=json.dumps(payload))
+    code='source "$1"; get_active_subplan_targets'
+    cp=subprocess.run(['bash','-c',code,'fixture',str(runner)],env=env,capture_output=True,text=True,timeout=20)
+    assert cp.returncode==0,cp.stderr
+    assert cp.stdout.strip()=='ready 1'
+    payload['next']=None;env['ILK_DISPATCH_STATUS_JSON']=json.dumps(payload)
+    cp=subprocess.run(['bash','-c',code,'fixture',str(runner)],env=env,capture_output=True,text=True,timeout=20)
+    assert cp.stdout.strip()==''

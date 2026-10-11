@@ -354,7 +354,13 @@ function Get-ActiveSubplanTarget {
   }
   if (-not $data.subplans) { return $null }
 
-  foreach ($sp in @($data.subplans)) {
+  $candidates = @($data.subplans)
+  if ($data.PSObject.Properties.Name -contains 'next') {
+    if (-not $data.next) { return $null }
+    $candidates = @($data.subplans | Where-Object { $_.fname -eq $data.next.fname })
+    if ($candidates.Count -ne 1) { return $null }
+  }
+  foreach ($sp in $candidates) {
     $status = ""
     if ($sp.status) { $status = ([string]$sp.status).Trim().ToLower() }
     if ($status -eq "shipped") { continue }
@@ -392,6 +398,33 @@ function Get-WorkerDispatchContext {
   $brief = & python @briefArgs | Out-String
   if ($LASTEXITCODE -ne 0) { throw "dispatch brief refused" }
   return [PSCustomObject]@{ Identity = $identity; Brief = $brief.TrimEnd() }
+}
+
+function New-IterationContext {
+  param([string]$Project, [string[]]$Repos, $Dispatch, [string]$Run,
+        [int]$Iteration, [string]$Directory)
+  $resolver = Join-Path $SkillRoot 'ilk-loop/scripts/ilk_paths.py'
+  $pathsJson = & python $resolver --start $Project | Out-String
+  if ($LASTEXITCODE -ne 0) { throw 'iteration context: project paths unavailable' }
+  $paths = $pathsJson | ConvertFrom-Json
+  $observed = @{}
+  foreach ($repo in $Repos) { $observed[$repo] = $repo }
+  $identity = if ($Dispatch) { $Dispatch.Identity } else { $null }
+  $payload = @{
+    clone=$Project; exec_tree=$Project; observe_tree=$observed; mode='none'
+    plans_dir=$paths.resolved_plans_dir; runtime_dir=$paths.external_runtime_dir
+    data_root=$paths.ilk_data_root; code_root=(Split-Path $SkillRoot -Parent)
+    dispatch=$identity; run_id=$Run; iteration=$Iteration
+  }
+  $contextInput = Join-Path $Directory ("ctx-{0}.input.json" -f $Iteration)
+  $contextPath = Join-Path $Directory ("ctx-{0}.json" -f $Iteration)
+  $payload | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $contextInput -Encoding UTF8
+  try {
+    & python (Join-Path $SkillRoot 'ilk-loop/scripts/iteration_context.py') --input $contextInput --out $contextPath
+    if ($LASTEXITCODE -ne 0) { throw 'iteration context refused' }
+  } finally { Remove-Item -LiteralPath $contextInput -ErrorAction SilentlyContinue }
+  $env:ILK_ITER_CONTEXT = $contextPath
+  return Get-Content -Raw -LiteralPath $contextPath | ConvertFrom-Json
 }
 
 function Get-WorkerCostObservation {
@@ -2265,19 +2298,21 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
 
   # -- Timed iteration region starts here ------------------------------
   $iterStart    = Get-Date
-  $headsBefore  = Get-RepoHeads -Repos $repos
+  Remove-Item Env:ILK_ITER_CONTEXT -ErrorAction SilentlyContinue
   # Capture the sub-plan this iteration is about to work, BEFORE the agent runs.
   # It is the gate's fallback target when the commit carries no
   # [plan:...#step-N] trailer (the shared-remote case), and it has to be read now:
   # the agent marks the sub-plan `shipped` during the iteration, so by the time
   # the gate block runs there is no longer an unshipped sub-plan to find.
   $preIterTarget = Get-ActiveSubplanTarget -Project $ProjectPath -LoopStatusScript $LoopStatusScript
+  $dispatchContext = Get-WorkerDispatchContext -Project $ProjectPath -Target $preIterTarget
+  $iterationContext = New-IterationContext -Project $ProjectPath -Repos $repos -Dispatch $dispatchContext -Run $RunId -Iteration $i -Directory $RunLogDir
+  $headsBefore = Get-RepoHeads -Repos $repos
   $iterLog      = Join-Path $RunLogDir ("iter-{0:D2}.log" -f $i)
   $timeoutSec   = $IterationTimeoutMin * 60
 
   # -- Steer hook: interjection text -----------------------------------
   $iterPrompt = $Prompt
-  $dispatchContext = Get-WorkerDispatchContext -Project $ProjectPath -Target $preIterTarget
   if ($dispatchContext) {
     $iterPrompt = "$($dispatchContext.Brief)`n`n$iterPrompt"
     $env:ILK_DISPATCH_SLUG = $dispatchContext.Identity.slug
@@ -2295,7 +2330,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
   $startedRecord = @{
     run_id = $RunId; cli = 'claude'; iteration = $i
     timestamp = (Get-Date).ToString('o'); project = $ProjectPath
-    model = $ResolvedModel; status = 'started'
+    model = $ResolvedModel; status = 'started'; record_phase = 'open'; context = $iterationContext
   }
   if ($dispatchContext) { $startedRecord['dispatch'] = $dispatchContext.Identity }
   Write-JsonlRecord -Record $startedRecord
@@ -2541,33 +2576,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     }
   }
 
-  $jsonlRecord = @{
-    run_id            = $RunId
-    cli               = "claude"
-    iteration         = $i
-    timestamp         = (Get-Date).ToString("o")
-    project           = $ProjectPath
-    model             = if ($ResolvedModel) { $ResolvedModel } elseif ($Model) { $Model } else { $env:ANTHROPIC_MODEL }
-    base_url          = $env:ANTHROPIC_BASE_URL
-    max_budget_usd    = $MaxBudgetUsd
-    duration_sec      = $iterDurSec
-    exit_code         = $result.ExitCode
-    completed         = $result.Completed
-    budget_exhausted  = $result.BudgetExhausted
-    new_commits_total = $totalNew
-    new_commits       = $newCommits
-    log               = $iterLog
-    stop_reason       = $iterStopReason
-    local_checks      = $localChecksRun
-  }
-  if ($dispatchContext) { $jsonlRecord['dispatch'] = $dispatchContext.Identity }
-  $workerCosts = Get-WorkerCostObservation -LogFile $iterLog
-  if ($workerCosts) { $jsonlRecord['worker_cost_observation'] = $workerCosts }
-  if ($wipPreserved -gt 0) { $jsonlRecord['wip_preserved'] = $wipPreserved }
-  if ($iterMetrics.ToolCalls -gt 0) { $jsonlRecord['tool_calls'] = $iterMetrics.ToolCalls }
-  if ($iterMetrics.TestInvocations -gt 0) { $jsonlRecord['test_invocations'] = $iterMetrics.TestInvocations }
-  Write-JsonlRecord -Record $jsonlRecord
-
+  try {
   # Deferred B2 break: the failing iteration is now recorded above (so the
   # classifier can see it); stop before running quality gates / shipping.
   if ($localChecksBlocked) { break }
@@ -2629,6 +2638,46 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
       } catch {} finally { $ErrorActionPreference = $savedEAP }
     }
     break
+  }
+
+  } finally {
+  $jsonlRecord = @{
+    run_id            = $RunId
+    cli               = "claude"
+    iteration         = $i
+    timestamp         = (Get-Date).ToString("o")
+    project           = $ProjectPath
+    model             = if ($ResolvedModel) { $ResolvedModel } elseif ($Model) { $Model } else { $env:ANTHROPIC_MODEL }
+    base_url          = $env:ANTHROPIC_BASE_URL
+    max_budget_usd    = $MaxBudgetUsd
+    duration_sec      = $iterDurSec
+    driver_elapsed_sec = [int]((Get-Date) - $iterStart).TotalSeconds
+    record_phase      = 'close'
+    merge_outcome     = 'not-applicable'
+    exit_code         = $result.ExitCode
+    completed         = $result.Completed
+    budget_exhausted  = $result.BudgetExhausted
+    new_commits_total = $totalNew
+    new_commits       = $newCommits
+    log               = $iterLog
+    stop_reason       = if ($iterStopReason) { $iterStopReason } else { $stopReason }
+    local_checks      = $localChecksRun
+  }
+  $jsonlRecord['context'] = $iterationContext
+  $captureJson = & python (Join-Path $SkillRoot 'ilk-loop/scripts/iteration_context.py') --capture $env:ILK_ITER_CONTEXT | Out-String
+  if ($LASTEXITCODE -eq 0) {
+    $jsonlRecord['execution'] = $captureJson | ConvertFrom-Json
+  } else {
+    $jsonlRecord['execution'] = @{ capture_error = 'execution capture failed' }
+  }
+  if ($dispatchContext) { $jsonlRecord['dispatch'] = $dispatchContext.Identity }
+  $workerCosts = Get-WorkerCostObservation -LogFile $iterLog
+  if ($workerCosts) { $jsonlRecord['worker_cost_observation'] = $workerCosts }
+  if ($wipPreserved -gt 0) { $jsonlRecord['wip_preserved'] = $wipPreserved }
+  if ($iterMetrics.ToolCalls -gt 0) { $jsonlRecord['tool_calls'] = $iterMetrics.ToolCalls }
+  if ($iterMetrics.TestInvocations -gt 0) { $jsonlRecord['test_invocations'] = $iterMetrics.TestInvocations }
+  Write-JsonlRecord -Record $jsonlRecord
+
   }
 
   if (Test-AllShipped -Project $ProjectPath) {

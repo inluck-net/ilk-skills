@@ -1173,6 +1173,31 @@ ensure_fresh_base_ref() {
   fi
 }
 
+# Frozen observation mapping for snapshots; legacy callers fall back during
+# resolution. Post-landing policy retains the separate clone identity.
+iteration_observe_repo() {
+  local repo="$1" index
+  if [[ -n "${ILK_ITER_CONTEXT:-}" ]]; then
+    for ((index=0; index<${#_CONTEXT_OBSERVATIONS[@]}; index+=2)); do
+      if [[ "${_CONTEXT_OBSERVATIONS[$index]}" == "$repo" ]]; then
+        printf '%s\n' "${_CONTEXT_OBSERVATIONS[$((index+1))]}"
+        return 0
+      fi
+    done
+  fi
+  selfmod_effective_repo "$repo"
+}
+
+record_selfmod_state() {
+  local launcher clone state_file
+  clone="${SELFMOD_ORIGINAL_PROJECT_PATH:-}"
+  [[ -n "$clone" && -n "${SELFMOD_WORKTREE_PATH:-}" ]] || return 0
+  launcher="$(get_ilk_runtime_dir)" || return 1
+  state_file="${launcher}/selfmod-state.json"
+  python3 "${_SKILL_ROOT}/ilk-loop/scripts/selfmod_state.py" \
+    --clone "$clone" --worktree "$SELFMOD_WORKTREE_PATH" --state-file "$state_file" >/dev/null
+}
+
 # Resolve the path whose git history describes THIS iteration's work.
 #
 # While a selfmod batch runs isolated, the iteration commits into the worktree.
@@ -1220,7 +1245,7 @@ get_repo_heads() {
   local r
   for r in "${REPOS[@]}"; do
     local sha src
-    src="$(selfmod_effective_repo "$r")"
+    src="$(iteration_observe_repo "$r")"
     sha=$(git -C "$src" rev-parse HEAD 2>/dev/null) || sha="(unknown)"
     printf '%s=%s\n' "$r" "$sha" >> "$out_file"
   done
@@ -1289,11 +1314,18 @@ get_active_subplan_targets() {
   esac
   # --json exits non-zero when work is pending; the payload is still valid.
   line=$(echo "$status_json" | jq -r '
+    (if has("next") then
+       if .next == null then null else
+         .next.fname as $selected
+         | [.subplans[] | select(.fname == $selected)]
+         | if length == 1 then .[0] else null end
+       end
+     else
     [ (.subplans // [])[] | select(((.status // "") | ascii_downcase) != "shipped")
       | . + {__p: (if ((.status // "") | ascii_downcase) == "in-progress" then 0
                    elif ((.status // "") | ascii_downcase) == "pending" then 1
                    else 2 end)}
-    ] | sort_by(.__p) | .[0]
+    ] | sort_by(.__p) | .[0] end)
     | if . == null then empty else
         # A discharged sub-plan has current_step == estimated_steps, one past
         # its last step.  Gate (and record) its FINAL step: ship_integrity
@@ -1337,6 +1369,17 @@ get_all_subplan_steps() {
   #
   # The gate's fallback target deliberately stays PRE_ITER_TARGET: widening
   # THAT would point the gate at sub-plans the iteration never touched.
+  if [[ -n "${ILK_ITER_CONTEXT:-}" ]]; then
+    python3 -c '
+import json,sys
+from pathlib import Path
+ctx=json.loads(Path(sys.argv[1]).read_text())
+for row in ctx.get("plans", {}).values():
+    if row.get("status", "") != "shipped" and not row.get("error"):
+        print(row["slug"],row.get("step") or "0")
+' "$ILK_ITER_CONTEXT"
+    return
+  fi
   local status_json
   # --json exits non-zero when work is pending (loop_status.py:786); the
   # payload is still valid, so the exit code cannot be the predicate here.
@@ -1880,6 +1923,10 @@ get_ilk_runtime_dir() {
     echo "get_ilk_runtime_dir: PROJECT_PATH is empty; refusing to resolve from cwd" >&2
     return 1
   fi
+  if [[ -n "${ILK_ITER_CONTEXT:-}" && -n "${_CONTEXT_LAUNCHER_DIR:-}" ]]; then
+    printf '%s\n' "$_CONTEXT_LAUNCHER_DIR"
+    return 0
+  fi
   local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ ! -f "$resolver" ]]; then
     echo "get_ilk_runtime_dir: resolver not found at $resolver" >&2
@@ -2328,6 +2375,23 @@ print(json.dumps(d))
 # Get-StepDeclaredTimeout; returns sum of timeout: values or 0 if not found.
 get_step_declared_timeout() {
   local project="$1" slug="$2" step="$3"
+  if [[ -n "${ILK_ITER_CONTEXT:-}" ]]; then
+    python3 -c '
+import json,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from dispatch_target import pinned_subplan,resolve
+from run_local_checks import gate_declared_timeout
+ctx=json.loads(Path(sys.argv[2]).read_text())
+plans=Path(ctx["plans_dir"])
+selected=pinned_subplan(plans,sys.argv[3])
+if selected is None:
+    master=(ctx.get("dispatch") or {}).get("master_path")
+    selected=Path(resolve(plans,sys.argv[3],master=Path(master) if master else None)["subplan_path"])
+print(gate_declared_timeout(selected.read_text(),int(sys.argv[4])))
+' "${_SKILL_ROOT}/ilk-loop/scripts" "$ILK_ITER_CONTEXT" "$slug" "$step" 2>/dev/null || echo 0
+    return
+  fi
   local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ ! -f "$resolver" ]]; then echo 0; return; fi
   local plans_dir
@@ -3538,6 +3602,11 @@ print(json.loads(sys.stdin.read()).get('held_by') or '')
 }
 
 get_plans_dir() {
+  if [[ -n "${ILK_ITER_CONTEXT:-}" && -n "${_CONTEXT_PLANS_DIR:-}" ]]; then
+    [[ -d "$_CONTEXT_PLANS_DIR" ]] || return 1
+    printf '%s\n' "$_CONTEXT_PLANS_DIR"
+    return 0
+  fi
   # Resolve active plans dir via ilk_paths.py, with legacy walk-up fallback.
   local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ -f "$resolver" ]]; then
@@ -6034,6 +6103,9 @@ print(fm.get('result_file', ''))
 
     local iter_start
     iter_start=$(date +%s)
+    # The previous context stays on disk for recovery, but may not select this
+    # iteration's identity while isolation/dispatch are being resolved.
+    unset ILK_ITER_CONTEXT ILK_EXEC_TREE _CONTEXT_PLANS_DIR _CONTEXT_LAUNCHER_DIR
 
     # -- Orphan stash warning ──────────────────────────────────────────
     # Warn about leftover ilk-gate-isolation or ilk auto-stash entries
@@ -6095,35 +6167,10 @@ print(fm.get('result_file', ''))
       break
     fi
 
-    local heads_before_file heads_after_file
-    heads_before_file="${RUN_LOG_DIR}/heads-before-${i}.tmp"
-    heads_after_file="${RUN_LOG_DIR}/heads-after-${i}.tmp"
-
-    get_repo_heads "$heads_before_file"
-
-    # ── Pre-iteration snapshot ──────────────────────────────────────────
-    # Snapshot dirty/untracked state so preserve_dirty_tree_on_timeout can
-    # commit only what THIS iteration changed, not pre-existing dirt.
-    # Written here (before the agent runs) so the timeout path can diff
-    # against it.  One snapshot per repo, keyed by effective repo path.
-    local _pre_iter_snapshot_file="${RUN_LOG_DIR}/pre-iter-snapshot-${i}.json"
-    {
-      local _snap_ok=1
-      for _snap_repo in "${REPOS[@]}"; do
-        local _snap_eff
-        _snap_eff="$(selfmod_effective_repo "$_snap_repo")"
-        if ! python3 "${_SKILL_ROOT}/ilk-loop/scripts/iteration_snapshot.py" take \
-               "$_snap_eff" --out "$_pre_iter_snapshot_file" 2>/dev/null; then
-          _snap_ok=0
-        fi
-      done
-      if [[ "$_snap_ok" -eq 1 ]]; then
-        export ILK_PRE_ITER_SNAPSHOT="$_pre_iter_snapshot_file"
-      else
-        unset ILK_PRE_ITER_SNAPSHOT
-        echo "  ! [runner] pre-iteration snapshot failed — WIP preserve will fall back to git add -A" >&2
-      fi
-    }
+    if [[ "${SELFMOD_ISOLATED:-0}" -eq 1 ]] && ! record_selfmod_state; then
+      stop_reason="selfmod_state_invalid"
+      break
+    fi
 
     # Capture the sub-plan this iteration is about to work, BEFORE the agent
     # runs. It is the gate's fallback target when the commit carries no
@@ -6158,6 +6205,82 @@ print(fm.get('result_file', ''))
     else
       unset ILK_DISPATCH_SLUG ILK_DISPATCH_SUBPLAN
     fi
+
+    # Freeze resolved identities before any HEAD/dirty/gate snapshot.
+    local _context_clone="${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
+    local _context_exec _context_runtime _context_mode="none"
+    _context_exec="$(selfmod_effective_repo "$PROJECT_PATH")"
+    _context_runtime="$(get_ilk_runtime_dir)" || _context_runtime=""
+    if [[ -z "$_context_runtime" ]]; then
+      stop_reason="iteration_context_invalid"
+      break
+    fi
+    # Legacy helper returns external_launcher_dir, not runtime root.
+    local _context_launcher="$_context_runtime"
+    _context_runtime="$(dirname "$_context_launcher")"
+    [[ -n "${DECLARED_WORK_TREE:-}" ]] && _context_mode="work_tree"
+    [[ "${SELFMOD_ISOLATED:-0}" -eq 1 ]] && _context_mode="selfmod"
+    local _context_observed=() _context_repo
+    for _context_repo in "${REPOS[@]}"; do
+      _context_observed+=("$_context_repo" "$(selfmod_effective_repo "$_context_repo")")
+    done
+    ILK_ITER_CONTEXT="${RUN_LOG_DIR}/ctx-${i}.json"
+    if ! _DISPATCH_IDENTITY_JSON="$_dispatch_identity_json" _DISPATCH_STEP="${PRE_ITER_TARGET#* }" \
+      python3 -c '
+import json,sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1])/"ilk-loop/scripts"))
+from iteration_context import resolve_context, write_context
+from ilk_paths import ilk_data_root
+import os
+identity=json.loads(os.environ.get("_DISPATCH_IDENTITY_JSON") or "null")
+if identity: identity["step"]=int(os.environ["_DISPATCH_STEP"])
+a=sys.argv
+context=resolve_context(clone=a[2],exec_tree=a[3],plans_dir=a[4],runtime_dir=a[5],
+ code_root=Path(a[1]).parent,data_root=ilk_data_root(),mode=a[6],run_id=a[7],
+ iteration=int(a[8]),dispatch=identity,observe_tree=dict(zip(a[10::2],a[11::2])))
+write_context(Path(a[9]),context)
+' "$_SKILL_ROOT" "$_context_clone" "$_context_exec" "$_dispatch_plans_dir" \
+      "$_context_runtime" "$_context_mode" "$RUN_ID" "$i" "$ILK_ITER_CONTEXT" "${_context_observed[@]}"; then
+      stop_reason="iteration_context_invalid"
+      break
+    fi
+    _CONTEXT_OBSERVATIONS=("${_context_observed[@]}")
+    export ILK_ITER_CONTEXT
+    _CONTEXT_PLANS_DIR="$_dispatch_plans_dir"
+    _CONTEXT_LAUNCHER_DIR="$_context_launcher"
+    ILK_EXEC_TREE="$_context_exec"
+    export ILK_EXEC_TREE
+
+    local heads_before_file heads_after_file
+    heads_before_file="${RUN_LOG_DIR}/heads-before-${i}.tmp"
+    heads_after_file="${RUN_LOG_DIR}/heads-after-${i}.tmp"
+
+    get_repo_heads "$heads_before_file"
+
+    # ── Pre-iteration snapshot ──────────────────────────────────────────
+    # Snapshot dirty/untracked state so preserve_dirty_tree_on_timeout can
+    # commit only what THIS iteration changed, not pre-existing dirt.
+    # Written here (before the agent runs) so the timeout path can diff
+    # against it.  One snapshot per repo, keyed by effective repo path.
+    local _pre_iter_snapshot_file="${RUN_LOG_DIR}/pre-iter-snapshot-${i}.json"
+    {
+      local _snap_ok=1
+      for _snap_repo in "${REPOS[@]}"; do
+        local _snap_eff
+        _snap_eff="$(selfmod_effective_repo "$_snap_repo")"
+        if ! python3 "${_SKILL_ROOT}/ilk-loop/scripts/iteration_snapshot.py" take \
+               "$_snap_eff" --out "$_pre_iter_snapshot_file" 2>/dev/null; then
+          _snap_ok=0
+        fi
+      done
+      if [[ "$_snap_ok" -eq 1 ]]; then
+        export ILK_PRE_ITER_SNAPSHOT="$_pre_iter_snapshot_file"
+      else
+        unset ILK_PRE_ITER_SNAPSHOT
+        echo "  ! [runner] pre-iteration snapshot failed — WIP preserve will fall back to git add -A" >&2
+      fi
+    }
 
     # The ledger writer's wider baseline: every non-shipped sub-plan and the
     # step it starts this iteration on.  Read here for the same reason
@@ -6489,7 +6612,10 @@ d = {
   'project': os.environ['PROJECT_PATH'],
   'model': os.environ.get('_RESOLVED_MODEL', '') or os.environ.get('MODEL', '') or os.environ.get('ANTHROPIC_MODEL', ''),
   'status': 'started',
+  'record_phase': 'open',
 }
+with open(os.environ['ILK_ITER_CONTEXT']) as context_file:
+  d['context'] = json.load(context_file)
 try:
   identity = json.loads(os.environ.get('_DISPATCH_IDENTITY_JSON', '') or '{}')
   if identity:
@@ -6637,7 +6763,7 @@ print(json.dumps(d))
     fi
 
     if [[ "$GATE_FIRST_GREEN" -eq 0 && "$GATE_FIRST_NO_DISPATCH" -eq 0 ]]; then
-      invoke_claude_iteration "$(selfmod_effective_repo "$PROJECT_PATH")" "$iter_log" "$iter_prompt" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
+      invoke_claude_iteration "$ILK_EXEC_TREE" "$iter_log" "$iter_prompt" "$timeout_sec" "$MAX_BUDGET_USD" "$MODEL"
     elif [[ "$GATE_FIRST_NO_DISPATCH" -eq 1 ]]; then
       # A finished batch-verify with a red gate or no gate_first — the
       # iteration ends without dispatch.  Set the same defaults the green
@@ -7470,106 +7596,7 @@ print(json.dumps({'slug': slug, 'violation': f'gate_isolation_restore_failed: {e
       fi
     fi
 
-    # Write JSONL record via Python to avoid bash JSON escaping issues
-    local ts
-    ts=$(date +%Y-%m-%dT%H:%M:%S%z)
-
-    local _worker_cost_json=""
-    local _worker_cost_report="${_SKILL_ROOT}/../tools/loop-performance/report.py"
-    if [[ -f "${iter_log}.jsonl" && -f "$_worker_cost_report" ]]; then
-      _worker_cost_json=$(python3 "$_worker_cost_report" "${iter_log}.jsonl" 2>/dev/null) || _worker_cost_json=""
-    fi
-    PROJECT_PATH="$PROJECT_PATH" \
-    MODEL="$MODEL" \
-    _RESOLVED_MODEL="${RESOLVED_MODEL:-}" \
-    MAX_BUDGET_USD="$MAX_BUDGET_USD" \
-    _WORKER_COST_JSON="$_worker_cost_json" \
-    _DISPATCH_IDENTITY_JSON="${_dispatch_identity_json:-}" \
-    _DISPATCH_STEP="${PRE_ITER_TARGET#* }" \
-    RUN_ID="$RUN_ID" \
-    _ITER="$i" \
-    _TS="$ts" \
-    _DUR="$iter_dur_sec" \
-    _EXIT="$ITER_EXIT_CODE" \
-    _NEW_TOTAL="$total_new" \
-    _STOP_REASON="$iter_stop_reason" \
-    _NEW_COMMITS_JSON="$new_commits_json" \
-    _LOCAL_CHECKS_JSON="$local_checks_json" \
-    _SHIP_GAP_JSON="$_SHIP_GAP_JSON" \
-    _WIP_PRESERVED="$wip_preserved" \
-    _TOOL_CALLS="$iter_tool_calls" \
-    _TEST_INVOCATIONS="$iter_test_invocations" \
-    _PLAN_AMENDED="$([ -f "$_amend_flag" ] && echo true || echo false)" \
-    python3 -c "
-import json, os
-d = {
-  'run_id': os.environ['RUN_ID'],
-  'cli': 'claude',
-  'iteration': int(os.environ['_ITER']),
-  'timestamp': os.environ['_TS'],
-  'project': os.environ['PROJECT_PATH'],
-  'model': os.environ.get('_RESOLVED_MODEL', '') or os.environ.get('MODEL', '') or os.environ.get('ANTHROPIC_MODEL', ''),
-  'base_url': os.environ.get('ANTHROPIC_BASE_URL', ''),
-  'max_budget_usd': float(os.environ.get('MAX_BUDGET_USD', 0)),
-  'duration_sec': int(os.environ['_DUR']),
-  'exit_code': int(os.environ['_EXIT']),
-  'new_commits_total': int(os.environ['_NEW_TOTAL']),
-}
-try:
-  observed = json.loads(os.environ.get('_WORKER_COST_JSON', '') or '[]')
-  if observed:
-    d['worker_cost_observation'] = observed[0]
-except (ValueError, TypeError, IndexError):
-  pass
-try:
-  identity = json.loads(os.environ.get('_DISPATCH_IDENTITY_JSON', '') or '{}')
-  if identity:
-    identity['step'] = int(os.environ['_DISPATCH_STEP'])
-    d['dispatch'] = identity
-except (ValueError, KeyError):
-  pass
-nc = os.environ.get('_NEW_COMMITS_JSON', '')
-if nc and nc != '{}':
-  d['new_commits'] = json.loads(nc)
-sr = os.environ.get('_STOP_REASON', '')
-if sr:
-  d['stop_reason'] = sr
-wp = os.environ.get('_WIP_PRESERVED', '0')
-# Defensive: a non-integer here means some command leaked into a captured
-# function's stdout.  Degrade to 0 and record the raw value rather than raising
-# -- an unparseable field must not cost the whole iteration record, which is the
-# classifier's only input (run 20260829-163114).
-try:
-  wp_n = int(str(wp).strip())
-except (TypeError, ValueError):
-  wp_n = 0
-  d['wip_preserved_raw'] = str(wp)[:200]
-if wp_n > 0:
-  d['wip_preserved'] = wp_n
-tc = int(os.environ.get('_TOOL_CALLS', '0'))
-ti = int(os.environ.get('_TEST_INVOCATIONS', '0'))
-if tc > 0:
-  d['tool_calls'] = tc
-if ti > 0:
-  d['test_invocations'] = ti
-lc = os.environ.get('_LOCAL_CHECKS_JSON', '')
-if lc and lc != '[]':
-  d['local_checks'] = json.loads(lc)
-sg = os.environ.get('_SHIP_GAP_JSON', '')
-if sg:
-  try:
-    sg_d = json.loads(sg)
-    if sg_d.get('unexplained'):
-      d['ship_gap'] = sg_d
-  except (json.JSONDecodeError, ValueError):
-    pass
-pa = os.environ.get('_PLAN_AMENDED', 'false')
-if pa == 'true':
-  d['plan_amended'] = True
-print(json.dumps(d))
-" >> "$JSONL_LOG"
-
-    # Restore set -e: terminal decision logic below must be fatal.
+    # Integrity and landing must finish before the final summary is written.
     set -e
 
     # One-ship-per-iteration enforcement: revert any sub-plan that went
@@ -7777,6 +7804,20 @@ append_revert_row(
       iter_stop_reason="ship_integrity_violation"
     fi
 
+    # Capture once in the execution tree before merge may remove it.
+    local _execution_capture_json
+    _execution_capture_json=$(python3 -c '
+import json,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from iteration_context import capture_execution
+print(json.dumps(capture_execution(json.loads(Path(sys.argv[2]).read_text()))))
+' "${_SKILL_ROOT}/ilk-loop/scripts" "$ILK_ITER_CONTEXT") || _execution_capture_json='{"capture_error":"execution capture failed"}'
+    if [[ "${SELFMOD_ISOLATED:-0}" -eq 1 ]] && ! record_selfmod_state; then
+      iter_stop_reason="selfmod_state_invalid"
+      stop_reason="selfmod_state_invalid"
+    fi
+    local _iteration_merge_outcome="not-applicable"
     # -- Selfmod merge-back: land or report --------------------------------
     # After ship-integrity runs, merge the worktree back into the clone
     # ONLY when the iteration is green.  On success, PROJECT_PATH is
@@ -7789,6 +7830,9 @@ append_revert_row(
       local _merge_blocked_reason=""
       if [[ "$iter_stop_reason" == "local_checks_failed" || "$iter_stop_reason" == "local_checks_failed_no_commits" ]]; then
         _merge_blocked_reason="red gate"
+      fi
+      if [[ "$iter_stop_reason" == "selfmod_state_invalid" ]]; then
+        _merge_blocked_reason="invalid persisted selfmod state"
       fi
       # Double-check the JSONL in case iter_stop_reason was overwritten.
       if [[ -z "$_merge_blocked_reason" && -n "$local_checks_results" && -s "$local_checks_results" ]]; then
@@ -7821,7 +7865,17 @@ append_revert_row(
         merge_rc=0
         merge_selfmod_worktree || merge_rc=$?
         record_selfmod_merge_outcome "$merge_rc"
+        if ! record_selfmod_state; then
+          iter_stop_reason="selfmod_state_invalid"
+          stop_reason="selfmod_state_invalid"
+        fi
+        case "$merge_rc" in
+          0) _iteration_merge_outcome="merged" ;;
+          2) _iteration_merge_outcome="deferred" ;;
+          *) _iteration_merge_outcome="failed" ;;
+        esac
       else
+        _iteration_merge_outcome="blocked"
         echo "[selfmod] not merging: ${_merge_blocked_reason} — worktree kept at ${SELFMOD_WORKTREE_PATH:-unknown}" >&2
       fi
       # Reset for next iteration (merge only runs once per batch).
@@ -7838,7 +7892,7 @@ append_revert_row(
     if [[ "${merge_was_deferred:-0}" -eq 1 && "${total_new:-0}" -eq 0 ]]; then
       echo "[selfmod] merge deferred + no new commits — ending run to avoid spin." >&2
       stop_reason="blocked-no-runnable"
-      break
+      iter_stop_reason="blocked-no-runnable"
     fi
 
     # Record a driver-written point row for this iteration's gated boundary.
@@ -7908,6 +7962,117 @@ if last:
         _FAILED_CHECK_JSON="$_fc_candidate"
       fi
     fi
+
+    # Write JSONL record via Python to avoid bash JSON escaping issues
+    local ts
+    ts=$(date +%Y-%m-%dT%H:%M:%S%z)
+
+    local _worker_cost_json=""
+    local _worker_cost_report="${_SKILL_ROOT}/../tools/loop-performance/report.py"
+    if [[ -f "${iter_log}.jsonl" && -f "$_worker_cost_report" ]]; then
+      _worker_cost_json=$(python3 "$_worker_cost_report" "${iter_log}.jsonl" 2>/dev/null) || _worker_cost_json=""
+    fi
+    PROJECT_PATH="$PROJECT_PATH" \
+    MODEL="$MODEL" \
+    _RESOLVED_MODEL="${RESOLVED_MODEL:-}" \
+    MAX_BUDGET_USD="$MAX_BUDGET_USD" \
+    _WORKER_COST_JSON="$_worker_cost_json" \
+    _DISPATCH_IDENTITY_JSON="${_dispatch_identity_json:-}" \
+    _DISPATCH_STEP="${PRE_ITER_TARGET#* }" \
+    RUN_ID="$RUN_ID" \
+    _ITER="$i" \
+    _TS="$ts" \
+    _DUR="$iter_dur_sec" \
+    _FULL_DUR="$(( $(date +%s) - iter_start ))" \
+    _MERGE_OUTCOME="$_iteration_merge_outcome" \
+    _EXECUTION_CAPTURE_JSON="$_execution_capture_json" \
+    _EXIT="$ITER_EXIT_CODE" \
+    _NEW_TOTAL="$total_new" \
+    _STOP_REASON="$iter_stop_reason" \
+    _NEW_COMMITS_JSON="$new_commits_json" \
+    _LOCAL_CHECKS_JSON="$local_checks_json" \
+    _SHIP_GAP_JSON="$_SHIP_GAP_JSON" \
+    _WIP_PRESERVED="$wip_preserved" \
+    _TOOL_CALLS="$iter_tool_calls" \
+    _TEST_INVOCATIONS="$iter_test_invocations" \
+    _PLAN_AMENDED="$([ -f "$_amend_flag" ] && echo true || echo false)" \
+    python3 -c "
+import json, os
+d = {
+  'run_id': os.environ['RUN_ID'],
+  'cli': 'claude',
+  'iteration': int(os.environ['_ITER']),
+  'timestamp': os.environ['_TS'],
+  'project': os.environ['PROJECT_PATH'],
+  'model': os.environ.get('_RESOLVED_MODEL', '') or os.environ.get('MODEL', '') or os.environ.get('ANTHROPIC_MODEL', ''),
+  'base_url': os.environ.get('ANTHROPIC_BASE_URL', ''),
+  'max_budget_usd': float(os.environ.get('MAX_BUDGET_USD', 0)),
+  'duration_sec': int(os.environ['_DUR']),
+  'driver_elapsed_sec': int(os.environ['_FULL_DUR']),
+  'record_phase': 'close',
+  'merge_outcome': os.environ['_MERGE_OUTCOME'],
+  'execution': json.loads(os.environ.get('_EXECUTION_CAPTURE_JSON') or '{}'),
+  'exit_code': int(os.environ['_EXIT']),
+  'new_commits_total': int(os.environ['_NEW_TOTAL']),
+}
+try:
+  observed = json.loads(os.environ.get('_WORKER_COST_JSON', '') or '[]')
+  if observed:
+    d['worker_cost_observation'] = observed[0]
+except (ValueError, TypeError, IndexError):
+  pass
+with open(os.environ['ILK_ITER_CONTEXT']) as context_file:
+  d['context'] = json.load(context_file)
+try:
+  identity = json.loads(os.environ.get('_DISPATCH_IDENTITY_JSON', '') or '{}')
+  if identity:
+    identity['step'] = int(os.environ['_DISPATCH_STEP'])
+    d['dispatch'] = identity
+except (ValueError, KeyError):
+  pass
+nc = os.environ.get('_NEW_COMMITS_JSON', '')
+if nc and nc != '{}':
+  d['new_commits'] = json.loads(nc)
+sr = os.environ.get('_STOP_REASON', '')
+if sr:
+  d['stop_reason'] = sr
+wp = os.environ.get('_WIP_PRESERVED', '0')
+# Defensive: a non-integer here means some command leaked into a captured
+# function's stdout.  Degrade to 0 and record the raw value rather than raising
+# -- an unparseable field must not cost the whole iteration record, which is the
+# classifier's only input (run 20260829-163114).
+try:
+  wp_n = int(str(wp).strip())
+except (TypeError, ValueError):
+  wp_n = 0
+  d['wip_preserved_raw'] = str(wp)[:200]
+if wp_n > 0:
+  d['wip_preserved'] = wp_n
+tc = int(os.environ.get('_TOOL_CALLS', '0'))
+ti = int(os.environ.get('_TEST_INVOCATIONS', '0'))
+if tc > 0:
+  d['tool_calls'] = tc
+if ti > 0:
+  d['test_invocations'] = ti
+lc = os.environ.get('_LOCAL_CHECKS_JSON', '')
+if lc and lc != '[]':
+  d['local_checks'] = json.loads(lc)
+sg = os.environ.get('_SHIP_GAP_JSON', '')
+if sg:
+  try:
+    sg_d = json.loads(sg)
+    if sg_d.get('unexplained'):
+      d['ship_gap'] = sg_d
+  except (json.JSONDecodeError, ValueError):
+    pass
+pa = os.environ.get('_PLAN_AMENDED', 'false')
+if pa == 'true':
+  d['plan_amended'] = True
+print(json.dumps(d))
+" >> "$JSONL_LOG"
+
+    # Restore set -e: terminal decision logic below must be fatal.
+    set -e
 
     # Every reader in this iteration is done with it.
     rm -f "$local_checks_results"
