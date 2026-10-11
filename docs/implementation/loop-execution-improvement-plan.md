@@ -3397,3 +3397,19 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
   acceptance require that hash when present. Eight descriptor/binding checks
   passed in 1.14s. Historical contexts without this additive fingerprint retain
   earlier capability. Next: archived normal/measured-red entry, then delivery.
+
+
+- D2 manual rule consumption candidate: automatic sources are disabled but
+  the old required-read list omitted project rule and ancestor instruction
+  files. Extended archived fixture against committed 445e15bc failed with
+  code_only_worker_incomplete at the required project-rule prompt assertion;
+  nothing advanced. New `instruction_inputs.bootstrap_inventory` lists prepared
+  globals first, then ancestor-to-project named files and rules, from frozen
+  rows. Nested-directory instructions remain relevant-file discovery rather
+  than bulk startup reads. Worker brief explicitly keeps path-scoped rules
+  scoped. Sixteen inventory/bootstrap checks passed in 2.32s. Next: committed
+  archive shell/native entry and safe delivery of this and acceptance/PS fixes.
+
+- D2 acceptance descriptor archived normal and opt-in measured-red entry checks
+  passed two in 20.41s at 445e15bc before extending project-rule fixtures. The
+  latter still shipped-unproven; no false green or full baseline suite.

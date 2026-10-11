@@ -101,6 +101,28 @@ def inventory(context):
     return result
 
 
+def bootstrap_inventory(context):
+    """Required manual roots/rules when the CLI's automatic sources are off."""
+    rows={row['path']:row for row in context.get('instruction_input_inventory',[]) if row.get('sha256')}
+    required=[];seen=set()
+    def add(path):
+        key=str(path)
+        if key in rows and key not in seen:
+            required.append(dict(path=key,sha256=rows[key]['sha256']));seen.add(key)
+    for row in context.get('global_instruction_inventory',[]):add(Path(row['path']))
+    root=Path(context['exec_tree']).resolve(strict=True)
+    for parent in reversed((root,*root.parents)):
+        for name in NAMES:add(parent/name)
+        add(parent/'.claude/CLAUDE.md')
+        directory=parent/'.claude/rules'
+        for raw in sorted(rows):
+            path=Path(raw)
+            try:path.relative_to(directory)
+            except ValueError:continue
+            if path.suffix=='.md':add(path)
+    return required
+
+
 def verify(context):
     frozen=context.get('instruction_input_inventory')
     if frozen is not None and inventory(context)!=frozen:

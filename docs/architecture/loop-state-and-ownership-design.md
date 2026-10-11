@@ -545,3 +545,18 @@ unknown/non-green continuation checks passed nine in 4.94s. This validates
 historical scoped proof only; no current gate outcome is reused, and batch final
 verification stays opt-in. A stale fixture name was corrected after reproducing
 its failure against the prior installed reader; frozen scope was not weakened.
+
+
+The later local preview extends per-owner red-return recovery to multi-owner
+partial operations. A durable first owner no longer blocks a second owner on
+retry; exact return intent and journal binding are required. Initially held
+owners refuse before any revision. Four crash/hold/changed-first/missing-intent
+checks passed in 0.37s. This remains per-owner CAS with resumable bookkeeping,
+not atomic file replacement across all owners.
+
+New owned dispatches freeze a stable launch-descriptor hash independently of
+its live manifest. Acceptance checks private hooks/settings/MCP/executables and
+code inputs before and after gates. Per-context binding additions remain
+allowed; they cannot rebind the launch inputs. Required manual bootstrap reads
+include global, ancestor and project instructions/rules because automatic CLI
+sources are disabled. Scoped rule applicability does not expand step ownership.

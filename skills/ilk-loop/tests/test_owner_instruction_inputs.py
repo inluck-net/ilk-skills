@@ -91,3 +91,23 @@ def test_import_code_examples_are_literal_and_manual_cycles_are_bounded(tmp_path
     assert str(root/'level4.md') in paths
     assert str(root/'level5.md') in paths
     assert str(root/'literal.md') not in paths and str(root/'fenced.md') not in paths
+
+
+def test_manual_bootstrap_consumes_global_ancestor_and_project_rules(tmp_path):
+    from instruction_inputs import bootstrap_inventory
+    context,root,plan=fixture(tmp_path)
+    context['instruction_input_inventory_protocol']=2
+    ancestor=root.parent/'CLAUDE.md';ancestor.write_text('ancestor instructions')
+    project=root/'.claude/rules/team.md';project.parent.mkdir(parents=True);project.write_text('project rules')
+    local=root/'CLAUDE.local.md';local.write_text('local instructions')
+    nested=root/'nested/CLAUDE.md';nested.parent.mkdir();nested.write_text('nested instructions')
+    home=tmp_path/'private-home';home.mkdir();global_file=home/'CLAUDE.md';global_file.write_text('global instructions')
+    context['private_worker_home']=str(home)
+    context['instruction_input_inventory']=inventory(context)
+    row=next(row for row in context['instruction_input_inventory'] if row['path']==str(global_file))
+    context['global_instruction_inventory']=[row]
+    paths=[row['path'] for row in bootstrap_inventory(context)]
+    assert paths[0]==str(global_file)
+    assert str(ancestor) in paths and str(project) in paths and str(local) in paths
+    assert str(nested) not in paths
+    assert paths.index(str(ancestor))<paths.index(str(project))

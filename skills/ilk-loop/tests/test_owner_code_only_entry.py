@@ -28,6 +28,10 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
         subprocess.run(['git','clone','-q','--shared',str(ROOT),str(work)],check=True,capture_output=True)
     def git(*args):return subprocess.run(['git','-C',str(work),*args],check=True,capture_output=True,text=True)
     git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid')
+    (work/'.claude/rules').mkdir(parents=True,exist_ok=True)
+    (work/'.claude/rules/entry.md').write_text('fixture project rule')
+    (work/'CLAUDE.local.md').write_text('fixture local instruction')
+    (tmp_path/'CLAUDE.md').write_text('fixture ancestor instruction')
     (work/'counter.py').write_text('def f(value): return value + 1\n');git('add','.');git('commit','-qm','fixture counter')
     plan=world['plans']/(fixtures.STEM+'.md')
     plan.write_text('---\nplan: '+fixtures.SLUG+'\nstatus: pending\ncurrent_step: 0\nestimated_steps: 1\nverification_tier: loop-verified\n---\n# Counter\n## Steps\n### Step 0: fix counter\n```yaml\nlocal_checks:\n  - command: python3 -I -c "from pathlib import Path;exec(Path(\'counter.py\').read_text());assert f(4)==6"\n```\n')
@@ -96,6 +100,11 @@ for row in globals:
  assert row['path'] in prompt
  cp=subprocess.run(['/bin/bash','-c',canonical_command(ctx,path,'cat -- '+__import__('shlex').quote(row['path']))],capture_output=True,text=True)
  assert cp.returncode==0 and 'fixture global' in cp.stdout,cp.stderr
+for relative in ('.claude/rules/entry.md','CLAUDE.local.md'):
+ required=str(Path(ctx['exec_tree'])/relative)
+ assert required in prompt
+ cp=subprocess.run(['/bin/bash','-c',canonical_command(ctx,path,'cat -- '+__import__('shlex').quote(required))],capture_output=True,text=True)
+ assert cp.returncode==0 and 'fixture ' in cp.stdout,cp.stderr
 cp=subprocess.run(['/bin/bash','-c',canonical_command(ctx,path,'cat -- '+__import__('shlex').quote(str(Path(ctx['private_worker_home'])/'settings.json')))],capture_output=True,text=True)
 assert cp.returncode!=0
 command="printf 'accepted' > later.txt" if ctx['dispatch']['slug']=='later' else "printf 'def f(value): return value + 2\\n' > counter.py"

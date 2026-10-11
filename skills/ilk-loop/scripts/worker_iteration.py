@@ -59,6 +59,7 @@ def instructions(context,path):
         'First group these required independent reads in ONE Bash call:',
         bootstrap,
         'Follow referenced instructions and any nested instructions relevant to files you edit.',
+        'Apply path-scoped rules only to matching files; their presence does not expand the selected step scope.',
         'After the required reads, implement this step; no queue or toolkit bootstrap discovery is needed.',
         f"Implement only step {selected['step']}; leave the code diff for driver acceptance.",
         'Do not commit, push, change plans/state/proof, or run authoritative gates.',
