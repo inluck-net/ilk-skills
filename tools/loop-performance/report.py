@@ -15,7 +15,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 BOOTSTRAP = re.compile(r'\.claude[^/\s]*/|\.ilk-data|\.ilk/|plans/|MASTER-|loop_status|find ~')
 TEST = re.compile(r'\b(?:pytest|unittest|vitest|jest|playwright)\b|\bnpm\s+(?:run\s+)?test\b')
 THINK = re.compile(r'\[thinking\] \d+ chars in ([\d.]+)s')
@@ -42,6 +42,8 @@ def report(path: Path) -> dict:
     models, sessions, assistant_ids, tools = set(), set(), set(), {}
     results, malformed, root_messages, assistant_events = [], 0, 0, 0
     starts, ends, compactions, compaction_durations = {}, {}, 0, []
+    child_tools, child_messages, retry_delays = set(), 0, []
+    root_tool_order = []
     def stamp(row):
         try:
             return datetime.fromisoformat(row.get("timestamp", "").replace("Z", "+00:00")).timestamp()
@@ -58,7 +60,16 @@ def report(path: Path) -> dict:
             continue
         # Agent task streams are not the root worker's turns/tools.
         if row.get('parent_tool_use_id'):
+            if row.get('type') == 'assistant':
+                child_messages += 1
+                for block in (row.get('message') or {}).get('content', []):
+                    if isinstance(block, dict) and block.get('type') == 'tool_use' and block.get('id'):
+                        child_tools.add(block['id'])
             continue
+        if row.get('type') == 'system' and row.get('subtype') == 'api_retry':
+            delay = row.get('retry_delay_ms')
+            if isinstance(delay, (int, float)) and not isinstance(delay, bool) and delay >= 0:
+                retry_delays.append(delay/1000)
         if row.get('type') == 'system' and row.get('subtype') == 'init':
             if row.get('model'):
                 models.add(row['model'])
@@ -83,12 +94,22 @@ def report(path: Path) -> dict:
                 root_messages += 1
             for block in message.get('content', []):
                 if isinstance(block, dict) and block.get('type') == 'tool_use':
+                    if block['id'] not in tools:
+                        root_tool_order.append(block['id'])
                     tools.setdefault(block['id'], block)
                     starts.setdefault(block['id'], stamp(row))
         if row.get('type') == 'result':
             results.append(row)
     result = results[-1] if results else {}
-    bootstrap = sum(bool(BOOTSTRAP.search(json.dumps(t.get('input', {})))) for t in tools.values())
+    bootstrap_ids = {identity for identity, tool in tools.items()
+                     if BOOTSTRAP.search(json.dumps(tool.get('input', {})))}
+    bootstrap = len(bootstrap_ids)
+    first_edit = next((identity for identity in root_tool_order
+                       if tools[identity].get('name') in {'Edit', 'Write', 'MultiEdit'}), None)
+    preceding = root_tool_order[:root_tool_order.index(first_edit)] if first_edit else root_tool_order
+    before_edit = len(bootstrap_ids.intersection(preceding))
+    first_stamp = next((starts[x] for x in root_tool_order if starts.get(x) is not None), None)
+    edit_stamp = starts.get(first_edit)
     tests = [t for t in tools.values() if t.get('name') == 'Bash' and
              TEST.search(str(t.get('input', {}).get('command', ''))) and
              not t.get('input', {}).get('run_in_background')]
@@ -114,13 +135,19 @@ def report(path: Path) -> dict:
         'root_assistant_events': assistant_events,
         'turn_identity_missing': root_messages,
         'root_tool_calls': len(tools), 'bootstrap_path_indicator_calls': bootstrap,
+        'bootstrap_indicator_before_first_edit': before_edit,
+        'first_edit_observed': first_edit is not None,
+        'root_tool_span_before_first_edit_seconds': round(edit_stamp-first_stamp,3) if edit_stamp is not None and first_stamp is not None and edit_stamp >= first_stamp else None,
+        'child_tool_calls': len(child_tools), 'child_assistant_events': child_messages,
+        'explicit_api_retry_events': len(retry_delays),
+        'explicit_api_retry_delay_seconds': round(sum(retry_delays),3),
         'foreground_test_calls': len(tests),
         'foreground_test_seconds': test_seconds if not unmatched else None,
         'foreground_test_matched_seconds_lower_bound': test_seconds,
         'foreground_test_unmatched_calls': unmatched,
-        'thinking_completed_blocks': len(thoughts) if text is not None else None,
-        'thinking_completed_seconds': round(sum(thoughts), 1) if text is not None else None,
-        'thinking_progress_at_tail': pending_thought if text is not None else None,
+        'thinking_completed_blocks': len(thoughts) if thoughts or '[thinking]' in (text or '') else None,
+        'thinking_completed_seconds': round(sum(thoughts), 1) if thoughts or '[thinking]' in (text or '') else None,
+        'thinking_progress_at_tail': pending_thought if '[thinking]' in (text or '') else None,
         'renderer_observed_seconds': clocks[-1]-clocks[0] if len(clocks) > 1 else None,
         'worker_elapsed_seconds': result.get('duration_ms') / 1000 if result.get('duration_ms') is not None else None,
         'api_seconds_overlapping': result.get('duration_api_ms') / 1000 if result.get('duration_api_ms') is not None else None,

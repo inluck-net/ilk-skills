@@ -366,8 +366,44 @@ function Get-ActiveSubplanTarget {
     } elseif ($sp.current_step -and ([string]$sp.current_step) -match '^\d+$') {
       $step = [int]([string]$sp.current_step)
     }
-    return [PSCustomObject]@{ slug = [string]$sp.slug; step = $step }
+    if ($sp.estimated_steps -and ([string]$sp.estimated_steps) -match '^\d+$') {
+      $count = [int]$sp.estimated_steps
+      if ($count -gt 0 -and $step -ge $count) { $step = $count - 1 }
+    }
+    return [PSCustomObject]@{ slug = [string]$sp.slug; step = $step; fname = [string]$sp.fname; master = [string]$data.master }
   }
+  return $null
+}
+
+function Get-WorkerDispatchContext {
+  param([string]$Project, $Target)
+  if (-not $Target) { return $null }
+  $plans = Get-PlansDir -Project $Project
+  if (-not $plans) { throw "dispatch identity refused: plans root missing" }
+  $resolver = Join-Path $SkillRoot "ilk-loop/scripts/dispatch_target.py"
+  $resolveArgs = @($resolver, '--plans-dir', $plans, '--slug', $Target.slug)
+  if ($Target.master) { $resolveArgs += @('--master', (Join-Path $plans $Target.master)) }
+  if ($Target.fname) { $resolveArgs += @('--filename', $Target.fname) }
+  $identityJson = & python @resolveArgs | Out-String
+  if ($LASTEXITCODE -ne 0) { throw "dispatch identity refused: selected plan unresolved or ambiguous" }
+  $identity = $identityJson | ConvertFrom-Json
+  $identity | Add-Member -NotePropertyName step -NotePropertyValue $Target.step -Force
+  $briefArgs = $resolveArgs + @('--brief', '--step', [string]$Target.step, '--project', $Project, '--skill-root', $SkillRoot)
+  $brief = & python @briefArgs | Out-String
+  if ($LASTEXITCODE -ne 0) { throw "dispatch brief refused" }
+  return [PSCustomObject]@{ Identity = $identity; Brief = $brief.TrimEnd() }
+}
+
+function Get-WorkerCostObservation {
+  param([string]$LogFile)
+  $report = Join-Path (Split-Path $SkillRoot -Parent) "tools/loop-performance/report.py"
+  if (-not (Test-Path "$LogFile.jsonl") -or -not (Test-Path $report)) { return $null }
+  try {
+    $payload = & python $report "$LogFile.jsonl" 2>$null | Out-String
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $rows = @($payload | ConvertFrom-Json)
+    if ($rows.Count -gt 0) { return $rows[0] }
+  } catch {}
   return $null
 }
 
@@ -2241,11 +2277,28 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
 
   # -- Steer hook: interjection text -----------------------------------
   $iterPrompt = $Prompt
+  $dispatchContext = Get-WorkerDispatchContext -Project $ProjectPath -Target $preIterTarget
+  if ($dispatchContext) {
+    $iterPrompt = "$($dispatchContext.Brief)`n`n$iterPrompt"
+    $env:ILK_DISPATCH_SLUG = $dispatchContext.Identity.slug
+    $env:ILK_DISPATCH_SUBPLAN = $dispatchContext.Identity.subplan_path
+  } else {
+    Remove-Item Env:ILK_DISPATCH_SLUG -ErrorAction SilentlyContinue
+    Remove-Item Env:ILK_DISPATCH_SUBPLAN -ErrorAction SilentlyContinue
+  }
   if ($steerResult.InterjectionText) {
-    $iterPrompt = "OPERATOR INTERJECTIONS (honor before continuing the plan):`n$($steerResult.InterjectionText)`n`n$Prompt"
+    $iterPrompt = "OPERATOR INTERJECTIONS (honor before continuing the plan):`n$($steerResult.InterjectionText)`n`n$iterPrompt"
     $ijLen = ([string]$steerResult.InterjectionText).Length
     Write-Host "[steer] interjection injected ($ijLen chars)" -ForegroundColor Cyan
   }
+
+  $startedRecord = @{
+    run_id = $RunId; cli = 'claude'; iteration = $i
+    timestamp = (Get-Date).ToString('o'); project = $ProjectPath
+    model = $ResolvedModel; status = 'started'
+  }
+  if ($dispatchContext) { $startedRecord['dispatch'] = $dispatchContext.Identity }
+  Write-JsonlRecord -Record $startedRecord
 
   $result = Invoke-ClaudeIteration `
     -Cwd $ProjectPath `
@@ -2507,6 +2560,9 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     stop_reason       = $iterStopReason
     local_checks      = $localChecksRun
   }
+  if ($dispatchContext) { $jsonlRecord['dispatch'] = $dispatchContext.Identity }
+  $workerCosts = Get-WorkerCostObservation -LogFile $iterLog
+  if ($workerCosts) { $jsonlRecord['worker_cost_observation'] = $workerCosts }
   if ($wipPreserved -gt 0) { $jsonlRecord['wip_preserved'] = $wipPreserved }
   if ($iterMetrics.ToolCalls -gt 0) { $jsonlRecord['tool_calls'] = $iterMetrics.ToolCalls }
   if ($iterMetrics.TestInvocations -gt 0) { $jsonlRecord['test_invocations'] = $iterMetrics.TestInvocations }

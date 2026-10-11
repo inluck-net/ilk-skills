@@ -71,6 +71,16 @@ def build_record(
     # fail/error only).
     results = (data or {}).get("results", [])
     if results:
+        # Each real check retains its own attempt/output/timing, including
+        # passes and later failures; this is additive observation, not reuse.
+        observed_fields = ('command', 'attempt_id', 'exit_code', 'cmd_exit_code',
+                           'outcome', 'duration_sec', 'started_monotonic',
+                           'ended_monotonic', 'stdout_path', 'stderr_path',
+                           'files', 'partition_index', 'partition_count', 'tree_sha')
+        rec['check_observations'] = [
+            {k: result[k] for k in observed_fields if result.get(k) is not None}
+            for result in results
+        ]
         cmd = gate_label_command(data or {})
         if cmd:
             rec["command"] = cmd
@@ -94,6 +104,9 @@ def build_record(
             rec["error"] = error[-4096:] if len(error) > 4096 else error
         if reason:
             rec["reason"] = reason
+        for channel in ('stdout', 'stderr'):
+            if failing_check.get(channel + '_path'):
+                rec[channel + '_path'] = failing_check[channel + '_path']
 
     # When outcome is error/inconclusive (e.g. ILK-CHECK: unmeasured marker)
     # and reason is not yet set, extract it from the data results.  The

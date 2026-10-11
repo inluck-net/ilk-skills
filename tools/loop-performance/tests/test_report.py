@@ -45,3 +45,24 @@ def test_truncated_stream_preserves_unknowns(tmp_path):
     assert r['thinking_completed_seconds'] is None
     assert r['foreground_test_seconds'] is None
     assert r['foreground_test_unmatched_calls'] == 1
+
+
+def test_bootstrap_retries_and_children_have_explicit_denominators(tmp_path):
+    p=tmp_path/'iter-01.log.jsonl'
+    rows=[
+      {'type':'assistant','timestamp':'2026-10-11T00:00:00Z','message':{'id':'m1','content':[{'type':'tool_use','id':'scan','name':'Read','input':{'file_path':'plans/selected.md'}}]}},
+      {'type':'system','subtype':'api_retry','retry_delay_ms':536},
+      {'type':'system','subtype':'api_retry','retry_delay_ms':1204},
+      {'type':'assistant','timestamp':'2026-10-11T00:00:05Z','message':{'id':'m2','content':[{'type':'tool_use','id':'edit','name':'Edit','input':{'file_path':'code.py'}}]}},
+      {'type':'assistant','message':{'id':'m3','content':[{'type':'tool_use','id':'after','name':'Read','input':{'file_path':'plans/selected.md'}}]}},
+      {'type':'assistant','parent_tool_use_id':'agent','message':{'id':'child','content':[{'type':'tool_use','id':'child-read','name':'Read','input':{'file_path':'plans/all.md'}}]}},
+    ]
+    p.write_text('\n'.join(json.dumps(r) for r in rows))
+    r=mod.report(p)
+    assert r['bootstrap_path_indicator_calls']==2
+    assert r['bootstrap_indicator_before_first_edit']==1
+    assert r['root_tool_span_before_first_edit_seconds']==5
+    assert r['child_tool_calls']==1
+    assert r['child_assistant_events']==1
+    assert r['explicit_api_retry_delay_seconds']==1.74
+    assert r['explicit_api_retry_events']==2

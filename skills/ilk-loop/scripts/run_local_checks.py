@@ -351,6 +351,10 @@ def find_subplan(project: Path, slug: str) -> Path | None:
     plans_dir, _ = _resolve_plans_dir(project)
     if plans_dir is None or not plans_dir.is_dir():
         return None
+    from dispatch_target import pinned_subplan
+    pinned = pinned_subplan(plans_dir, slug)
+    if pinned is not None:
+        return pinned
     for p in sorted(plans_dir.glob("*.md")):
         try:
             fm, _ = split_frontmatter(read_text(p))
@@ -620,6 +624,11 @@ class CheckResult:
     reason: str | None = None  # human-readable why this outcome (null for pass/fail)
     path_prelude_applied: bool = False  # true when _read_path_prelude returned non-empty
     cmd_exit_code: int | None = None  # the first failing check's own exit code (G7)
+    attempt_id: str | None = None
+    stdout_path: str | None = None
+    stderr_path: str | None = None
+    started_monotonic: float | None = None
+    ended_monotonic: float | None = None
 
 
 _STEP_HEADING_ANY_RE = re.compile(r"^###\s+Step\s+(\d+)", re.MULTILINE)
@@ -1612,6 +1621,19 @@ def run_one(check: dict, scope: str, project: Path,
                 path_prelude_applied=applied,
                 cmd_exit_code=rc,
             )
+        r.started_monotonic = t0
+        r.ended_monotonic = t0 + dur
+        import uuid
+        r.attempt_id = uuid.uuid4().hex
+        output_root = os.environ.get('ILK_GATE_OUTPUT_DIR', '')
+        if output_root:
+            root = Path(output_root).resolve()
+            root.mkdir(parents=True, exist_ok=True)
+            out_path = root / (r.attempt_id + '.stdout.log')
+            err_path = root / (r.attempt_id + '.stderr.log')
+            out_path.write_text(stdout or '', encoding='utf-8')
+            err_path.write_text(stderr_full, encoding='utf-8')
+            r.stdout_path, r.stderr_path = str(out_path), str(err_path)
         r.outcome, r.reason = _classify_check(r.exit_code, r.error, stderr_full)
         return r
     except Exception as e:

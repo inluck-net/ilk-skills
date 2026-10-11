@@ -24,8 +24,8 @@ def dispatch(tmp_path, source=None):
     plans = tmp_path / 'plans'
     plans.mkdir()
     master = plans / 'MASTER-owner.md'
-    master.write_text('---\nbase_sha: frozen123\n---\n')
-    selected = plans / 'arbitrary-filename.md'
+    master.write_text('---\nbase_sha: frozen123\n---\n| 1 | 2026-10-11-chosen.md |\n')
+    selected = plans / '2026-10-11-chosen.md'
     selected.write_text('''---
 plan: chosen
 current_step: 0
@@ -222,3 +222,6 @@ print(json.dumps({'type':'result','subtype':'success','duration_ms':1,'duration_
     measured = [r for r in records if 'worker_cost_observation' in r]
     assert measured, cp.stdout[-2500:]+cp.stderr[-2500:]
     assert measured[0]['worker_cost_observation']['models_actual_init'] == ['stub-model']
+    assert measured[0]['dispatch']['subplan_path'] == str(selected)
+    assert measured[0]['dispatch']['master_path'] == str(master)
+    assert any(r.get('status') == 'started' and r.get('dispatch',{}).get('step') == 0 for r in records)

@@ -41,6 +41,10 @@ _STEP_HEADING_RE = re.compile(r"^###\s+Step\s+(\d+)", re.MULTILINE)
 
 def _find_subplan(plans_dir: Path, slug: str) -> Path:
     """Locate a sub-plan file by its frontmatter ``plan:`` slug."""
+    from dispatch_target import pinned_subplan
+    pinned = pinned_subplan(plans_dir, slug)
+    if pinned is not None:
+        return pinned
     import glob
     matches = glob.glob(str(plans_dir / f"*-{slug}.md"))
     if not matches:

@@ -1274,7 +1274,10 @@ get_active_subplan_targets() {
   # active master — so the gate targets the sub-plan the loop is actually
   # working, not an arbitrary one.
   local status_json line slug step
-  status_json=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || true
+  status_json="${ILK_DISPATCH_STATUS_JSON:-}"
+  if [[ -z "$status_json" ]]; then
+    status_json=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || true
+  fi
   [[ -n "$status_json" ]] || return 0
   # A non-runnable master (draft, etc.) must not be gated.  Treat absent
   # or '(none)' legacy as runnable so existing projects are unaffected.
@@ -1992,7 +1995,7 @@ _read_gate_red_ids() {
   local slug="$1"
   local step="$2"
   local f
-  f="$(_gate_red_ids_file)" || echo "[]"; return 0
+  f="$(_gate_red_ids_file)" || { echo "[]"; return 0; }
   if [[ ! -f "$f" ]]; then
     echo "[]"
     return 0
@@ -2042,6 +2045,7 @@ _extract_failing_ids() {
   fi
   python3 -c "
 import json, re, sys
+from pathlib import Path
 ids = set()
 for line in open(sys.argv[1]):
     line = line.strip()
@@ -2056,6 +2060,14 @@ for line in open(sys.argv[1]):
         continue
     # Extract from stdout_tail: FAILED path::id or paths::id
     tail = rec.get('stdout_tail', '') + '\n' + rec.get('stderr_tail', '')
+    for check in rec.get('check_observations', []) or [rec]:
+        for channel in ('stdout', 'stderr'):
+            output_path = check.get(channel + '_path')
+            if output_path:
+                try:
+                    tail += '\n' + Path(output_path).read_text(encoding='utf-8', errors='replace')
+                except OSError:
+                    pass
     for m in re.finditer(r'FAILED\s+(\S+?)(?:::\S+)?(?:\s|$)', tail):
         ids.add(m.group(1))
     # Also extract from pytest short test summary: FAILED path::id
@@ -2401,6 +2413,16 @@ _plan_fingerprint() {
 find_subplan_file_by_slug() {
   local plans_dir="$1" slug="$2"
   [[ -n "$plans_dir" && -d "$plans_dir" ]] || return 1
+  if [[ "${ILK_DISPATCH_SLUG:-}" == "$slug" ]]; then
+    python3 - "$plans_dir" "$slug" "${_SKILL_ROOT}/ilk-loop/scripts" <<'PYPIN'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[3])
+from dispatch_target import pinned_subplan
+print(pinned_subplan(Path(sys.argv[1]), sys.argv[2]))
+PYPIN
+    return $?
+  fi
   local f plan_slug
   for f in "$plans_dir"/*.md; do
     [[ -f "$f" ]] || continue
@@ -3288,7 +3310,7 @@ invoke_local_checks() {
     # Capture stdout and stderr separately: run_local_checks.py may print
     # diagnostic messages to stderr (mention-gate skip, isolation warnings)
     # that break json.load when merged via 2>&1.
-    gtimeout "${remain_sec}s" python3 "$helper_script" --project "$plans_root" --repo-root "$project" --slug "$slug" --step "$step" > "$tmp_out" 2>"$tmp_err" || check_exit=$?
+    ILK_GATE_OUTPUT_DIR="${results_file}.artifacts" gtimeout "${remain_sec}s" python3 "$helper_script" --project "$plans_root" --repo-root "$project" --slug "$slug" --step "$step" > "$tmp_out" 2>"$tmp_err" || check_exit=$?
 
     local outcome=""
     # gtimeout exits 124 when it kills the process (outer timeout fired).
@@ -3372,8 +3394,14 @@ from pathlib import Path
 row = {'slug': sys.argv[2], 'step': int(sys.argv[3]), 'outcome': sys.argv[4], 'exit_code': int(sys.argv[5])}
 if sys.argv[6]:
     row['head_sha'] = sys.argv[6]
+try:
+    detail = json.loads(Path(sys.argv[11]).read_text().splitlines()[-1])
+    if detail.get('check_observations'):
+        row['check_observations'] = detail['check_observations']
+except (OSError, ValueError, IndexError):
+    pass
 append_gate_history(Path(sys.argv[7]), row, sys.argv[8], int(sys.argv[9]), sys.argv[10])
-" "${_SKILL_ROOT}/ilk-loop/scripts" "$slug" "$step" "$outcome" "$check_exit" "$_gh_head_sha" "$_gh_history_path" "${RUN_ID:-}" "${i:-0}" "$(date +%Y-%m-%dT%H:%M:%S%z)" 2>/dev/null || true
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$slug" "$step" "$outcome" "$check_exit" "$_gh_head_sha" "$_gh_history_path" "${RUN_ID:-}" "${i:-0}" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$results_file" 2>/dev/null || true
     fi
 
     rm -f "$tmp_out" "$tmp_err"
@@ -5628,35 +5656,17 @@ Rules:
 build_worker_dispatch_brief() {
   local subplan="$1" step="$2" plans_dir="$3"
   python3 - "$subplan" "$step" "$plans_dir" "$PROJECT_PATH" "$_SKILL_ROOT" "${ILK_MASTER:-}" <<'PYBRIEF'
-import re, sys
+import sys
 from pathlib import Path
-subplan, step, plans, project, skills, master_name = sys.argv[1:]
-path = Path(subplan)
-text = path.read_text(encoding='utf-8-sig')
-# Prefer the launcher's explicit master pin. Otherwise the selected subplan's
-# exact MASTER link is descriptive context, never scheduler/gate authority.
-if not master_name:
-    links = set(re.findall(r'\]\(\./(MASTER-[^/)]+\.md)\)', text))
-    master_name = next(iter(links)) if len(links) == 1 else ''
-master = Path(plans) / master_name if master_name else None
-base = 'unknown'
-if master and master.is_file():
-    fm = master.read_text(encoding='utf-8-sig').split('---', 2)
-    match = re.search(r'^base_sha:\s*(\S+)', fm[1] if len(fm) > 2 else '', re.M)
-    if match:
-        base = match[1]
-else:
-    master = None
-print('DISPATCH CONTEXT (driver-selected work; keep required instruction reads):')
-print(f'Project: {project}\nPlans: {plans}')
-print(f'Pinned loop instructions: {skills}/ilk-loop/SKILL.md')
-print(f'Master: {master if master else "unknown; use the selected subplan link"}')
-print(f'Subplan: {path}\nSelected step: {step}')
-print(f'Frozen batch base (not iteration HEAD): {base}')
-print(f'Gate entry point: {skills}/ilk-loop/scripts/run_local_checks.py --print-step-gate "{path}" {step}')
-print('Read the exact instructions/master/subplan above; use existing fixtures and repository guidance.')
-print('Start at this step. Do not scan all plans or rediscover the skill root; group independent reads when supported.')
-print('These paths are context, not gate success or permission to change driver-owned proof/state.')
+skills = Path(sys.argv[5])
+sys.path.insert(0, str(skills / 'ilk-loop' / 'scripts'))
+from dispatch_target import format_brief, resolve
+from plan_slug import strip_date_prefix
+plan, step, plans, project, skills, master = sys.argv[1:]
+path = Path(plan)
+identity = resolve(Path(plans), strip_date_prefix(path.stem),
+                   master=Path(master) if master else None, filename=path.name)
+print(format_brief(identity, int(step), project, Path(skills)))
 PYBRIEF
 }
 
@@ -6122,7 +6132,33 @@ print(fm.get('result_file', ''))
     # time the gate block runs there is no longer an unshipped sub-plan to find.
     # Measured end-to-end — reading it afterwards resolved nothing and the gate
     # still did not run.
-    PRE_ITER_TARGET="$(get_active_subplan_targets 2>/dev/null || true)"
+    # Pin the existing scheduler selection for this dispatch. This JSON is
+    # descriptive input to the existing started/summary records, not a second
+    # context file. D1 will absorb it with the tree resolution migration.
+    local _dispatch_status_json="" _dispatch_master_name="" _dispatch_filename=""
+    _dispatch_status_json=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || true
+    PRE_ITER_TARGET="$(ILK_DISPATCH_STATUS_JSON="$_dispatch_status_json" get_active_subplan_targets 2>/dev/null || true)"
+    _dispatch_master_name=$(printf '%s' "$_dispatch_status_json" | jq -r '.master // empty') || true
+    _dispatch_filename=$(printf '%s' "$_dispatch_status_json" | jq -r --arg slug "${PRE_ITER_TARGET%% *}" '[(.subplans // [])[] | select(.slug == $slug) | .fname] | if length == 1 then .[0] else empty end') || true
+    local _dispatch_identity_json="" _dispatch_identity_rc=0
+    local _dispatch_plans_dir=""
+    _dispatch_plans_dir=$(get_plans_dir 2>/dev/null) || true
+    if [[ -n "$PRE_ITER_TARGET" && -n "$_dispatch_plans_dir" ]]; then
+      local _identity_args=(--plans-dir "$_dispatch_plans_dir" --slug "${PRE_ITER_TARGET%% *}")
+      [[ -n "$_dispatch_master_name" ]] && _identity_args+=(--master "${_dispatch_plans_dir}/${_dispatch_master_name}")
+      [[ -n "$_dispatch_filename" ]] && _identity_args+=(--filename "$_dispatch_filename")
+      _dispatch_identity_json=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/dispatch_target.py" "${_identity_args[@]}") || _dispatch_identity_rc=$?
+      if [[ "$_dispatch_identity_rc" -ne 0 ]]; then
+        stop_reason="dispatch_identity_invalid"
+        break
+      fi
+      export ILK_DISPATCH_SLUG="${PRE_ITER_TARGET%% *}"
+      ILK_DISPATCH_SUBPLAN=$(printf '%s' "$_dispatch_identity_json" | jq -r '.subplan_path')
+      export ILK_DISPATCH_SUBPLAN
+    else
+      unset ILK_DISPATCH_SLUG ILK_DISPATCH_SUBPLAN
+    fi
+
     # The ledger writer's wider baseline: every non-shipped sub-plan and the
     # step it starts this iteration on.  Read here for the same reason
     # PRE_ITER_TARGET is -- afterwards the agent has already marked sub-plans
@@ -6225,10 +6261,11 @@ slug = sys.argv[1]
 step = int(sys.argv[2])
 plans_dir = sys.argv[3]
 out_path = sys.argv[4]
-matches = glob.glob(os.path.join(plans_dir, f"*-{slug}.md"))
-if not matches:
-    raise SystemExit(1)
-body = open(matches[0], encoding="utf-8").read()
+from dispatch_target import pinned_subplan, resolve
+selected = pinned_subplan(__import__("pathlib").Path(plans_dir), slug)
+if selected is None:
+    selected = resolve(__import__("pathlib").Path(plans_dir), slug)["subplan_path"]
+body = open(selected, encoding="utf-8").read()
 fm_text, body_text = split_frontmatter(body)
 checks = collect_declared_local_checks(fm_text, body_text)
 cmds = []
@@ -6376,10 +6413,18 @@ ${iter_prompt}"
       _wgn_plans_dir=$(get_plans_dir 2>/dev/null) || _wgn_plans_dir=""
       if [[ -n "$_wgn_plans_dir" ]]; then
         local _wgn_subplan
-        _wgn_subplan=$(find_subplan_file_by_slug "$_wgn_plans_dir" "$_wgn_slug") || _wgn_subplan=""
+        local _wgn_identity="${_dispatch_identity_json:-}"
+        if [[ -z "$_wgn_identity" ]]; then
+          local _wgn_identity_args=(--plans-dir "$_wgn_plans_dir" --slug "$_wgn_slug")
+          [[ -n "${ILK_MASTER:-}" ]] && _wgn_identity_args+=(--master "${_wgn_plans_dir}/${ILK_MASTER}")
+          _wgn_identity=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/dispatch_target.py" "${_wgn_identity_args[@]}") || return 2
+        fi
+        _wgn_subplan=$(printf '%s' "$_wgn_identity" | jq -r '.subplan_path // empty') || return 2
+        local _brief_master=""
+        _brief_master=$(printf '%s' "$_wgn_identity" | jq -r '.master_path // empty') || true
         if [[ -n "$_wgn_subplan" ]]; then
           local _dispatch_brief=""
-          _dispatch_brief=$(build_worker_dispatch_brief "$_wgn_subplan" "$_wgn_step" "$_wgn_plans_dir" 2>/dev/null) || true
+          _dispatch_brief=$(ILK_MASTER="$_brief_master" build_worker_dispatch_brief "$_wgn_subplan" "$_wgn_step" "$_wgn_plans_dir" 2>/dev/null) || true
           if [[ -n "$_dispatch_brief" ]]; then
             iter_prompt="${_dispatch_brief}
 
@@ -6429,12 +6474,14 @@ ${iter_prompt}"
     RUN_ID="$RUN_ID" \
     _ITER="$i" \
     _TS="$_start_ts" \
+    _DISPATCH_IDENTITY_JSON="$_dispatch_identity_json" \
+    _DISPATCH_STEP="${PRE_ITER_TARGET#* }" \
     PROJECT_PATH="$PROJECT_PATH" \
     MODEL="$MODEL" \
     _RESOLVED_MODEL="${RESOLVED_MODEL:-}" \
     python3 -c "
 import json, os
-print(json.dumps({
+d = {
   'run_id': os.environ['RUN_ID'],
   'cli': 'claude',
   'iteration': int(os.environ['_ITER']),
@@ -6442,7 +6489,15 @@ print(json.dumps({
   'project': os.environ['PROJECT_PATH'],
   'model': os.environ.get('_RESOLVED_MODEL', '') or os.environ.get('MODEL', '') or os.environ.get('ANTHROPIC_MODEL', ''),
   'status': 'started',
-}))
+}
+try:
+  identity = json.loads(os.environ.get('_DISPATCH_IDENTITY_JSON', '') or '{}')
+  if identity:
+    identity['step'] = int(os.environ['_DISPATCH_STEP'])
+    d['dispatch'] = identity
+except (ValueError, KeyError):
+  pass
+print(json.dumps(d))
 " >> "$JSONL_LOG" || true
 
     # -- Gate-first fast path (opt-in: gate_first: true on the step) --------
@@ -7429,6 +7484,8 @@ print(json.dumps({'slug': slug, 'violation': f'gate_isolation_restore_failed: {e
     _RESOLVED_MODEL="${RESOLVED_MODEL:-}" \
     MAX_BUDGET_USD="$MAX_BUDGET_USD" \
     _WORKER_COST_JSON="$_worker_cost_json" \
+    _DISPATCH_IDENTITY_JSON="${_dispatch_identity_json:-}" \
+    _DISPATCH_STEP="${PRE_ITER_TARGET#* }" \
     RUN_ID="$RUN_ID" \
     _ITER="$i" \
     _TS="$ts" \
@@ -7463,6 +7520,13 @@ try:
   if observed:
     d['worker_cost_observation'] = observed[0]
 except (ValueError, TypeError, IndexError):
+  pass
+try:
+  identity = json.loads(os.environ.get('_DISPATCH_IDENTITY_JSON', '') or '{}')
+  if identity:
+    identity['step'] = int(os.environ['_DISPATCH_STEP'])
+    d['dispatch'] = identity
+except (ValueError, KeyError):
   pass
 nc = os.environ.get('_NEW_COMMITS_JSON', '')
 if nc and nc != '{}':
