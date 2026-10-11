@@ -776,6 +776,13 @@ start_ilk_window() {
       inputs_dir="$prepared_inputs"
     else
     local pin_args=(--repo "${_SKILL_ROOT}/.." --worker-home "$source_home" --destination "$inputs_dir" --project "$project_path" --observe-scope)
+    if [[ "${ILK_WORKER_TOOLS:-shell}" != shell ]]; then
+      if [[ "${ILK_WORKER_MODE:-}" != code-only ]]; then
+        echo "Native worker tools require the owned code-only boundary" >&2
+        return 1
+      fi
+      pin_args+=(--worker-tools "$ILK_WORKER_TOOLS")
+    fi
     if [[ "${ILK_WORKER_THINKING:-default}" != default ]]; then
       if [[ "${ILK_WORKER_MODE:-}" != code-only ]]; then
         echo "[ilk] worker thinking control requires enforced code-only dispatch" >&2

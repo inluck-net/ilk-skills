@@ -46,7 +46,8 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
     # Separate IPC and worker scratch prevent the shell from unlinking IPC.
     ipc=Path(tempfile.mkdtemp(prefix='ilk-ipc-')).resolve()
     scratch=Path(tempfile.mkdtemp(prefix='ilk-worker-')).resolve()
-    context=dict(context,private_worker_home=manifest['worker_home'],worker_inputs_dir=str(inputs),
+    context=dict(context,worker_tools=manifest.get('worker_tools','shell'),
+                 private_worker_home=manifest['worker_home'],worker_inputs_dir=str(inputs),
                  worker_tmp_dir=str(scratch),worker_shell_python=sys.executable,
                  worker_sandbox_adapter='macos-brokered-shell',shell_broker_path=str(ipc/'shell.sock'),
                  shell_broker_nonce=uuid.uuid4().hex,run_registry_dir=str(registry),runner_owner_pid=owner_pid,

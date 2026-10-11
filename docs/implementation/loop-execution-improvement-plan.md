@@ -153,6 +153,20 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- `3afefdf1` archived normal/interrupted-commit acceptance: 2 passed in
+  9.18s. Fresh recovery history ownership does not change frozen transactions,
+  duplicate commits or pointer semantics; installed runner unchanged.
+- Consumer 240s sample at `0657df35` FAILED acceptance, 243.227s wall,
+  38 calls. WIP commit `951b47cd` preserves a partial reap.py edit (25 changed
+  lines) but no authoritative gate, plan advance or ship. A clean checkout
+  was WIP preservation, not loss of the diff. Exact before/WIP patch saved to
+  `consumer-provider-valid-task-bound/unaccepted-worker.diff`. Late tool results
+  show malformed shell-wrapper quoting and attempts to write a patch script
+  under protected run logs; both refused, followed by smaller successful edits.
+  No further cap increase. Next distinct hypothesis is opt-in native file tools
+  inside the same existing OS boundary, reducing measured quoting failures;
+  shell-only remains default and authoritative gates remain driver-owned.
+
 - Recovery history mutations now require fresh driver authority before I/O and
   replacement, lock each retry read/increment/write, and fsync parent directories
   for counters/notices/salvage. Concurrent counter and worker-refusal checks plus

@@ -67,7 +67,10 @@ def instructions(context,path):
         'Keep the interpreter, wrapper and context arguments exactly as shown.',
         'Replace only the final --command argument with your shell command as ONE POSIX single-quoted argument.',
         'Do not put backslashes before quote delimiters. Do not add outer shell operators or expansions.',
-        'Use the wrapper for reading files and editing code. Other tools are unavailable.',
+        ('Native Read, Grep, Glob, Edit and Write are available inside the same OS boundary; '
+         'prefer them for ordinary reads/edits to avoid shell quoting. Use absolute paths in the execution worktree.'
+         if context.get('worker_tools','shell')=='native' else
+         'Use the wrapper for reading files and editing code. Other tools are unavailable.'),
         'Do not invoke /ilk or rediscover a batch. Do not run a full test suite.',
         'Diagnostic tests are permitted when needed to implement the selected step.',
         'Report findings in your final text; the driver imports them after acceptance.',
@@ -84,6 +87,13 @@ def worker_turn(context,path,prompt,*,claude,model,budget,mcp,session=None):
         return outcome
 
 
+def _tool_names(context,manifest):
+    profile=context.get('worker_tools','shell')
+    if profile!=manifest.get('worker_tools','shell') or profile not in {'shell','native'}:
+        raise ContextError('worker tools contradict frozen launch inputs')
+    return 'Bash,Read,Grep,Glob,Edit,Write' if profile=='native' else 'Bash'
+
+
 def _worker_turn(context,path,prompt,*,claude,model,budget,mcp,session,bound,manifest,control):
     deadline=context['iteration_deadline_monotonic']
     import hashlib
@@ -96,7 +106,7 @@ def _worker_turn(context,path,prompt,*,claude,model,budget,mcp,session,bound,man
     if mcp is None or Path(mcp).resolve()!=Path(manifest['mcp']['path']):
         raise ContextError('worker MCP configuration contradicts frozen launch inputs')
     args=[claude,'-p','--dangerously-skip-permissions','--output-format','stream-json',
-          '--verbose','--include-partial-messages','--tools','Bash','--settings',control['settings_path'],
+          '--verbose','--include-partial-messages','--tools',_tool_names(context,manifest),'--settings',control['settings_path'],
           '--setting-sources','',
           '--append-system-prompt',instructions(context,path)]
     if model:args+=['--model',model]

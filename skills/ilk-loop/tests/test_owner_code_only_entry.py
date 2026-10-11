@@ -13,7 +13,7 @@ pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='Mac production entr
 ROOT=Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize('case',['normal','hold','pending-advance','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain'])
+@pytest.mark.parametrize('case',['normal','native-tools','hold','pending-advance','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain'])
 def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,monkeypatch,case):
     human_hold_during_gate=case=='hold'
     upgrading=case=='upgrade-drain'
@@ -58,12 +58,21 @@ from worker_shell import canonical_command
 assert sys.argv[sys.argv.index('--setting-sources')+1]==''
 path=Path(os.environ['ILK_ITER_CONTEXT']);ctx=read_context(path)
 command="printf 'accepted' > later.txt" if ctx['dispatch']['slug']=='later' else "printf 'def f(value): return value + 2\\n' > counter.py"
-cp=subprocess.run(['/bin/bash','-c',canonical_command(ctx,path,command)],capture_output=True,text=True)
-assert cp.returncode==0,cp.stderr
+if ctx.get('worker_tools')=='native':
+ assert sys.argv[sys.argv.index('--tools')+1]=='Bash,Read,Grep,Glob,Edit,Write'
+ Path(ctx['exec_tree'],'counter.py').write_text('def f(value): return value + 2\\n')
+ for protected in (Path(ctx['dispatch']['subplan_path']),Path(ctx['exec_tree'])/'.git/forged-worker-state'):
+  try:protected.write_text('forged')
+  except PermissionError:pass
+  else:raise AssertionError('native CLI escaped protected scope')
+else:
+ assert sys.argv[sys.argv.index('--tools')+1]=='Bash'
+ cp=subprocess.run(['/bin/bash','-c',canonical_command(ctx,path,command)],capture_output=True,text=True)
+ assert cp.returncode==0,cp.stderr
 print(json.dumps({'type':'system','subtype':'init','session_id':'fixture-session','model':'fixture-model'}))
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'fixture-session'}))
 ''');cli.chmod(0o700)
-    inputs=tmp_path/'inputs';manifest=prepare(ROOT,home,inputs)
+    inputs=tmp_path/'inputs';manifest=prepare(ROOT,home,inputs,worker_tools='native' if case=='native-tools' else 'shell')
     pin_launch_resources(inputs,project=work,executables={'python':sys.executable,'claude':str(cli)})
     if upgrading:
         target_inputs=tmp_path/'upgrade-target-inputs'
