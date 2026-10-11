@@ -15,6 +15,20 @@ def common_dir(root: Path) -> Path:
 
 
 def reconcile(clone: Path, worktree: Path, state_file: Path) -> dict:
+    from iteration_context import read_context
+    from run_registry import require_driver
+    from plan_state import _lock
+    require_driver(read_context())
+    state_file.parent.mkdir(parents=True,exist_ok=True)
+    with _lock(state_file.with_name(state_file.name+'.lock')):
+        return _reconcile(clone,worktree,state_file)
+
+
+def _reconcile(clone: Path, worktree: Path, state_file: Path) -> dict:
+    from iteration_context import read_context
+    from run_registry import require_driver
+    from plan_state import _sync_parent
+    require_driver(read_context())
     clone=clone.resolve();worktree=worktree.resolve()
     try:
         previous=json.loads(state_file.read_text())
@@ -46,7 +60,11 @@ def reconcile(clone: Path, worktree: Path, state_file: Path) -> dict:
     state_file.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.NamedTemporaryFile(mode='w',dir=state_file.parent,delete=False) as f:
         tmp=Path(f.name);json.dump(current,f);f.write('\n');f.flush();os.fsync(f.fileno())
-    os.replace(tmp,state_file)
+    try:
+        tmp.chmod(0o600)
+        require_driver(read_context())
+        os.replace(tmp,state_file);_sync_parent(state_file)
+    finally:tmp.unlink(missing_ok=True)
     return current
 
 

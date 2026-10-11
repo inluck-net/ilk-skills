@@ -102,6 +102,16 @@ def test_selfmod_state_reentry_and_disappeared_unmerged_work(tmp_path):
     assert reconcile(clone,work,state)['state']=='ISOLATED'
 
 
+def test_selfmod_worker_cannot_create_lifecycle_state(tmp_path,monkeypatch):
+    from selfmod_state import reconcile
+    from run_registry import RegistryError
+    args=fixture(tmp_path);state=tmp_path/'runtime/state.json'
+    monkeypatch.setenv('ILK_WORKER_SESSION','1')
+    with pytest.raises(RegistryError,match='worker cannot'):
+        reconcile(Path(args['clone']),Path(args['exec_tree']),state)
+    assert not state.parent.exists()
+
+
 def test_audit_ignores_unmerged_trailer_and_unreachable_ledger(tmp_path):
     import ship_audit
     args=fixture(tmp_path);clone=Path(args['clone']);work=Path(args['exec_tree'])

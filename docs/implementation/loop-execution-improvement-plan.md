@@ -17,13 +17,13 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: finish settings-source/hook dependency pinning and check
-the exact archived caller; then selfmod/consumer recovery adapters and remaining
+Current next action: build and validate the opt-in MiMo thinking-control adapter
+against actual CLI wire behavior; then selfmod/consumer recovery adapters and remaining
 state/lifecycle adapters and activation. D1 POSIX callers and D2 private launch
 inputs now have production-entry candidate evidence. C3 preparation/acceptance/
 repair is wired but remains disabled by default. Actual-base provenance and
 Windows/member/dirty-entry adapters remain open. Continue here per Chad:
-“no more handover, until the whole thing done”. Overall estimate 44% is a
+“no more handover, until the whole thing done”. Overall estimate 48% is a
 judgment against delivered/installed/measured scope, not a checkbox count.
 
 Old run `20261011-102057` timed out by itself. Old run `20261011-130246`
@@ -1023,3 +1023,31 @@ No completion/ship/proof markers are inferred from this human tracker.
   1 in 0.05s after correcting incomplete test context. Exact archived and actual
   provider checks pending local commit. This targets measured bootstrap calls;
   it does not establish a speed improvement or fix model thinking latency.
+- `7ce36297` archived batched-bootstrap caller passed 1 in 6.65s. Actual
+  full-entry default-thinking repeat FAILED at unchanged 120s iteration limit,
+  123.261s wall; no acceptance/edit/ship, source home unchanged, registry clear.
+  Evidence `full-entry-provider-bootstrap-batched/`. Do not present batching
+  as speed proof. No more identical provider reruns without a new hypothesis.
+- Actual installed CLI wire-control probe with a local fake SSE API (no real
+  provider credentials/calls): default sends thinking adaptive/display omitted
+  and effort high; MAX_THINKING_TOKENS=0 and alwaysThinkingEnabled=false both
+  OMIT thinking, retaining effort high. All three CLI calls completed. Saved
+  `cli-thinking-wire-capability/summary.json`; no prompts/headers/keys captured.
+  MiMo official Anthropic API documents thinking enabled when omitted and
+  supports explicit enabled/disabled. CLI effort off is not proof of MiMo off.
+- Explicit-thinking experiment used only a private manual fixture proxy for
+  the configured official MiMo coding endpoint. First API-host-only fixture
+  refused the coding hostname before dispatch (correct guard, no API call).
+  Correct configured-host fixture at `7ce36297` PASSED in 47.732s wall,
+  41.840s CLI observed: actual MiMo PRO, eight production hook copies, five
+  requests observed with thinking disabled, one accepted gate/commit/CAS,
+  positive integrity/journal, shipped, registry clear and source home unchanged.
+  Evidence `full-entry-provider-thinking-disabled-coding/`. Two default runs
+  timed out; this one synthetic task does not justify a general default change
+  or consumer speed/quality claim. Build an opt-in owned adapter, then measure
+  representative acceptance/recovery before choosing profiles.
+- Selfmod lifecycle state writer now requires fresh driver authority, excludes
+  worker mutation, serializes read/reconcile/write under its own lock and
+  fsyncs replacement/parent with private file permissions. Normal deferred /
+  landed / isolated reentry and worker refusal checks: 2 passed in 0.27s.
+  Remaining state/landing adapters and production-entry checks remain open.
