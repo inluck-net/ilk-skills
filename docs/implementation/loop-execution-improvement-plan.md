@@ -2647,3 +2647,23 @@ anchors at the time of inspection and can move as integration changes code.
   green proof would violate both the review and the delivered invariant.
   Hermetic gate-eligibility lint and remaining platform/readers also remain
   open; avoid new speculative mechanisms before checking existing contracts.
+
+
+### Unknown attribution cannot supply legacy integrity proof
+
+- Tracing pre-existing-red advancement found a delivered legacy shortcut:
+  evaluate_ship accepted unmeasured attribution and unknown owner; final gate
+  lookup accepted unknown node attribution, including inside a pre-existing
+  summary. Four isolated negatives reproduced this (4 failed in 0.05s).
+- Removed unknown-attribution and ownerless-owned integrity exemptions; mixed
+  unknown nodes cannot qualify a non-owned red. Actual green results retain
+  green status, and existing known inherited/pre-existing integrity honesty
+  remains separate from raw green shipment proof. No strike rule changed.
+- Integrity/step-commit callers: 37 passed in 4.08s. Extended unknown/positive
+  cases plus shared attribution: 14 passed/3 skipped in 1.45s. Portable PS
+  runtime was not selected for those skipped branches; do not claim them.
+  Timeout/strike/unknown-batch-base callers: 18 passed/1 skipped in 0.78s.
+  New cases dispatch no model; no full suite or baseline suite was run.
+- This removes an unsafe shortcut before adding any owned unproven-progress
+  adapter. It does not implement that adapter or change the strict owned
+  raw-green contract. Commit before the archived normal entry check.
