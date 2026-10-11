@@ -6740,6 +6740,7 @@ ${STEER_INTERJECTION_TEXT}"
     PROJECT_PATH="$PROJECT_PATH" \
     MODEL="$MODEL" \
     _RESOLVED_MODEL="${RESOLVED_MODEL:-}" \
+    _PROVENANCE_SCRIPT_DIR="${_ILK_SCRIPT_DIR}" \
     python3 -c "
 import json, os
 d = {
@@ -6755,6 +6756,12 @@ d = {
 }
 with open(os.environ['ILK_ITER_CONTEXT']) as context_file:
   d['context'] = json.load(context_file)
+import sys
+sys.path.insert(0, os.environ.get('_PROVENANCE_SCRIPT_DIR') or os.environ['_PHASE_SCRIPT_DIR'])
+from provider_provenance import configured_provider
+d['provider_configured'] = configured_provider(os.environ.get('ANTHROPIC_BASE_URL'))
+d['provider_configured']['settings_source'] = 'driver environment; pinned worker manifest is separate'
+d['base_url'] = d['provider_configured']['origin'] or ''
 try:
   identity = json.loads(os.environ.get('_DISPATCH_IDENTITY_JSON', '') or '{}')
   if identity:
@@ -8219,7 +8226,6 @@ d = {
   'timestamp': os.environ['_TS'],
   'project': os.environ['PROJECT_PATH'],
   'model': os.environ.get('_RESOLVED_MODEL', '') or os.environ.get('MODEL', '') or os.environ.get('ANTHROPIC_MODEL', ''),
-  'base_url': os.environ.get('ANTHROPIC_BASE_URL', ''),
   'max_budget_usd': float(os.environ.get('MAX_BUDGET_USD', 0)),
   'duration_sec': int(os.environ['_DUR']),
   'driver_elapsed_sec': int(os.environ['_FULL_DUR']),
@@ -8239,6 +8245,12 @@ except (ValueError, TypeError, IndexError):
   pass
 with open(os.environ['ILK_ITER_CONTEXT']) as context_file:
   d['context'] = json.load(context_file)
+import sys
+sys.path.insert(0, os.environ.get('_PROVENANCE_SCRIPT_DIR') or os.environ['_PHASE_SCRIPT_DIR'])
+from provider_provenance import configured_provider
+d['provider_configured'] = configured_provider(os.environ.get('ANTHROPIC_BASE_URL'))
+d['provider_configured']['settings_source'] = 'driver environment; pinned worker manifest is separate'
+d['base_url'] = d['provider_configured']['origin'] or ''
 if d['context'].get('worker_sandbox_adapter') == 'macos-brokered-shell':
   try:
     with open(os.environ['_DRIVER_ACCEPTANCE_FILE']) as acceptance_file:

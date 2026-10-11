@@ -254,3 +254,17 @@ def test_complete_code_inventory_detects_changed_or_added_runtime_inputs(tmp_pat
         data=json.loads((destination/'inputs.json').read_text());data['code_inventory']=[]
         (destination/'inputs.json').write_text(json.dumps(data))
     with pytest.raises(InputPinError,match='changed'):verify_code_snapshot(destination,expected=expected)
+
+
+def test_manifest_provider_origin_is_configured_and_secret_free(tmp_path):
+    repo,home,hook=fixture(tmp_path)
+    settings=home/'settings.json'
+    row=json.loads(settings.read_text())
+    row['env']['ANTHROPIC_BASE_URL']='https://user:private-url-secret@api.example/private-url-secret?key=private-url-secret'
+    settings.write_text(json.dumps(row))
+    destination=tmp_path/'run'
+    manifest=prepare(repo,home,destination)
+    assert manifest['provider_configured']['origin']=='https://api.example'
+    assert 'actual provider unobserved' in manifest['provider_configured']['identity_basis']
+    assert 'private-url-secret' not in (destination/'inputs.json').read_text()
+    assert json.loads((destination/'worker-home/settings.json').read_text())['env']['ANTHROPIC_BASE_URL']==row['env']['ANTHROPIC_BASE_URL']

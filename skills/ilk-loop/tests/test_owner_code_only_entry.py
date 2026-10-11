@@ -142,6 +142,7 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         CLAUDE_CONFIG_DIR=manifest['worker_home'],ILK_CLAUDE_BIN=str(cli),ILK_WORKER_MODE='code-only',
         PYTHONPATH=str(code/'skills/ilk-loop/scripts'),PATH=str(world['bin'])+os.pathsep+os.environ['PATH'])
     for key in ('ILK_SKIP_MAIN','ILK_WORKER_SESSION','ILK_ITER_CONTEXT','ILK_ITER_RECORD_STAGE'):env.pop(key,None)
+    env['ANTHROPIC_BASE_URL']='https://user:private-url-secret@provider.example/private-url-secret?key=private-url-secret'
     runtime=world['data_home']/'projects'/world['key']/'runtime/launcher'
     if upgrading:env['ILK_ENABLE_UPGRADE_DRAIN']='1'
     process=subprocess.Popen(['bash',str(code/'skills/ilk-loop/scripts/run_ilk_loop_claude.sh'),
@@ -269,6 +270,12 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
                 assert git('rev-parse','HEAD').stdout.strip()==subprocess.check_output(['git','-C',str(prior_root),'rev-parse','HEAD'],text=True).strip()
             return
         assert terminal['state']=='all-shipped',(terminal,stdout[-4500:],stderr[-4500:])
+        provenance_records=[json.loads(line) for line in (world['data_home']/'projects'/world['key']/'logs/.ilk-loop.log').read_text().splitlines()]
+        for phase in ('open','close'):
+            record=next(row for row in provenance_records if row.get('record_phase')==phase)
+            assert record['base_url']=='https://provider.example'
+            assert 'actual provider unobserved' in record['provider_configured']['identity_basis']
+            assert 'private-url-secret' not in json.dumps(record)
         assert process.returncode==0,(stdout[-4500:],stderr[-4500:])
         if case.startswith('native-tools'):
             assert (work/'batch-suite-invoked').exists()==(case=='native-tools-batch-optin')

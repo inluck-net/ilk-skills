@@ -93,6 +93,10 @@
   ],
   "kernel": [
     {
+      "path": "skills/ilk-loop/scripts/provider_provenance.py",
+      "why": "Sanitizes public configured provider records; workers must not change provenance or expose credentials."
+    },
+    {
       "path": "skills/ilk-loop/scripts/run_local_checks.py",
       "guard": "gates",
       "why": "the local gate runner"

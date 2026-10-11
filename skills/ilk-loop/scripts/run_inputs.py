@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import tarfile
 import sys
+from provider_provenance import configured_provider
 
 
 class InputPinError(RuntimeError):
@@ -222,6 +223,7 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
                   'upgrade_drain_protocol':1 if {'boundary','activation','consume'}<=drain_functions else None,
                   'source_root':str(source_root),'source_repo':str(repo),'source_worker_home':str(worker_home),
                   'settings_non_env_sha256':hashlib.sha256(json.dumps(safe,sort_keys=True).encode()).hexdigest(),
+                  'provider_configured':configured_provider(env.get('ANTHROPIC_BASE_URL')),
                   'env_keys':sorted(env),'requested_model':env.get('ANTHROPIC_MODEL') or pinned.get('model'),
                   'hooks':observations,'credentials_provisioned':'private settings copy; no values in manifest',
                   'scope_observation_only':observe_scope,
