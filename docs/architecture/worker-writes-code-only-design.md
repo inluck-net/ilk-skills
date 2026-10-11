@@ -1,5 +1,17 @@
 # The worker writes code only: design note
 
+**Execution performance extension (2026-10-11):**
+[Loop execution performance](loop-execution-performance-design.md) adds a
+compact dispatch brief and additive observations first; canonical I1/I2 are
+not built. Driver-only authoritative gates remain a later ownership change,
+dependent on enforced write scope and a measured red-recovery/resume path.
+The existing worker-runs-gates protocol stays until then. Worker reports are
+never sufficient proof, and gate-outcome reuse is removed from this proposal.
+Chad confirmed the expanded freeze on 2026-10-11: every loop-built kernel
+change uses a supervised owner build, including session-planned work. The
+expanded landing paths are included. Template/report work remains non-kernel;
+this policy approval does not declare its enforcement implemented.
+
 **Status:** accepted 2026-10-10 (Chad): all three decisions in section 7,
 built before the 09-28 transition API. Written by the RSI owner session
 (ilk-skills-6f). The exact freeze scope of section 5 is defined in
@@ -156,7 +168,8 @@ on 2026-10-10.
      `install.sh` and `host_deploy_status.py`. Only the release train,
      phase-1 verify and `ilk_release` are inside.
 
-**Proposed freeze scope.** Proposed 2026-10-10, awaiting Chad:
+**Accepted freeze scope.** Proposed 2026-10-10, confirmed by Chad 2026-10-11
+(“go as you recommend”). Enforcement migration remains to be implemented:
 - Refuse kernel-tier edits from **every** loop-built commit, not only
   unattended ones. This reverses the slow path from MASTER-2026-10-04m.
 - Add `bounce_daemons.sh`, `install.sh` and `host_deploy_status.py` to the
