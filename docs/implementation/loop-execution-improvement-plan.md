@@ -159,6 +159,15 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- 17a18d86 archived normal/native/pending-worktree production callers passed
+  3 in 17.49s with complete private code inventory. No suite/model call.
+- Registry Status projection remaining writer: stale-driver and held-lock
+  negatives both reproduced missing refusal (2 failed in 0.48s). It now uses
+  shared _driver_lock_options for original deadline and fresh authority before
+  lock creation/during readiness/after acquisition. Focused registry/state
+  checks: 22 passed in 0.36s. No plan files changed outside disposable fixtures.
+
+
 - Private code inventory/global-home candidate: canonical hashes for all snapshot
   files and symlink entries; frozen context fingerprint checked at preparation,
   each provider turn and acceptance validation, not each tool call. Detects

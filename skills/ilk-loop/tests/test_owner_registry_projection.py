@@ -1,4 +1,5 @@
 import json
+import os
 import pytest
 from plan_state import reconcile_registry,_digest,TransitionError
 from plan_status import reconcile_master_registry,parse_frontmatter
@@ -43,3 +44,38 @@ def test_worker_cannot_project_or_weaken_master_registry(tmp_path,monkeypatch):
     with pytest.raises(TransitionError,match='workers'):
         reconcile_registry(master,expected_digest=_digest(before))
     assert master.read_bytes()==before
+
+
+def test_owned_registry_projection_refuses_stale_driver_before_writing(tmp_path,monkeypatch):
+    import iteration_context,run_registry
+    master=fixture(tmp_path);before=master.read_bytes()
+    context={'dispatch':{'master_path':str(master)},'worker_sandbox_adapter':'macos-brokered-shell'}
+    monkeypatch.setattr(iteration_context,'read_context',lambda:context)
+    def stale(*args):raise run_registry.RegistryError('owner changed')
+    monkeypatch.setattr(run_registry,'require_driver',stale)
+    with pytest.raises(run_registry.RegistryError,match='owner changed'):
+        reconcile_registry(master,expected_digest=_digest(before))
+    assert master.read_bytes()==before and not (tmp_path/'state-transitions.jsonl').exists()
+
+
+@pytest.mark.skipif(os.name != "posix",reason="POSIX lock readiness")
+def test_owned_registry_projection_wait_uses_original_deadline(tmp_path,monkeypatch):
+    import iteration_context,run_registry,threading,fcntl
+    from iteration_clock import monotonic
+    master=fixture(tmp_path);before=master.read_bytes();ready=threading.Event();release=threading.Event()
+    def hold():
+        with (tmp_path/'.state-transitions.lock').open('a+') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX);ready.set()
+            release.wait(.4) # Fixture failsafe judgment; no production timeout.
+    thread=threading.Thread(target=hold);thread.start();assert ready.wait(1)
+    # 60ms permits three existing 20ms polls; the held lock must not renew it.
+    context={'dispatch':{'master_path':str(master)},'worker_sandbox_adapter':'macos-brokered-shell',
+             'iteration_deadline_monotonic':monotonic()+.06}
+    monkeypatch.setattr(iteration_context,'read_context',lambda:context)
+    monkeypatch.setattr(run_registry,'require_driver',lambda *args:None)
+    try:
+        with pytest.raises(TransitionError,match='deadline'):
+            reconcile_registry(master,expected_digest=_digest(before))
+        assert master.read_bytes()==before and not (tmp_path/'state-transitions.jsonl').exists()
+    finally:release.set();thread.join(1)
+    assert not thread.is_alive()

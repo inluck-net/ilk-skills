@@ -349,7 +349,7 @@ def reconcile_registry(path: Path, *, expected_digest: str) -> bool:
         raise TransitionError('registry projection is outside frozen master')
     from plan_fingerprint import registry_rows
     log=path.parent/'state-transitions.jsonl'
-    with _lock(path.parent/'.state-transitions.lock'):
+    with _lock(path.parent/'.state-transitions.lock',**_driver_lock_options(context)):
         content=path.read_bytes();_recover(log,path,content)
         if _digest(content)!=expected_digest:raise TransitionError('master changed before registry projection')
         text=content.decode('utf-8-sig');lines=text.splitlines(keepends=True);changed=False
