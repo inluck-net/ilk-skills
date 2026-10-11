@@ -3670,3 +3670,14 @@ worker consumption and safe installation are pending. Managed policy, external
 library coordination and absolute/external global reference adapters remain
 open. This implements the named pinning gap; it does not add those unknown
 adapters to scope or mark the whole D2 item complete.
+
+
+Relative-global archived entry first refused before provider/advancement:
+**1 failed, 18 deselected in 2.65s**, with `private home overlaps
+execution/control inputs`. The copied graph's `../guide.md` alias was frozen
+as a protected instruction but the existing private-home overlap check excluded
+only canonical declared copies. New correction recognizes only protocol-2
+aliases whose resolved path **and hash** exactly match a declared global copy;
+all other protected paths retain their refusal. Twenty targeted global-copy and
+actual sandbox protection checks passed in **1.81s**. Archived positive rerun
+is pending; the installed `c8add919` snapshot is unaffected by this candidate.

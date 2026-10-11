@@ -67,6 +67,11 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
     common=subprocess.run(['git','-C',str(root),'rev-parse','--git-common-dir'],capture_output=True,text=True,**git_limits)
     if common.returncode==0:
         raw=Path(common.stdout.strip());protected.append(raw.resolve() if raw.is_absolute() else (root/raw).resolve())
+    global_readonly={row['path'] for row in context.get('global_instruction_inventory',[])}
+    if context.get('global_instruction_inventory_protocol')==2:
+        copies={(row['path'],row['sha256']) for row in context.get('global_instruction_inventory',[])}
+        global_readonly.update(row['path'] for row in context.get('instruction_input_inventory',[])
+            if (row.get('resolved_path'),row.get('sha256')) in copies)
     rules=['(version 1)','(allow default)','(deny file-write*)',
            _rule('allow','file-write*',root),_rule('allow','file-write*',temporary),
            # Moving the entire root into writable scratch would move its
@@ -107,7 +112,7 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
         home=Path(private_home).resolve(strict=True)
         if _inside(home,root) or any(_inside(home,path) or _inside(path,home) for path in protected
                                   if path not in {Path(context['data_root']).resolve(),Path(context['runtime_dir']).resolve()}
-                                  and str(path) not in {row['path'] for row in context.get('global_instruction_inventory',[])}):
+                                  and str(path) not in global_readonly):
             raise ContextError('private home overlaps execution/control inputs')
         rules.append(_rule('allow','file-write*',home))
         protected.extend(home/name for name in ('settings.json','hooks','skills','commands','CLAUDE.md','CLAUDE.local.md','rules'))
