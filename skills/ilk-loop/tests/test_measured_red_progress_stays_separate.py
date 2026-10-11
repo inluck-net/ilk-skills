@@ -144,6 +144,7 @@ if sys.argv[3]!='none':
             assert finalize(ctx,log,deadline=ctx['iteration_deadline_monotonic'])==1
             assert finalize(ctx,log,deadline=ctx['iteration_deadline_monotonic'])==0
             records=read_raw_records(Path(ctx['ledger_path']))
+            assert records[0].get('provenance')=='loop-executed',records[0]
             assert len(records)==1 and records[0]['integrity_passed'] is False and records[0]['progress_integrity_passed'] is True
             assert records[0]['gate_outcome']=='fail' and records[0]['accepted'] is False
             from ship_audit import ledger_record_is_reachable,closed_progress_is_observable

@@ -50,3 +50,26 @@ checks, for this sample. Candidate next comparison adds a pinned non-green
 record contract to the worker brief, holding task/model/hooks/tools/control
 constant. The short contract is new prompt guidance, not a proof bypass or a
 cached gate outcome. One ordered pair cannot establish a general causal gain.
+
+
+## Protocol-brief comparison: failed arm retained
+
+A second ordered sample changed only the worker's pinned protocol-facts brief,
+using candidate a673603c866a0bd971614d2280181f2549b6454d. Same consumer fixture
+content, actual MiMo PRO, eight hooks, native tools, disabled-thinking adapter,
+gates and 240s iteration / 300s outer judgments were retained. New private
+paths/run IDs and provider order are confounders; this is not randomized.
+
+It ended `timeout` after 242.771s whole runner, with no completed CLI result,
+no authoritative gate attempt, no step advance and no ship. Parser v6 observed
+21 root turns / 38 tools / 15 bootstrap-path indicators, no native first-edit
+observation, no foreground test calls and no compaction events. Worker elapsed,
+cost and first-edit timing are unknown; incomplete invocation is not zero.
+Source home stayed unchanged and its isolated registry was idle afterward.
+Evidence: `consumer-provider-measured-progress-contract-20261012/{summary.json,cost-report.json}`.
+
+This comparison does not justify a protocol-capsule performance improvement.
+The capsule is removed from runtime instructions; the first arm's successful
+brief remains the working fallback. Driver protocol/attribution/close changes
+remain installed and independently checked. No model or production timeout
+change follows from this one pair. Failed work remains diagnostic, not proof.

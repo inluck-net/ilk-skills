@@ -778,12 +778,13 @@ path indicators. Those are this sample's observations, not numeric defaults or
 proof of wasted calls. See `../verification/loop-measured-progress-consumer-2026-10-12.md`
 for models, clock boundaries, overlap and limits.
 
-New candidate `worker_iteration.measured_progress_contract` supplies the pinned
-non-green row semantics in the explicit measured-red profile's worker brief.
-It preserves driver-only writes/gates and opt-in final verification. The
-contract avoids requiring worker discovery of multiple emitter implementations;
-workers may still inspect an emitter for a concrete unresolved contract fact.
-Its performance benefit requires the controlled follow-up measurement. No
-read-call limit, stall-kill threshold, new timeout or default model change is
-introduced. Existing profiles retain their brief. This capsule describes
-protocol fields, never another execution's gate outcomes.
+A candidate pinned non-green protocol capsule was compared with the working
+brief on the same consumer fixture/model/hooks/tools. The ordered capsule arm
+timed out after 243s without completing a gate/step; its performance benefit
+was not established. It is removed from runtime instructions and the successful
+first arm's brief remains the fallback. Both measured arms and their clock/
+input/order limitations are in the linked verification note. No read-call
+limit, stall-kill threshold, new timeout or default model change is introduced.
+The installed driver protocol remains independently checked; final verification
+stays opt-in. Protocol facts can inform future context work, but this experiment
+does not justify enabling that prompt change.

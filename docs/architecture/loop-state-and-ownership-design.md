@@ -497,3 +497,15 @@ working controller's 4de1eb06 private pin and all plans/pause/input bytes; no
 worker was interrupted. Rezmac activation and remaining reader migrations are
 still open, as is representative actual-provider performance evidence for this
 new progress path. Runtime tests establish behavior, not a speed claim.
+
+
+Consumer close migration now has a candidate requiring a matching positive
+close for new provisional rows. Unknown close/landing/schema/flags/authority
+remain unclosed or unattested, measured negatives non-green; older Green rows
+cannot cover these new-row gaps. Bare historical rows retain legacy
+compatibility. Actual saved Green and progress producer ledgers were inspected,
+exposing the new progress writer's omitted provenance stamp; the candidate
+writer now emits loop-executed/context schema only after owner/close validation.
+These follow-ups await verified idle consumer delivery. No historical ledger
+or active pin is rewritten. The protocol-facts prompt experiment timed out and
+is removed; the previously successful brief remains the working fallback.

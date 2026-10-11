@@ -52,6 +52,7 @@ def finalize(context,log,*,deadline):
         selected=read_dispatch(context)
         close_id=hashlib.sha256(json.dumps(close,sort_keys=True,separators=(',',':')).encode()).hexdigest()
         projected.update(record_phase='close',close_record_id=close_id,proof_id='progress-'+close_id,
+            provenance='loop-executed',context_schema_version=1,
             integrity_passed=False,progress_integrity_passed=True,landed=True,gate_outcome='fail',
             step_from=selected['step'],step_to=selected['step']+1,
             before_sha=context['base_commit'],after_sha=projected['progress_head'],

@@ -3159,3 +3159,58 @@ corrected actual instructions fixture **1 passed / 4 deselected in 0.19s**.
 Legacy summary landing JSON defaults to empty diagnostic object (strict
 progress close still refuses it). Next same-task/model comparison; candidate
 brief not installed until measured. Whole scope remains open; continue here.
+
+
+### Failed prompt comparison retained; next consumer close gate
+
+Protocol capsule arm a673603c timed out 242.771s (unchanged 240s iteration /
+300s outer judgments), no completed CLI result/gate/advance/ship; source home
+unchanged and private registry idle. Actual MiMo PRO/eight hooks/native tools/
+disabled-thinking adapter match successful arm. Parser v6: 21 root turns /
+38 tools / 15 bootstrap-path indicators, no observed native edit or foreground
+tests, cost/worker result time unknown. One ordered pair cannot establish
+causality. Removed the capsule from runtime; prior successful brief is fallback.
+Installed 376f3096 is unchanged. Full metrics/limits in verification note.
+
+Consumer close-record migration reproduced provenance-only crash-gap defect:
+**4 failed / 1 passed in 0.11s** for provisional/open, older-green-beside-open,
+negative/unknown close. Candidate 6ec7ed72 requires matching positive close for
+new rows; raw historical rows retain compatibility. Unknown schema/flags/
+proof IDs remain unclosed, measured negatives non-green, older green cannot
+cover unclosed/new-red rows. Focused legacy/proof/reconcile scope **44 passed
+in 1.29s** before added unknown-shape checks; final **47 passed in 1.34s**,
+one pre-existing invalid-escape warning. No suite or publication.
+Local reaper is active PID 46881; consumer main remains 4f74ae4e and candidate
+must wait for fresh idle service/registry proof. Do not stop the reaper or alter
+claims. Next: verify reverted brief, prepare remote close-reader candidate,
+continue remaining consumer/context/ownership migrations and delivery.
+
+
+### Actual ledger checks and missing authority stamp
+
+Read real saved producer ledgers through candidate consumer 6ec7ed72 with a
+positive one-plan denominator (fixture slug token, not a production claim):
+previous actual Green provider ledger's provisional+matching close remained
+proven; measured-red prototype close was refused as **unattested**, revealing
+missing producer provenance. No saved ledger was rewritten.
+
+New closed-progress provenance assertion reproduced **1 failed / 15 deselected
+in 16.93s**. progress_close.finalize now explicitly emits truthful
+`provenance=loop-executed, context_schema_version=1` only after exact owner /
+close / child / landing validation; **1 passed / 15 deselected in 16.99s**.
+This stamps driver authorship, never green acceptance. Core candidate not yet
+installed; old private pins/records stay unchanged.
+
+Consumer expanded unknown-author negative reproduced **1 failed / 3 passed in
+0.11s**: an unstamped new-protocol close beside an old Green row was accepted.
+Candidate **3987a299** now makes new-protocol unattested rows block older proof;
+historical bare duplicates retain legacy compatibility. Final affected scope
+**49 passed in 1.32s** (one existing invalid-escape warning), no suite.
+Consumer main still 4f74ae4e. Reaper PID46881 completed; latest observation has
+idle reap/gc but active drain PID56028. Wait for all three verified idle jobs
+and empty consumer ownership before activation; do not stop active jobs.
+
+Reverted protocol-brief owned iteration **1 passed / 3 deselected in 8.80s**.
+No new provider run is needed merely to repeat the successful baseline. Next:
+commit provenance/fallback checkpoint, private remote consumer preparation,
+new archived close entry, safe local delivery, then remaining whole-plan work.
