@@ -2882,3 +2882,39 @@ anchors at the time of inspection and can move as integration changes code.
   must carry progress_accepted separately from accepted/green proof.
   Installed bb0e7d31 remains strict raw-green; artifacts/assessment candidate
   39242117 plus this increment are not installed.
+
+### Candidate measured-red commit/CAS and recovery transaction
+
+- New progress_transaction.accept/recover are independent owner APIs; no loop
+  runtime caller is enabled. They commit only an exact changed code tree with
+  complete measured-red assessment, preserve raw failures, and CAS one step
+  with progress_accepted=true but accepted=false/green_accepted=false.
+  Separate durable progress-acceptance receipts cannot masquerade as the
+  old raw-green acceptance receipts. Holds/contracts/kernel/index/tree and
+  registered authority still gate mutation.
+- Actual registered Git/pytest checks cover normal advance, crashes before
+  staging/after commit/before CAS/after CAS and changed output refusal:
+  6 passed in 28.25s. Each recovery produces one commit/one advancement,
+  idempotent repeat recovery, and no green acceptance. Actual hook changed
+  tree and crash-after-hook cases: 2 passed in 17.08s after correcting a
+  fixture script newline-escaping SyntaxError (2 failed in 0.47s before any
+  subprocess gate ran). Changed trees receive fresh gates/measurements.
+- A separate altered-node inventory negative reproduced trusting eligibility
+  metadata too much (1 failed in 4.31s). measured_progress.verify now rechecks
+  all head failures, both exact bases, raw outputs/exits and full selector
+  coverage before every prepared receipt/CAS/recovery. These are transfers
+  of this same exact transaction's fresh measurements, not routine cached
+  gate reuse. Combined correction run: 12 passed in 53.48s. Deadline metadata
+  was tightened during that run; a stable-source selection follows.
+- Hook measurements inherit the original assessment deadline/allowance;
+  recovery cannot renew it or the frozen iteration deadline. Existing child
+  termination grace and unsupported timeout entry remain explicit.
+- Model: none. No full suite, active batch/plan/input mutation or preview
+  activation. Next: raw-fail projection with named unproven reason, selfmod
+  landing, close/ledger/result/consumer and opt-in loop caller integration.
+
+Stable-source transaction/allowance/inventory selection: 5 passed in 26.40s
+(normal, prepared, committed, hook-committed and forged-observation). Diff
+checks passed. Commit/CAS recovery candidate is ready for projection/landing
+adapters, not installed or enabled in the loop. Original running controller,
+plans, pause and private dispatched inputs remain unchanged.

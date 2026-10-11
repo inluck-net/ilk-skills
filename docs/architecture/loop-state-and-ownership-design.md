@@ -388,7 +388,8 @@ failures, while green acceptance and shipment proof remain false. Original
 raw exits, complete failed selectors and named unproven reasons survive CAS,
 recovery, landing and close/result projection. A declaration is not evidence.
 The current owned path remains strict raw-green until these callers are wired
-and checked; the transaction adapter is not built yet.
+and checked; the commit/CAS adapter is now a candidate API; loop/terminal callers remain
+unwired.
 
 Its first prerequisite is an enforced sample boundary. Before this increment,
 red_owner._measure_at_base_worktree created/restored a disposable detached
@@ -418,7 +419,8 @@ exact-node outputs at both frozen bases, with context/role identity, output
 hashes and sample unchanged/cleanup observations. They are diagnostic APIs;
 accepted stays false. Simple Python/pytest commands are the supported sampling
 subset; compound/custom runners explicitly refuse instead of widening a gate.
-The typed progress decision and transaction callers remain unbuilt. Selected
+The typed progress decision and commit/CAS recovery APIs are candidates;
+loop/terminal transaction callers remain unwired. Selected
 real Mac checks and local/remote delivery states are in the implementation
 tracker; these APIs do not establish native Windows or general hermeticity.
 
@@ -427,5 +429,6 @@ to fresh exact-node observations at both bases, and keeps progress_eligible
 separate from accepted/green_accepted. Unknown, runner/fixture error, input
 change and flaky inventory refuse. The actual pre-existing/new-regression/
 unavailable-runner cases are checked on Mac. This API leaves HEAD and the plan
-pointer unchanged; commit/CAS intent, recovery, landing and terminal wiring
-remain required before enabling measured-red progress in running loops.
+pointer unchanged. Candidate progress_transaction.accept/recover perform
+commit/CAS intent and exact recovery with accepted=false and
+progress_accepted=true; landing and terminal wiring remain required before enabling measured-red progress in running loops.
