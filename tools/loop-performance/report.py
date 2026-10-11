@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from datetime import datetime
 from pathlib import Path
 
-PARSER_VERSION = 2
+PARSER_VERSION = 3
 BOOTSTRAP = re.compile(r'\.claude[^/\s]*/|\.ilk-data|\.ilk/|plans/|MASTER-|loop_status|find ~')
 TEST = re.compile(r'\b(?:pytest|unittest|vitest|jest|playwright)\b|\bnpm\s+(?:run\s+)?test\b')
 THINK = re.compile(r'\[thinking\] \d+ chars in ([\d.]+)s')
@@ -41,6 +42,7 @@ def report(path: Path) -> dict:
             pending_thought = not bool(THINK.search(line))
     models, sessions, assistant_ids, tools = set(), set(), set(), {}
     results, malformed, root_messages, assistant_events = [], 0, 0, 0
+    root_initializations=0
     starts, ends, compactions, compaction_durations = {}, {}, 0, []
     child_tools, child_messages, retry_delays = set(), 0, []
     root_tool_order = []
@@ -71,6 +73,7 @@ def report(path: Path) -> dict:
             if isinstance(delay, (int, float)) and not isinstance(delay, bool) and delay >= 0:
                 retry_delays.append(delay/1000)
         if row.get('type') == 'system' and row.get('subtype') == 'init':
+            root_initializations+=1
             if row.get('model'):
                 models.add(row['model'])
             if row.get('session_id'):
@@ -100,7 +103,12 @@ def report(path: Path) -> dict:
                     starts.setdefault(block['id'], stamp(row))
         if row.get('type') == 'result':
             results.append(row)
-    result = results[-1] if results else {}
+    def invocation_seconds(field):
+        values=[row.get(field) for row in results]
+        valid=[value for value in values if isinstance(value,(int,float)) and not isinstance(value,bool)
+               and math.isfinite(value) and value>=0]
+        complete=bool(results) and len(valid)==len(values) and len(results)>=root_initializations
+        return sum(valid)/1000 if complete else None
     bootstrap_ids = {identity for identity, tool in tools.items()
                      if BOOTSTRAP.search(json.dumps(tool.get('input', {})))}
     bootstrap = len(bootstrap_ids)
@@ -149,13 +157,17 @@ def report(path: Path) -> dict:
         'thinking_completed_seconds': round(sum(thoughts), 1) if thoughts or '[thinking]' in (text or '') else None,
         'thinking_progress_at_tail': pending_thought if '[thinking]' in (text or '') else None,
         'renderer_observed_seconds': clocks[-1]-clocks[0] if len(clocks) > 1 else None,
-        'worker_elapsed_seconds': result.get('duration_ms') / 1000 if result.get('duration_ms') is not None else None,
-        'api_seconds_overlapping': result.get('duration_api_ms') / 1000 if result.get('duration_api_ms') is not None else None,
+        'worker_elapsed_seconds': invocation_seconds('duration_ms'),
+        'api_seconds_overlapping': invocation_seconds('duration_api_ms'),
+        'completed_worker_invocations': len(results),
+        'root_initializations': root_initializations,
+        'worker_elapsed_basis': 'sum of completed CLI invocation result.duration_ms; missing invocation/capture is null',
         'completed_result': bool(results), 'malformed_lines': malformed,
         'compaction_events': compactions,
         'compaction_seconds': round(sum(compaction_durations), 3) if len(compaction_durations) == compactions else None,
         'limits': ['Thinking excludes unfinished blocks; renderer time includes output transit.',
                    'API, thinking and background-agent clocks overlap; do not sum or subtract.',
+                   'Sequential resume invocations are summed within each clock; driver gate/commit time is recorded separately.',
                    'Bootstrap paths and foreground test calls are indicators, not wasted-time attribution.',
                    'Test seconds are the union of timestamped foreground tool intervals, including shell overhead; missing intervals remain null.'],
     }

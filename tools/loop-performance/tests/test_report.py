@@ -47,6 +47,19 @@ def test_truncated_stream_preserves_unknowns(tmp_path):
     assert r['foreground_test_unmatched_calls'] == 1
 
 
+def test_resume_counts_both_invocations_and_an_unfinished_one_stays_unknown(tmp_path):
+    p=tmp_path/'iter.log.jsonl'
+    init={'type':'system','subtype':'init','session_id':'same','model':'actual'}
+    rows=[init,{'type':'result','duration_ms':7000,'duration_api_ms':5000},
+          init,{'type':'result','duration_ms':11000,'duration_api_ms':9000}]
+    p.write_text('\n'.join(json.dumps(row) for row in rows))
+    observed=mod.report(p)
+    assert observed['worker_elapsed_seconds']==18 and observed['api_seconds_overlapping']==14
+    assert observed['completed_worker_invocations']==2 and observed['sessions']==['same']
+    p.write_text(p.read_text()+'\n'+json.dumps(init))
+    assert mod.report(p)['worker_elapsed_seconds'] is None
+
+
 def test_bootstrap_retries_and_children_have_explicit_denominators(tmp_path):
     p=tmp_path/'iter-01.log.jsonl'
     rows=[

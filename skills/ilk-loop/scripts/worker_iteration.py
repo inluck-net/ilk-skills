@@ -7,6 +7,7 @@ This helper never chooses another plan or extends an iteration's budget.
 from __future__ import annotations
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 from iteration_clock import monotonic
 from iteration_context import read_context,read_dispatch,ContextError
 from worker_dispatch import binding
@@ -23,6 +25,18 @@ from run_registry import register_child
 from driver_step import accept_step
 from recovery import read_retry_state,update_retry_state,save_notice
 from gate_retry import decide_gate_retry
+
+
+def phase(context,name):
+    """Existing phase artifact shape, with the verified runner identity."""
+    target=Path(context['run_registry_dir'])/'phase.json';selected=read_dispatch(context)
+    payload=dict(phase=name,slug=selected['slug'],step=selected['step'],run_id=context['run_id'],
+                 iteration=context['iteration'],started_at=int(time.time()),pid=context['runner_owner_pid'],
+                 toolkit_sha=context['toolkit_sha'])
+    with tempfile.NamedTemporaryFile(mode='w',dir=target.parent,delete=False) as stream:
+        temporary=Path(stream.name);json.dump(payload,stream);stream.flush();os.fsync(stream.fileno())
+    try:temporary.chmod(0o600);os.replace(temporary,target)
+    finally:temporary.unlink(missing_ok=True)
 
 
 def instructions(context,path):
@@ -61,6 +75,7 @@ def worker_turn(context,path,prompt,*,claude,model,budget,mcp,session=None):
     args.append(prompt)
     env=dict(os.environ,ILK_WORKER_SESSION='1',ILK_ITER_RECORD_STAGE='',TMPDIR=bound['worker_tmp_dir'],
              CLAUDE_CODE_TMPDIR=bound['worker_tmp_dir'],CLAUDE_TMPDIR=bound['worker_tmp_dir'])
+    cli_started=monotonic()
     process=subprocess.Popen(['/usr/bin/sandbox-exec','-f',bound['sandbox_path'],*args],
         cwd=context['exec_tree'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=True)
     events=[];read_errors=[]
@@ -92,6 +107,7 @@ def worker_turn(context,path,prompt,*,claude,model,budget,mcp,session=None):
         for thread in threads:
             if thread.ident is not None:thread.join()
         for sig,handler in handlers.items():signal.signal(sig,handler)
+    cli_ended=monotonic()
     roots=[row for row in events if isinstance(row,dict) and not row.get('parent_tool_use_id')]
     ids={row['session_id'] for row in roots if row.get('type')=='system' and row.get('subtype')=='init' and row.get('session_id')}
     results=[row for row in roots if row.get('type')=='result']
@@ -105,7 +121,11 @@ def worker_turn(context,path,prompt,*,claude,model,budget,mcp,session=None):
             if text:texts=['\n'.join(text)]
     return dict(completed=completed,session_id=next(iter(ids)) if len(ids)==1 else None,
                 findings=texts[-1] if texts else None,exit_code=process.returncode,
-                cost_usd=results[0].get('total_cost_usd') if len(results)==1 else None)
+                cost_usd=results[0].get('total_cost_usd') if len(results)==1 else None,
+                terminal_reason=results[0].get('terminal_reason') if len(results)==1 else None,
+                cli_started_monotonic=cli_started,cli_ended_monotonic=cli_ended,
+                actual_models=sorted({row['model'] for row in roots if row.get('type')=='system'
+                                      and row.get('subtype')=='init' and row.get('model')}))
 
 
 def run(context,path,prompt,*,claude,model,budget,mcp,gate_timeout,turn=worker_turn):
@@ -116,12 +136,15 @@ def run(context,path,prompt,*,claude,model,budget,mcp,gate_timeout,turn=worker_t
     read_retry_state(counts,'count');read_retry_state(ids_path,'ids')
     session=None;attempts=[];turns=[];remaining_budget=budget
     while monotonic()<context['iteration_deadline_monotonic']:
+        phase(context,'agent')
         outcome=turn(context,path,prompt,claude=claude,model=model,budget=remaining_budget,mcp=mcp,session=session)
         turns.append({key:value for key,value in outcome.items() if key!='findings'})
         if not outcome['completed']:
-            return dict(accepted=False,attempts=attempts,worker_turns=turns,stop_reason='code_only_worker_incomplete')
+            return dict(accepted=False,attempts=attempts,worker_turns=turns,
+                        stop_reason='budget_exhausted' if outcome.get('terminal_reason')=='budget_exhausted' else 'code_only_worker_incomplete')
         if session and outcome['session_id']!=session:raise ContextError('resume changed provider session identity')
         session=outcome['session_id']
+        phase(context,'gate')
         accepted=accept_step(context,default_timeout=gate_timeout,deadline=context['iteration_deadline_monotonic'])
         attempts.extend(accepted['attempts'])
         if accepted['accepted']:
@@ -156,7 +179,7 @@ def run(context,path,prompt,*,claude,model,budget,mcp,gate_timeout,turn=worker_t
                         stop_reason=decision.stop_reason or 'code_only_resume_unavailable')
         if budget:
             cost=outcome.get('cost_usd')
-            if not isinstance(cost,(int,float)) or isinstance(cost,bool) or cost<0:
+            if not isinstance(cost,(int,float)) or isinstance(cost,bool) or not math.isfinite(cost) or cost<0:
                 return dict(accepted=False,attempts=attempts,worker_turns=turns,stop_reason='code_only_budget_unknown')
             remaining_budget-=cost
             if remaining_budget<=0:

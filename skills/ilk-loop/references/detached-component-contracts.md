@@ -109,6 +109,19 @@ submenu line.
 | `"local_checks_environment_fault"` | A derived check (e.g. mention gate) could not run because its binary is missing from PATH (exit 126/127). The gate record carries `reason: "environment-fault: ..."`. Distinct from `local_checks_failed` (tests ran and failed) — the environment is broken, not the code. The sub-plan is NOT reverted; the project is parked. (sub-plan `an-unrunnable-derived-check-stops-once`) | Terminal |
 | `"interrupted"` | The run ended without a terminal state. An operator stop (INT/TERM to the runner) adds `stopped_by: "signal:<SIG>"`; its absence means a crash or an unexplained exit. The watchdog never relaunches a sentinel carrying `stopped_by` (`relaunch_guard.py`) | Terminal |
 | `"error"` | Unexpected runner error | Terminal |
+| `"dispatch_identity_invalid"` | Exact selected-master/plan identity is missing or ambiguous; no dispatch | Terminal |
+| `"iteration_context_invalid"` | Frozen roles, admission, or context could not be established; no dispatch | Terminal |
+| `"iteration_record_projection_failed"` | Durable close could not finalize proof; provisional rows remain unproven | Terminal |
+| `"iteration_record_recovery_failed"` | Prior close-record recovery failed; no guessed proof | Terminal |
+| `"recovery_history_invalid"` | Retry history is corrupt; budget is not reset | Terminal |
+| `"run_inputs_changed"` | Pinned executable, MCP, settings or hook bytes changed; no hot substitution | Terminal |
+| `"selfmod_state_invalid"` | Selfmod execution/landing state could not be verified | Terminal |
+| `"code_only_acceptance_failed"` | Code-only admission, acceptance or result projection failed; no proof | Terminal |
+| `"code_only_worker_incomplete"` | Code-only provider turn did not finish successfully; diagnostic recovery only | Terminal |
+| `"code_only_resume_unavailable"` | Red gate has no verified same-session resume identity | Terminal |
+| `"code_only_budget_unknown"` | Provider cost missing after red; cannot grant a fresh capped budget | Terminal |
+| `"code_only_commit_hook_red"` | Commit hook changed the accepted tree and its new gate is red; pointer remains unchanged | Terminal |
+| `"budget_exhausted"` | Code-only repair exhausted the existing per-iteration provider budget | Terminal |
 | `"max-iterations"` | Hit iteration budget | Terminal |
 | `"budget-exhausted"` | Hit `--max-budget-usd` cap | Terminal |
 | `"quota-exhausted"` | Provider quota cap detected (`quota_detect.py`); imposed from outside the run and clears on the provider's schedule | Terminal |
@@ -156,6 +169,10 @@ is how a failed run gets classified `clean-success`.
 | Sentinel `state` | `collect.py` label | `watchdog.sh` action |
 |---|---|---|
 | `"budget_exhausted"` | `budget-exhausted` | `block` |
+| `"dispatch_identity_invalid"`, `"iteration_context_invalid"`, `"iteration_record_projection_failed"`, `"iteration_record_recovery_failed"`, `"recovery_history_invalid"`, `"run_inputs_changed"`, `"selfmod_state_invalid"` | `self-hosting-drift` | `needs-human` |
+| `"code_only_acceptance_failed"`, `"code_only_resume_unavailable"`, `"code_only_budget_unknown"` | `self-hosting-drift` | `needs-human` |
+| `"code_only_worker_incomplete"` | `interrupted` | `relaunch` (diagnostic history and existing retry limits retained) |
+| `"code_only_commit_hook_red"` | `local-checks-stuck` | `block` |
 | `"quota-exhausted"` | `quota-exhausted` | `block` |
 | `"gates-off"` | `blocked-no-runnable` | `stop-clean` |
 | `"max-iterations"` | `max-iter-bound` | `relaunch` |

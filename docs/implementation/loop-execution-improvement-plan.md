@@ -688,3 +688,19 @@ No completion/ship/proof markers are inferred from this human tracker.
   POSIX host clock. Local probe clocks remain local; no deadline extension or
   new production timeout. Windows QPC clock is retained for legacy gates,
   while code-only Windows process/sandbox adapters remain unbuilt.
+- Shared-clock and closed scoped proof checks: 14 passed in 8.28s. Actual
+  Bash caller subsequently produced accepted/closed proof readable as proven,
+  but terminal classification still called an already-shipped master blocked.
+  Classification now keeps human holds/unfinished shipped masters blocked and
+  consults proof for a fully shipped master. Missing `proven` remains unknown.
+- Reporter v3 now sums sequential CLI resume invocation clocks rather than
+  taking only the final result; missing invocation clocks remain null and the
+  numeric basis is recorded. CLI wall spans, actual models and driver phase
+  (`agent`/`gate`) are separately observed. 42 focused cost/state-vocabulary
+  checks passed in 0.89s. New and prior candidate terminal states are declared
+  in the compatibility contract and helper-emitted states are in the extractor.
+- Broker ownership monitoring now uses native macOS kqueue NOTE_EXIT plus an
+  owned signal/listener wake pipe instead of repeatedly spawning `ps`. The
+  supplied original deadline still bounds it. 7 focused owned dispatch/broker
+  checks passed in the latest run. Candidate remains uninstalled; next repeat
+  the actual Bash caller at this exact checkpoint, then actual-provider probes.

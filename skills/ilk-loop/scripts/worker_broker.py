@@ -22,11 +22,12 @@ from worker_sandbox import profile
 
 
 class ShellBroker:
-    def __init__(self,context: dict,*,deadline: float,path=None,nonce=None):
+    def __init__(self,context: dict,*,deadline: float,path=None,nonce=None,on_closed=None):
         self.context=dict(context);self.deadline=deadline
         self._directory=tempfile.TemporaryDirectory(prefix='ilk-ipc-') if path is None else None
         self.path=Path(path) if path is not None else Path(self._directory.name).resolve()/'shell.sock'
         self.nonce=nonce or uuid.uuid4().hex
+        self._on_closed=on_closed
         self._listener=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
         self._listener.bind(str(self.path));self.path.chmod(0o600);self._listener.listen()
         self._closed=threading.Event();self._active=None;self._connection=None;self._guard=threading.Lock()
@@ -60,6 +61,7 @@ class ShellBroker:
             if not self._closed.is_set():self.error=type(exc).__name__
         finally:
             self._closed.set();self._listener.close()
+            if self._on_closed:self._on_closed()
 
     def _execute(self,command):
         remaining=self.deadline-monotonic()
@@ -161,12 +163,26 @@ def main():
     context=read_context(args.context)
     if context.get('shell_broker_owner_pid')!=os.getpid() or context.get('runner_owner_pid')!=owner['pid']:
         raise ContextError('broker context identity mismatch')
+    # Native process-exit notification avoids spawning `ps` on every broker
+    # tick. The pipe wakes kqueue for TERM/INT or listener failure/closure.
+    import select
+    wake_read,wake_write=os.pipe();os.set_blocking(wake_write,False)
+    queue=select.kqueue()
+    def wake():
+        try:os.write(wake_write,b'x')
+        except OSError:pass
+    def signal_stop(*_):stopped.set();wake()
+    for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,signal_stop)
     try:
+        queue.control([select.kevent(owner['pid'],filter=select.KQ_FILTER_PROC,
+                       flags=select.KQ_EV_ADD|select.KQ_EV_ONESHOT,fflags=select.KQ_NOTE_EXIT),
+                       select.kevent(wake_read,filter=select.KQ_FILTER_READ,flags=select.KQ_EV_ADD)],0,0)
+        if stopped.is_set() or not owned():return 1
         with ShellBroker(context,deadline=args.deadline,path=context['shell_broker_path'],
-                         nonce=context['shell_broker_nonce']) as broker:
-            while not stopped.wait(.02):
-                if broker._closed.is_set() or monotonic()>=args.deadline or not owned():break
+                         nonce=context['shell_broker_nonce'],on_closed=wake) as broker:
+            queue.control(None,1,max(args.deadline-monotonic(),0))
     finally:
+        queue.close();os.close(wake_read);os.close(wake_write)
         if context.get('scratch_disposable'):
             import shutil
             shutil.rmtree(context['worker_tmp_dir'],ignore_errors=True)

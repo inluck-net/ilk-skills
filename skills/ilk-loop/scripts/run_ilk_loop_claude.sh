@@ -3595,6 +3595,10 @@ blocked = [s for s in subplans if s.get('status') not in ('shipped', 'pending', 
 # so existing projects without master_status are unaffected.
 master_status = data.get('master_status', '')
 _master_not_runnable = master_status not in ('', '(none)') and master_status not in ('queued', 'active')
+if master_status == 'shipped' and subplans and all(s.get('status') == 'shipped' for s in subplans):
+    # Completed master state is a dispatch prohibition, not a failed batch.
+    # Human holds still win below; proof is consulted in the final branch.
+    _master_not_runnable = False
 # A human park holds the whole project (plan_status.project_held_by), whatever
 # master was selected and whatever its sub-plans say.
 if data.get('held_by'):
@@ -3630,7 +3634,7 @@ else:
     # 'ALL SHIPPED -- nothing to run' in the SAME run: the report existed, and
     # the terminal state never read it.
     unproven = [s for s in subplans
-                if s.get('status') == 'shipped' and not s.get('proven', True)]
+                if s.get('status') == 'shipped' and not s.get('proven', False)]
     print('shipped-unproven' if unproven else 'all-shipped')
 " <<<"$json_output") || has_runnable="runnable"
 
@@ -3648,7 +3652,7 @@ import json, sys
 data = json.loads(sys.stdin.read())
 rows = []
 for s in data.get('subplans', []):
-    if s.get('status') != 'shipped' or s.get('proven', True):
+    if s.get('status') != 'shipped' or s.get('proven', False):
         continue
     rows.append(s.get('slug', s.get('fname', '?'))
                 + '(' + s.get('proof_state', 'unproven') + ')')

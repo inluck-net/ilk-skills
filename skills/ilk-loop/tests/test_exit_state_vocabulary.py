@@ -18,6 +18,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _CONTRACT_PATH = _REPO_ROOT / "skills" / "ilk-loop" / "references" / "detached-component-contracts.md"
 _BASH_RUNNER = _REPO_ROOT / "skills" / "ilk-loop" / "scripts" / "run_ilk_loop_claude.sh"
 _PS_RUNNER = _REPO_ROOT / "skills" / "ilk-loop" / "scripts" / "run_ilk_loop_claude.ps1"
+_CODE_ONLY_RUNNER = _REPO_ROOT / "skills" / "ilk-loop" / "scripts" / "worker_iteration.py"
 
 
 # The contract document carries TWO state-shaped tables under one parent
@@ -81,7 +82,7 @@ def _extract_state_literals(*paths: Path) -> set[str]:
     return states
 
 
-LAUNCHER_EXIT_STATES = _extract_state_literals(_BASH_RUNNER, _PS_RUNNER)
+LAUNCHER_EXIT_STATES = _extract_state_literals(_BASH_RUNNER, _PS_RUNNER, _CODE_ONLY_RUNNER)
 
 # Positive control.  An extractor that silently matched nothing would make
 # every assertion below vacuous -- the parametrize list would be empty and
