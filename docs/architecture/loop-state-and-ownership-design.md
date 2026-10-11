@@ -350,3 +350,17 @@ Evidence: archived Mac normal selfmod and zero-provider recovery callers passed
 checks passed 40 in 15.95s; retained dirty-work and lock-deadline checks then
 passed 8 in 4.35s. The latest archived caller recheck is pending. These are
 candidate results, not installed-host or all-platform completion.
+
+
+### Retained red ownership continuation (local preview, 2026-10-12)
+
+New `driver_step.admit_retained_red_entry` identifies an exact prior closed
+red diff, unchanged base/input/plan state and absent registered processes.
+The frozen context's diagnostic receipt grants entry ownership, never green
+proof or permission to advance. Retry counts/history persist; fresh gates and
+CAS remain required. Arbitrary initial dirt and unobserved timeout work refuse.
+`run_local_checks.find_subplan/main` now read the frozen target and execution
+root on legacy-context callers too; unknown or changed identities refuse
+before a gate. These are selected I1/I5 reader migrations, not a claim that
+every writer/platform adapter is complete. See the durable tracker for actual
+archived entry and portable PowerShell measurements.

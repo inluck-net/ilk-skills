@@ -83,9 +83,10 @@ writes is the one that is gated and recorded (memory
 `worker-step-bump-is-load-bearing`).
 
 The accepted I3 says "workers never write status". It enforces that by
-**diffing and reverting afterwards**. Its single transition API is not built
-yet: 0 `def transition` in `skills/ilk-loop/scripts/*.py`. The checks that run
-afterwards are where the policing rows come from.
+**diffing and reverting afterwards** at the 2026-10-10 review snapshot.
+At that snapshot its transition API was absent. The later owner implementation
+has `plan_state.transition`; the opt-in Mac path enforces driver ownership,
+while unmigrated legacy writers still need their historical policing.
 
 ## 3. Proposal
 
@@ -308,8 +309,9 @@ scheduler/watchdog/launcher work remains eligible for loop improvements.
 
 The checked Mac code-only profile stays explicit opt-in. It owns commits,
 gates, state and shipping; actual provider same-session red repair succeeded.
-Dirty entry and member repositories refuse that profile because their adapters
-are not built, and raw red gates cannot be waived by a baseline-red declaration.
+Arbitrary/timeout dirty entry and member repositories refuse that profile
+because their adapters are not built. Exact closed driver-red diffs now have
+a checked retained-entry adapter (`driver_step.py:71`), and raw red gates cannot be waived by a baseline-red declaration.
 The PowerShell runner explicitly refuses new code-only/native/thinking/drain
 profiles before launch instead of silently claiming their support. Legacy
 profiles retain historical semantics; they do not acquire code-only proof.

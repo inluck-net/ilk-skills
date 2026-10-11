@@ -93,3 +93,16 @@ feed batch 2:
 
 Design input for item 2 and the classifier: gh-resolve-21's proposal
 (2026-09-24), items 1-4 and the file-touched rule.
+
+
+### Owner implementation note (2026-10-12, local preview)
+
+All-attempt identity, rolling diagnostic flaky history, complete output
+retention, frozen at-base roots and shared attribution budgets have focused
+checks recorded in the owner tracker. PowerShell now requests persistent
+check captures and invokes shared ownership measurement before strikes; this
+is portable Mac evidence, not native Windows lifecycle proof. Unknown/mixed
+baseline evidence cannot excuse a failure. Attribution does not advance a
+step or substitute for a current gate. Final verification remains opt-in;
+CI-derived baseline lookup remains the earlier design thought. No routine
+full-suite baseline or final verifier was added by these changes.

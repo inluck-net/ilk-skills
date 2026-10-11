@@ -2291,3 +2291,8 @@ anchors at the time of inspection and can move as integration changes code.
   must ship in this effort or follow Mac/consumer delivery. Until answered,
   they remain open; their unchecked boxes are not silently removed. Continue
   independent Mac integration and required checks while the question is pending.
+
+- Committed b7bc9c2c archived Mac entries after the gate-reader migration:
+  retained-red two-launch plus native/default-final-skip checks: 2 passed/14
+  deselected in 22.53s. Design extension notes now distinguish these delivered
+  mechanisms from historical absent APIs and unsupported adapters.

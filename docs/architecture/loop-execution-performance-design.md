@@ -386,7 +386,7 @@ Do not change worker defaults based solely on CLI flag acceptance.
 write-scope/resume and complete pinning/consumer mapping were dependencies.
 The later owner candidate now has checked supported Mac capabilities for these
 paths. Current rollout readiness is the durable tracker, with production
-integration pending the progressing batch's normal boundary. Outcome reuse
+local Mac previews integrated at measured idle boundaries while existing private-pinned controllers and worker inputs were preserved. Outcome reuse
 remains removed and stall termination remains out of scope. Unsupported
 Windows/member/dirty owned adapters must refuse or use their explicit legacy
 fallback; they do not acquire Mac enforcement evidence.
@@ -725,3 +725,31 @@ budget. Legacy records without deadlines retain historical semantics. A
 negative first reproduced successful capture after expiry; 24 context checks
 and the archived normal caller passed after the change. This is a new isolated
 candidate, not a change to the live worker's loaded toolkit.
+
+
+### Checked recovery and caller continuation (2026-10-12, local preview)
+
+New `driver_step.admit_retained_red_entry` (`driver_step.py:71`) permits only
+an exact closed driver-observed red diff with unchanged frozen inputs/state
+and absent prior processes. An immutable diagnostic receipt identifies work;
+it never imports a green result. Two actual archived owned launches retained
+red work, then repaired and freshly gated it in 14.95s. Timeout/unknown work
+remains refused. This is a correctness measurement with a provider stub, not
+a model-speed observation or complete dirty-entry adapter.
+
+New shared `blocking_checks.attribute_records` (`blocking_checks.py:116`)
+measures confirmed reds from frozen roots and complete captures, with the
+existing legacy cap shared across records/checks and owned original-deadline
+clipping. PowerShell invokes it through `Set-LocalCheckAttribution` (:656).
+Measurement cannot clear a red or supply proof. Existing strike readers still
+require a measured base and commit owner. Portable PowerShell/Git measurement
+is checked on Mac; native Windows process and write-scope adapters are not.
+
+The gate CLI reader (`run_local_checks.py:313,2316`) now consumes the frozen
+registry/root/step rather than discovering a new plans root or gating the
+clone during worktree execution. PowerShell's producer (:695) retains complete
+artifacts and quotes literal native arguments. The actual spaced-worktree and
+clone-argument caller cases plus adjacent capture/target checks passed (22 in
+5.46s); five CLI identity cases passed in 1.11s. No agent model is dispatched
+by these measurements. Final verification stays opt-in and gate-outcome reuse
+stays removed. The tracker holds checkpoint-specific installed evidence.
