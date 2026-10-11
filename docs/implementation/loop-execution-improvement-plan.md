@@ -3013,3 +3013,14 @@ fixture uses one stub turn and actual failed pytest/head/base Git measurements;
 it does not claim provider speed or consumer completion. Next: committed
 archive's disposable measured-red runner entry, terminal/consumer guards,
 selfmod close and marker crash recovery. Whole estimate remains about 70%.
+
+
+Archived candidate 549ca5fd real entry: **1 failed / 15 deselected in 12.08s**
+because the fixture had no recorded batch base; exact-base refusal retained.
+After recording fixture base: **1 failed / 15 deselected in 27.20s** at close
+because broker cleanup observed dead children but had not retired their registry
+identities. Tightened candidate dispatch close to retire only freshly proved
+absent children/groups and refuse reused/moved identities. No live-run cleanup
+performed. Rerun required before runtime availability. Also found consumer
+`reap._check_ship_proof` currently treats loop provenance alone as proof; must
+reject non-green progress rows before exposing this new profile to consumers.

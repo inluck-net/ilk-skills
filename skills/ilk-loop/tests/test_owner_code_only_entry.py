@@ -34,6 +34,7 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
     if measured_red:
         (work/'test_existing.py').write_text('def test_existing():\n    assert False\n')
         git('add','test_existing.py');git('commit','-qm','measured existing failure')
+        master.write_text(master.read_text().replace('status: active','status: active\nbase_sha: '+git('rev-parse','HEAD').stdout.strip()))
         body=plan.read_text();start=body.index('  - command:');end=body.index('\n```',start)
         plan.write_text(body[:start]+'  - command: '+sys.executable+' -m pytest -q test_existing.py'+body[end:])
     if case=='selfmod':

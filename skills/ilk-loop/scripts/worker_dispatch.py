@@ -148,7 +148,16 @@ def close(context_path):
     while True:
         rows=[row for row in scan(Path(context['run_registry_dir'])) if row['run_id']==context['run_id']]
         if len(rows)!=1:raise ContextError('broker cleanup registry identity unavailable')
-        if not any(child['liveness'] in {'running','unverified-group'} for child in rows[0]['children_liveness']):return
+        children=rows[0]['children_liveness']
+        if any(child['liveness']=='reused-or-moved' for child in children):
+            raise ContextError('owned child identity changed during cleanup')
+        if all(child['liveness']=='dead' for child in children):
+            from run_registry import retire_child
+            for child in children:
+                if not retire_child(context,child['pid']):
+                    raise ContextError('owned child retirement remains unverified')
+            # The caller's close receipt can now attest an empty live registry.
+            return
         if monotonic()>=context['iteration_deadline_monotonic']:
             raise ContextError('owned group cleanup incomplete at original deadline')
         threading.Event().wait(.02)
