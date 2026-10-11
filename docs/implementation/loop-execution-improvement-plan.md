@@ -163,7 +163,11 @@ No completion/ship/proof markers are inferred from this human tracker.
   their prior contract. Focused state/selfmod/registry checks: 43 passed in 6.44s.
   Extended state/recovery/driver checks: 40 passed in 15.95s; subsequent dirty
   retained-worktree and lock-deadline checks: 8 passed in 4.35s.
-  Latest archived caller pending this checkpoint.
+  Latest archived caller: 1 failed, 2 passed in 23.63s. Recovery callers
+  passed; normal selfmod correctly selected a newly introduced toolkit-test
+  mention of the synthetic counter file, whose gate could not run in the
+  protected fixture. The over-cap fixture now uses its own dedicated target
+  file so it cannot add an unrelated citation to the entry task. Recheck pending.
 - Strict driver acceptance reproduced a skipped-mention false green: 21 related
   files exceeded the existing 20-file cap, inventory returned empty, and step
   accepted (negative regression failed in 0.49s). New complete-inventory mode

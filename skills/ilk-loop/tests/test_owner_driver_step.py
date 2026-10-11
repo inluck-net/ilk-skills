@@ -122,13 +122,20 @@ def test_over_cap_mention_inventory_is_inconclusive_not_green(tmp_path,monkeypat
     monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
     context,root,plan=fixture(tmp_path)
     from run_local_checks import _MENTION_GATE_CAP
+    (root/'fixture_mentions.py').write_text('value = 1\n')
     for index in range(_MENTION_GATE_CAP+1):
         target=root/'tests'/('test_counter_'+str(index)+'.py');target.parent.mkdir(exist_ok=True)
-        target.write_text('# counter.py:1\ndef test_related(): assert True\n')
+        target.write_text('# fixture_mentions.py:1\ndef test_related(): assert True\n')
     git(root,'add','.');git(root,'commit','-qm','fixture related tests')
     context.update(base_commit=git(root,'rev-parse','HEAD'),base_tree=git(root,'rev-parse','HEAD^{tree}'))
     (root/'counter.py').write_text('def f(value): return value + 2\n')
+    (root/'fixture_mentions.py').write_text('value = 2\n')
     with pytest.raises(ContextError,match='mention inventory exceeds'):
         accept_step(context,default_timeout=10)
     assert 'current_step: 0' in plan.read_text()
     assert git(root,'rev-parse','HEAD')==context['base_commit']
+    from run_local_checks import build_mention_gate_inventory
+    # Inventory parsing only: this command is never executed. Already declared
+    # full-file coverage is complete without adding another mention gate.
+    assert build_mention_gate_inventory(root,['fixture_mentions.py'],
+        {'python -m pytest tests'},require_complete=True)==[]
