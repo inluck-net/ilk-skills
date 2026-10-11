@@ -50,6 +50,8 @@ from ilk_paths import (  # noqa: E402
     project_data_dir,
 )
 
+from migration_guard import status as migration_status
+
 
 def find_running_pid_file(project_path: Path) -> Path | None:
     """
@@ -140,7 +142,7 @@ def main(argv: list[str]) -> int:
                     help="after a successful --apply, delete untracked source "
                          "files too (irreversible)")
     ap.add_argument("--ignore-running", action="store_true",
-                    help="skip the pid-file check (use only if you're sure no "
+                    help="skip only legacy pid-file checks (canonical registry still guards; no "
                          "loop is active)")
     args = ap.parse_args(argv)
 
@@ -158,6 +160,12 @@ def main(argv: list[str]) -> int:
     key = project_key(root)
     dst = external_plans_dir(key)
     proj_dir = project_data_dir(key)
+
+    # Registry ownership is authoritative even with the legacy override flag.
+    observed=migration_status(root)
+    if observed['busy']:
+        print(f"error: project migration is busy/unverified: {observed}",file=sys.stderr)
+        return 3
 
     # Safety: refuse when a loop is alive for this project.
     if not args.ignore_running:

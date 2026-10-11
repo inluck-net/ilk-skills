@@ -3542,3 +3542,25 @@ including durable intent/applied journal, human hold, no resume acknowledgement
 on refusal, and concurrent edit preservation. No numeric production default
 was added. This migrates one named writer, not every state writer, and is not
 installed yet. No live plan or worker was changed.
+
+
+### Lifecycle reader: legacy migration entry points (candidate)
+
+Three real disposable migration negatives reproduced copying/moving data while
+its canonical registry already contained an unexpired launch reservation:
+3 failed in 0.13s. Both `tools/migration/migrate_plans_to_external.py` and
+`migrate_project_runtime_dirs.py` now read shared `migration_guard.status`, which
+queries `run_registry.project_status` for canonical external and legacy project
+launcher roots. Busy, launching, held lock, or unknown registry refuses before
+moves. The old `--ignore-running` option skips only its legacy global PID lookup;
+it cannot bypass canonical registry ownership. Legacy watchdog service PID
+protection remains a separate conservative check.
+
+Checks: 21 migration/re-keying checks passed in 0.23s; added unknown-registry and
+idle two-root cases passed 5 focused checks in the recorded run. The 60-second
+fixture reservation is a judgment call solely to remain future-dated during
+synchronous fixture setup; a valid setup exceeding it falsifies the fixture,
+not a production cap. No real project migration, worker signal, plan edit or
+full suite was performed. This replaces liveness discovery at two named entry
+points, not migration-wide atomicity with a concurrent launch. Candidate awaits
+local safe activation alongside the triage writer correction.

@@ -32,6 +32,8 @@ from ilk_paths import (  # noqa: E402
     external_watchdog_dir,
 )
 
+from migration_guard import status as migration_status
+
 
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
@@ -64,6 +66,11 @@ def _migrate_one_project(project_path: Path, apply: bool) -> int:
     root = git_root(project_path)
     if root is None:
         print(f"error: no .git directory found above {project_path}", file=sys.stderr)
+        return 2
+
+    observed=migration_status(root)
+    if observed['busy']:
+        print(f"error: project migration is busy/unverified: {observed}",file=sys.stderr)
         return 2
 
     key = project_key(root)
