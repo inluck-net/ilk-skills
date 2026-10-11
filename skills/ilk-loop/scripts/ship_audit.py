@@ -792,6 +792,47 @@ def _evaluate_gate(
 
 # ── main predicate ────────────────────────────────────────────────────────────
 
+def _resolve_driver_gate(records,*,slug,authored,declared_checks,cwd,subplan_path,master_path):
+    """Closed scoped driver proof, independent of an optional batch verifier.
+
+    This reads actual acceptance, not cached gate outcomes. Each authored step
+    needs its accepted lineage/contract; the final accepted tree must be HEAD's
+    exact tree. Plan 07m R1/R2's changed-tree false-green path stays refused.
+    """
+    candidates=[row for row in (records or []) if row.get('driver_owned') is True
+                and row.get('slug')==slug and row.get('record_phase')=='close']
+    if not candidates:return None
+    if not subplan_path or not master_path or not cwd:
+        return 'incomplete','scoped driver proof needs exact selected master and subplan paths'
+    from plan_fingerprint import fingerprint
+    try:
+        plan=Path(subplan_path).resolve(strict=True);master=Path(master_path).resolve(strict=True)
+        plan_fp=fingerprint(plan);master_fp=fingerprint(master)
+        head_tree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],cwd=cwd,text=True).strip()
+    except (OSError,ValueError,subprocess.CalledProcessError):
+        return 'incomplete','scoped driver proof identity is unavailable'
+    valid=[]
+    for row in candidates:
+        if (row.get('context_plan_path')!=str(plan) or row.get('master_path')!=str(master)
+                or row.get('context_plan_fingerprint')!=plan_fp or row.get('context_master_fingerprint')!=master_fp
+                or row.get('integrity_passed') is not True or row.get('landed') is not True
+                or row.get('gate_outcome')!='pass' or not row.get('accepted_head')):continue
+        checks=row.get('driver_gate_checks') or []
+        if not checks or not all(check.get('passed') is True and check.get('output_complete') is True for check in checks):continue
+        ancestor=subprocess.run(['git','merge-base','--is-ancestor',row['accepted_head'],'HEAD'],cwd=cwd,capture_output=True)
+        if ancestor.returncode:continue
+        valid.append(row)
+    covered={row.get('step_from') for row in valid if isinstance(row.get('step_from'),int)
+             and row.get('step_to')==row['step_from']+1}
+    required={check.get('command') for check in declared_checks if check.get('command')}
+    ran={command for row in valid for command in row.get('driver_declared_commands',[])}
+    final=max(authored) if authored else None
+    if not set(authored)<=covered or not required<=ran:
+        return 'incomplete','scoped driver proof is missing an accepted step or declared gate'
+    if not any(row.get('step_from')==final and row.get('accepted_tree')==head_tree for row in valid):
+        return 'stale_head','final scoped driver proof does not cover the current tree'
+    return 'pass',None
+
 def audit_ship(
     status: str,
     body: str,
@@ -804,6 +845,8 @@ def audit_ship(
     loop_log_path: Path | None = None,
     master_created: str | None = None,
     batch: str | None = None,
+    subplan_path: Path | None = None,
+    master_path: Path | None = None,
 ) -> dict[str, Any]:
     """Audit a shipped sub-plan: step commits + gate outcome.
 
@@ -887,10 +930,15 @@ def audit_ship(
             _legacy_reason = "proven (legacy: per-step records not required — unparseable master created)"
 
     # Gate half (AC-8: exempt no-gate sub-plans from gate check only).
-    gate_verdict, gate_reason = _evaluate_gate(
-        status, declared_checks, gate_passed,
-        runtime_dir=runtime_dir, cwd=cwd, batch=batch,
-    )
+    driver_gate=_resolve_driver_gate(ledger_records,slug=slug,authored=authored,declared_checks=declared_checks,
+                                    cwd=cwd,subplan_path=subplan_path,master_path=master_path)
+    if driver_gate is not None and gate_passed=='unknown':
+        gate_verdict,gate_reason=driver_gate
+    else:
+        gate_verdict, gate_reason = _evaluate_gate(
+            status, declared_checks, gate_passed,
+            runtime_dir=runtime_dir, cwd=cwd, batch=batch,
+        )
 
     reasons: list[str] = []
     if missing:
@@ -1236,6 +1284,19 @@ def read_subplan_for_audit(path: Path) -> dict[str, Any]:
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
+def _exact_master_for_subplan(path,slug):
+    from iteration_context import read_context
+    from dispatch_target import resolve,TargetError
+    try:
+        context=read_context()
+        if context and (context.get('dispatch') or {}).get('subplan_path')==str(Path(path).resolve()):
+            return Path(context['dispatch']['master_path']) if context['dispatch'].get('master_path') else None
+        pinned=os.environ.get('ILK_MASTER')
+        plans=Path(path).resolve().parent
+        identity=resolve(plans,slug,master=plans/pinned if pinned else None,filename=Path(path).name)
+        return Path(identity['master_path']) if identity.get('master_path') else None
+    except (OSError,ValueError,TargetError):return None
+
 def _cli(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         description="Audit a shipped sub-plan: step commits + gate outcome.",
@@ -1311,6 +1372,8 @@ def _cli(argv: list[str]) -> int:
         cwd=project,
         runtime_dir=runtime_dir,
         ledger_records=ledger_records,
+        subplan_path=args.subplan,
+        master_path=_exact_master_for_subplan(args.subplan,info['slug']),
     )
 
     if result["proven"]:

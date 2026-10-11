@@ -26,6 +26,11 @@
       "may_be_absent": true
     },
     {
+      "path": "skills/ilk-loop/scripts/iteration_clock.py",
+      "guard": "owner",
+      "why": "shared host clock for cross-process iteration deadlines and evidence"
+    },
+    {
       "path": "skills/ilk-loop/scripts/worker_iteration.py",
       "guard": "owner",
       "why": "code-only worker dispatch, bounded repair and driver acceptance caller"

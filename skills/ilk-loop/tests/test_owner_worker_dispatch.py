@@ -1,3 +1,4 @@
+from iteration_clock import monotonic
 """Production preparation API in an exact owned, disposable runner session."""
 import json
 import os
@@ -46,13 +47,14 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
     script='''
 import json,os,sys,time
 from pathlib import Path
+from iteration_clock import monotonic
 from run_registry import reserve,bind_running,scan,finish,process_identity
 from worker_dispatch import prepare,close
 from worker_shell import canonical_command
 from driver_step import accept_step
 import subprocess
 request,ctx,inputs,registry,result,provider=map(Path,sys.argv[1:])
-context=json.loads(request.read_text());deadline=time.monotonic()+15
+context=json.loads(request.read_text());deadline=monotonic()+15
 reserve(registry,run_id=context['run_id'],project_key='fixture',clone=context['clone'],exec_tree=context['exec_tree'],toolkit_sha=context['toolkit_sha'],expires_at=time.time()+15)
 bind_running(registry,context['run_id'],pid=os.getpid())
 binding=prepare(context,ctx,inputs=inputs,deadline=deadline,registry=registry,owner_pid=os.getpid())
@@ -72,7 +74,7 @@ assert len(accepted['commits'])==1 and len(accepted['worker_turns'])==2
 assert accepted['worker_turns'][0]['session_id']==accepted['worker_turns'][1]['session_id']
 close(ctx)
 while scan(registry)[0]['children_liveness'][0]['liveness']=='running':
-    assert time.monotonic()<deadline
+    assert monotonic()<deadline
     time.sleep(.02)
 finish(registry,context['run_id'],identity=process_identity(os.getpid()))
 result.write_text(json.dumps({'accepted':accepted['accepted'],'children':len(rows[0]['children']),'scope':binding,'frozen':original.decode()}))

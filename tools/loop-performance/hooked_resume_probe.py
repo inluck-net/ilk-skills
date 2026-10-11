@@ -106,6 +106,7 @@ local_checks:
             dispatch={'slug':'probe','step':0,'subplan_path':str(subplan)},mode='none')
         frozen=logs/'ctx.json'
         if args.enforce_scope:
+            from iteration_clock import monotonic
             from worker_broker import ShellBroker
             from worker_sandbox import profile
             from worker_shell import canonical_command
@@ -113,7 +114,7 @@ local_checks:
             private_tmp=root/'tmp';private_tmp.mkdir()
             context.update(worker_tmp_dir=str(private_tmp),private_worker_home=str(home),
                            worker_inputs_dir=str(args.inputs.resolve()),worker_shell_python=sys.executable)
-            broker=stack.enter_context(ShellBroker(context,deadline=time.monotonic()+2*args.timeout))
+            broker=stack.enter_context(ShellBroker(context,deadline=monotonic()+2*args.timeout))
             context.update(broker.descriptor())
         write_context(frozen,context)
         if args.enforce_scope:settings=bind_context(args.inputs,frozen)

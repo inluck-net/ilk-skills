@@ -1,3 +1,4 @@
+from iteration_clock import monotonic
 import json
 from pathlib import Path
 import subprocess
@@ -90,7 +91,7 @@ def test_brokered_binding_is_immutable_and_leaves_base_home_unchanged(tmp_path):
                  code_root=manifest['code_root'],plans_dir=str(tmp_path/'plans'),runtime_dir=str(tmp_path/'runtime'),
                  data_root=str(tmp_path/'data'),mode='none',worker_tmp_dir=str(temporary),
                  worker_shell_python=sys.executable,private_worker_home=manifest['worker_home'],worker_inputs_dir=str(destination))
-    with ShellBroker(context,deadline=time.monotonic()+10) as broker:
+    with ShellBroker(context,deadline=monotonic()+10) as broker:
         context.update(broker.descriptor());path=tmp_path/'ctx.json';write_context(path,context)
         bound=bind_context(destination,path)
         assert base.read_bytes()==before and bound.stat().st_mode & 0o777==0o400
@@ -154,9 +155,9 @@ def test_actual_launcher_runs_from_private_inputs_without_changing_source_home(t
         launch=json.loads((runtime/'last-launch.json').read_text())
         # Judgment: 20s observation bound for sampled ~1s pre-loop completion;
         # a slower valid startup falsifies this fixture, not a production cap.
-        until=time.monotonic()+20
+        until=monotonic()+20
         terminal={}
-        while time.monotonic()<until:
+        while monotonic()<until:
             if (runtime/'last-exit.json').exists():
                 terminal=json.loads((runtime/'last-exit.json').read_text())
                 if terminal.get('ended_at') and not project_status(runtime)['busy']:break

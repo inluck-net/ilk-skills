@@ -6288,11 +6288,11 @@ context=resolve_context(clone=a[2],exec_tree=a[3],plans_dir=a[4],runtime_dir=a[5
  iteration=int(a[8]),dispatch=identity,observe_tree=dict(zip(a[10::2],a[11::2])))
 if os.environ.get("ILK_WORKER_MODE")=="code-only":
  from worker_dispatch import prepare
- import time
+ from iteration_clock import monotonic
  if not os.environ.get("ILK_RUN_INPUTS") or not os.environ.get("_ILK_CONTEXT_REGISTRY"):
   raise ValueError("code-only dispatch requires private inputs and verified registry")
  prepare(context,Path(a[9]),inputs=Path(os.environ["ILK_RUN_INPUTS"]),
-  deadline=time.monotonic()+int(os.environ["_ILK_CONTEXT_TIMEOUT"]),
+  deadline=monotonic()+int(os.environ["_ILK_CONTEXT_TIMEOUT"]),
   registry=Path(os.environ["_ILK_CONTEXT_REGISTRY"]),owner_pid=int(os.environ["_ILK_CONTEXT_OWNER"]))
 else:write_context(Path(a[9]),context)
 ' "$_SKILL_ROOT" "$_context_clone" "$_context_exec" "$_dispatch_plans_dir" \

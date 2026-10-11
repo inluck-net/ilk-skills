@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from iteration_clock import monotonic
 import uuid
 from worker_sandbox import profile
 
@@ -45,7 +46,7 @@ class ShellBroker:
                 connection,_=self._listener.accept()
                 with self._guard:self._connection=connection
                 with connection:
-                    connection.settimeout(max(self.deadline-time.monotonic(),0))
+                    connection.settimeout(max(self.deadline-monotonic(),0))
                     with connection.makefile('rwb') as stream:
                         request=json.loads(stream.readline())
                         if request.get('nonce')!=self.nonce: response={'error':'broker identity mismatch','exit_code':1}
@@ -61,7 +62,7 @@ class ShellBroker:
             self._closed.set();self._listener.close()
 
     def _execute(self,command):
-        remaining=self.deadline-time.monotonic()
+        remaining=self.deadline-monotonic()
         if remaining<=0:return {'exit_code':124,'error':'iteration deadline reached'}
         context=self.context;attempt=uuid.uuid4().hex
         key=hashlib.sha256(json.dumps([context['run_id'],context['iteration']]).encode()).hexdigest()
@@ -73,7 +74,7 @@ class ShellBroker:
                    ILK_DATA_DIR=context['data_root'],TMPDIR=context['worker_tmp_dir'])
         if context.get('private_worker_home'):env['HOME']=context['private_worker_home']
         env.update(GIT_CONFIG_GLOBAL='/dev/null',GIT_CONFIG_NOSYSTEM='1')
-        started=time.monotonic();timed_out=False
+        started=monotonic();timed_out=False
         with stdout_path.open('wb') as stdout,stderr_path.open('wb') as stderr:
             stdout_path.chmod(0o600);stderr_path.chmod(0o600)
             with self._guard:
@@ -95,7 +96,7 @@ class ShellBroker:
                     with self._guard:self._active=None
                     raise
             self.command_started.set()
-            try:code=process.wait(timeout=max(self.deadline-time.monotonic(),0))
+            try:code=process.wait(timeout=max(self.deadline-monotonic(),0))
             except subprocess.TimeoutExpired:
                 timed_out=True
                 try:os.killpg(process.pid,signal.SIGKILL)
@@ -112,7 +113,7 @@ class ShellBroker:
         record={key:value for key,value in result.items() if key not in {'stdout','stderr'}}
         record.update(attempt_id=attempt,run_id=context['run_id'],iteration=context['iteration'],
             command_sha256=hashlib.sha256(command.encode()).hexdigest(),started_monotonic=started,
-            ended_monotonic=time.monotonic(),diagnostic_only=True,iteration_deadline_reached=timed_out)
+            ended_monotonic=monotonic(),diagnostic_only=True,iteration_deadline_reached=timed_out)
         with (directory/'attempts.jsonl').open('a') as stream:
             stream.write(json.dumps(record)+'\n');stream.flush();os.fsync(stream.fileno())
         return result
@@ -155,7 +156,7 @@ def main():
     # deadline. 20ms is a responsiveness judgment, not a new stall timeout;
     # excessive idle CPU or startup lag would warrant adjusting it.
     while not args.context.exists() and not stopped.wait(.02):
-        if time.monotonic()>=args.deadline or not owned():return 1
+        if monotonic()>=args.deadline or not owned():return 1
     if stopped.is_set() or not owned():return 1
     context=read_context(args.context)
     if context.get('shell_broker_owner_pid')!=os.getpid() or context.get('runner_owner_pid')!=owner['pid']:
@@ -164,7 +165,7 @@ def main():
         with ShellBroker(context,deadline=args.deadline,path=context['shell_broker_path'],
                          nonce=context['shell_broker_nonce']) as broker:
             while not stopped.wait(.02):
-                if broker._closed.is_set() or time.monotonic()>=args.deadline or not owned():break
+                if broker._closed.is_set() or monotonic()>=args.deadline or not owned():break
     finally:
         if context.get('scratch_disposable'):
             import shutil

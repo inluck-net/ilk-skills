@@ -39,6 +39,7 @@ import shlex
 import subprocess
 import sys
 import time
+from iteration_clock import monotonic
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
@@ -1620,7 +1621,7 @@ def run_one(check: dict, scope: str, project: Path,
     path_prelude = _read_path_prelude(project)
     applied = bool(path_prelude)
     effective_cmd = f"{path_prelude}; {cmd}" if path_prelude else cmd
-    t0 = time.monotonic()
+    t0 = monotonic()
     try:
         # Run via bash (git-bash on Windows), NOT shell=True — shell=True uses
         # cmd.exe on Windows, where posix gates (grep, etc.) don't exist, so
@@ -1630,7 +1631,7 @@ def run_one(check: dict, scope: str, project: Path,
         rc, stdout, stderr, timed_out = _bounded_run(
             [bash, "-c", effective_cmd], cwd=str(project), timeout=timeout,
         )
-        dur = time.monotonic() - t0
+        dur = monotonic() - t0
         stderr_full = stderr or ""
         if timed_out:
             r = CheckResult(
@@ -1672,7 +1673,7 @@ def run_one(check: dict, scope: str, project: Path,
         r.outcome, r.reason = _classify_check(r.exit_code, r.error, stderr_full)
         return r
     except Exception as e:
-        dur = time.monotonic() - t0
+        dur = monotonic() - t0
         r = CheckResult(
             command=cmd, scope=scope, timeout=timeout,
             exit_code=None, duration_sec=round(dur, 2), passed=False,

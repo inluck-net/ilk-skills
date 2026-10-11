@@ -1,3 +1,4 @@
+from iteration_clock import monotonic
 """Explicit owned Mac broker/CLI subprocess fixtures, never live repositories."""
 import json
 import os
@@ -19,7 +20,7 @@ def test_parent_sandbox_uses_owned_broker_without_nested_apply(tmp_path):
     ctx,temporary,home=fixtures.fixture(tmp_path)
     ctx.update(schema_version=1,run_id='test',iteration=1,code_root=str(ROOT),
                worker_tmp_dir=str(temporary),worker_shell_python=sys.executable,private_worker_home=str(home))
-    with ShellBroker(ctx,deadline=time.monotonic()+10) as broker:
+    with ShellBroker(ctx,deadline=monotonic()+10) as broker:
         frozen=dict(ctx,**broker.descriptor());path=tmp_path/'ctx.json';write_context(path,frozen)
         parent=profile(frozen,temporary=temporary,private_home=home)
         command=canonical_command(frozen,path,'printf fixture > accepted.py')
@@ -44,7 +45,7 @@ def test_broker_cleanup_owns_and_ends_its_active_child(tmp_path):
     import socket,threading
     ctx,temporary,home=fixtures.fixture(tmp_path)
     ctx.update(run_id='cleanup',iteration=1,worker_tmp_dir=str(temporary),private_worker_home=str(home))
-    broker=ShellBroker(ctx,deadline=time.monotonic()+10).start();result=[]
+    broker=ShellBroker(ctx,deadline=monotonic()+10).start();result=[]
     def request():
         with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as connection:
             connection.connect(str(broker.path));connection.sendall(json.dumps({'op':'exec','nonce':broker.nonce,
@@ -74,7 +75,7 @@ def test_idle_owned_client_does_not_hold_broker_cleanup(tmp_path):
     import socket,threading
     ctx,temporary,_=fixtures.fixture(tmp_path)
     ctx.update(run_id='idle-client',iteration=1,worker_tmp_dir=str(temporary))
-    broker=ShellBroker(ctx,deadline=time.monotonic()+10).start()
+    broker=ShellBroker(ctx,deadline=monotonic()+10).start()
     with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as connection:
         connection.connect(str(broker.path))
         # Synchronize acceptance without sleeping or touching foreign processes.
@@ -95,7 +96,7 @@ def test_shell_completion_kills_its_background_descendants(tmp_path):
     marker=Path(ctx['exec_tree'])/'late-write'
     import shlex
     child="import time;from pathlib import Path;time.sleep(0.2);Path('late-write').write_text('bad')"
-    with ShellBroker(ctx,deadline=time.monotonic()+10) as broker:
+    with ShellBroker(ctx,deadline=monotonic()+10) as broker:
         result=broker._execute('/usr/bin/python3 -c '+shlex.quote(child)+' &')
         assert result['exit_code']==0
     # 0.4 seconds is a test judgment, twice the intentional fixture delay;

@@ -548,6 +548,8 @@ def resolve_status(cwd: Path, json_mode: bool = False) -> dict:
                     runtime_dir=_resolved_runtime_dir,
                     ledger_records=_ledger_records,
                     batch=_batch_slug,
+                    subplan_path=sp_path,
+                    master_path=master,
                 )
                 sp["proven"] = result["proven"]
                 sp["proof_state"] = "proven" if result["proven"] else "unproven"
@@ -804,9 +806,9 @@ def _unproven_summary(subplans: list[dict]) -> str | None:
             parts.append("")
         slugs = ", ".join(sp["slug"] for sp in stale)
         parts.append(
-            f"{n} sub-plan{plural} have stale records (suite ran at an older tree):\n"
+            f"{n} sub-plan{plural} have missing or stale gate evidence:\n"
             f"  {slugs}\n"
-            f"  Rerun the suite at the current HEAD to clear."
+            f"  Inspect the required scoped gates and their recorded tree identities."
         )
 
     return "\n".join(parts)

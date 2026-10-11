@@ -16,6 +16,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
+from iteration_clock import monotonic
 import uuid
 from iteration_context import read_dispatch,plan_snapshot,root_for_plan,ContextError
 from plan_status import parse_frontmatter
@@ -26,7 +27,7 @@ _deadline=ContextVar('driver_step_deadline',default=None)
 def remaining():
     deadline=_deadline.get()
     if deadline is None:return None
-    value=deadline-time.monotonic()
+    value=deadline-monotonic()
     if value<=0:raise ContextError('iteration deadline reached')
     return value
 
@@ -101,7 +102,7 @@ def gate(context,root,path,selected,*,default_timeout):
     directory=Path(context['runtime_dir'])/'launcher/driver-step'/identifier
     directory.mkdir(parents=True,exist_ok=False)
     previous=os.environ.get('ILK_GATE_OUTPUT_DIR');os.environ['ILK_GATE_OUTPUT_DIR']=str(directory)
-    started=time.monotonic()
+    started=monotonic()
     try:
         results=[]
         for scope,items in (('subplan',sub),('step',step),('mention',mention)):
@@ -119,7 +120,8 @@ def gate(context,root,path,selected,*,default_timeout):
     unchanged=working_tree(root)==tree
     record=dict(attempt_id=identifier,run_id=context['run_id'],iteration=context['iteration'],
         slug=selected.get('slug'),step=selected['step'],base_commit=context['base_commit'],
-        working_tree=tree,started_monotonic=started,ended_monotonic=time.monotonic(),
+        working_tree=tree,started_monotonic=started,ended_monotonic=monotonic(),
+        declared_contract_commands=[check['command'] for check in sub+step],
         check_observations=[asdict(result) for result in results],gate_tree_unchanged=unchanged,
         all_passed=bool(results) and all(result.passed for result in results) and unchanged,
         diagnostic_only=True)
@@ -146,7 +148,7 @@ def _accept_step(context,*,default_timeout):
     validate(context)
     if git(root,'rev-parse','HEAD')!=context['base_commit'] or git(root,'diff','--cached','--name-only'):
         raise ContextError('gate changed Git state')
-    tree=attempt['working_tree'];commits=[];commit_started=time.monotonic()
+    tree=attempt['working_tree'];commits=[];commit_started=monotonic()
     if tree!=git(root,'rev-parse','HEAD^{tree}'):
         kernel=context.get('kernel_list') or {}
         if kernel.get('loop_kernel_policy')=='owner-only':
@@ -157,7 +159,7 @@ def _accept_step(context,*,default_timeout):
         if git(root,'write-tree')!=tree:raise ContextError('tree changed between gate and commit')
         git(root,'commit','-m',f"{selected.get('slug','step')}: driver accepted step {selected['step']} [plan:{selected.get('slug','step')}#step-{selected['step']}]")
         commits=[git(root,'rev-parse','HEAD')]
-    commit_ended=time.monotonic();attempts=[attempt]
+    commit_ended=monotonic();attempts=[attempt]
     committed_tree=git(root,'rev-parse','HEAD^{tree}')
     kernel=context.get('kernel_list') or {}
     if kernel.get('loop_kernel_policy')=='owner-only':

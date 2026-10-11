@@ -1,3 +1,4 @@
+from iteration_clock import monotonic
 """Actual disposable code/gate/commit/CAS checks; no live repositories."""
 from pathlib import Path
 import time
@@ -8,7 +9,7 @@ import test_iteration_context as fixtures
 
 
 def accept_step(context,*,default_timeout):
-    return _accept_step(context,default_timeout=default_timeout,deadline=time.monotonic()+10)
+    return _accept_step(context,default_timeout=default_timeout,deadline=monotonic()+10)
 
 
 def fixture(tmp_path,command='python3 -I -c "from pathlib import Path;exec(Path(\'counter.py\').read_text());assert f(4)==6"'):
@@ -91,6 +92,6 @@ def test_owned_commit_hook_is_bounded_without_advancing(tmp_path,monkeypatch):
     # parser plus sampled subsecond gate/index startup.
     # A slow valid host falsifies it; no production timeout default changes.
     with pytest.raises(ContextError,match='iteration deadline'):
-        _accept_step(context,default_timeout=10,deadline=time.monotonic()+2)
+        _accept_step(context,default_timeout=10,deadline=monotonic()+2)
     assert marker.exists() and git(root,'rev-parse','HEAD')==base
     assert 'current_step: 0' in plan.read_text()

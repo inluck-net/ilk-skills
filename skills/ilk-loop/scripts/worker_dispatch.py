@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+from iteration_clock import monotonic
 import uuid
 from iteration_context import ContextError,read_context,write_context
 from run_inputs import bind_context,verify_launch_resources
@@ -37,7 +38,7 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
     row=json.loads((registry/'runs'/f"{context['run_id']}.json").read_text())
     if not owner or owner!={key:row[key] for key in ('pid','pgid','lstart')} or liveness(row)!='running':
         raise ContextError('verified runner ownership required')
-    if deadline<=time.monotonic():raise ContextError('iteration deadline reached before preparation')
+    if deadline<=monotonic():raise ContextError('iteration deadline reached before preparation')
     from driver_step import validate,gate_contract
     selected,plan,root,_=validate(dict(context,worker_sandbox_adapter='macos-brokered-shell'))
     gate_contract(root,plan,selected)
@@ -65,7 +66,7 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
         waiter=threading.Event()
         while not Path(context['shell_broker_path']).is_socket():
             if process.poll() is not None:raise ContextError('broker startup failed; see owned broker log')
-            if time.monotonic()>=deadline:raise ContextError('broker startup reached iteration deadline')
+            if monotonic()>=deadline:raise ContextError('broker startup reached iteration deadline')
             if process_identity(owner_pid)!=owner:raise ContextError('runner ownership changed')
             waiter.wait(.02)
         settings=bind_context(inputs,context_path)
@@ -81,7 +82,7 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
     except BaseException:
         if process is not None and process.poll() is None:
             process.terminate()
-            try:process.wait(timeout=max(deadline-time.monotonic(),.02))
+            try:process.wait(timeout=max(deadline-monotonic(),.02))
             except subprocess.TimeoutExpired:
                 process.kill();process.wait()
         import shutil

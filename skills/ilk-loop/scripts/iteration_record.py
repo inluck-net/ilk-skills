@@ -39,6 +39,22 @@ def project_close_record(close: dict) -> int:
         projected=dict(row,record_phase='close',close_record_id=close_id,
                        integrity_passed=integrity_ok,landed=landed,merge_outcome=outcome,
                        iteration_stop_reason=close.get('stop_reason'))
+        if context.get('worker_sandbox_adapter')=='macos-brokered-shell':
+            dispatch=context.get('dispatch') or {}
+            snapshots=[snapshot for snapshot in context.get('plans',{}).values()
+                       if snapshot.get('path')==dispatch.get('subplan_path')]
+            attempts=accepted.get('attempts') or []
+            matching=(row.get('slug')==dispatch.get('slug') and len(snapshots)==1
+                      and isinstance(dispatch.get('step'),int)
+                      and row.get('step_from')==dispatch['step'] and row.get('step_to')==dispatch['step']+1)
+            projected.update(driver_owned=matching,accepted_tree=accepted.get('tree'),
+                accepted_head=accepted.get('head_commit'),
+                context_plan_path=dispatch.get('subplan_path'),
+                context_plan_fingerprint=snapshots[0].get('fingerprint') if len(snapshots)==1 else None,
+                context_master_fingerprint=(context.get('master_snapshot') or {}).get('fingerprint'),
+                driver_declared_commands=attempts[-1].get('declared_contract_commands',[]) if attempts else [],
+                driver_gate_checks=attempts[-1].get('check_observations',[]) if attempts else [])
+            projected['integrity_passed']=bool(integrity_ok and matching)
         append_record(ledger,projected)
         finalized.add(row['proof_id']);count+=1
     return count

@@ -672,3 +672,19 @@ No completion/ship/proof markers are inferred from this human tracker.
   rejection by the actual ship-audit reader. No production bypass was added.
   Executable and MCP arguments now must match the private launch manifest.
   Entry admission refuses unsupported gate contracts before a provider call.
+- Actual Bash entry reached driver commit/ship but exposed two integration
+  gaps. First, driver-generated `.ilk-remote-type` made clean entry dirty:
+  explicit Git info/exclude now ignores that untracked metadata, and the OS
+  boundary protects it and `.ilk/findings.md`; tracked changes stay visible.
+  Second, status readers still demanded batch-suite proof for scoped accepted
+  work. Closed driver receipts now carry exact plan/master fingerprints,
+  accepted lineage/tree and complete passed checks; audit migration requires
+  every authored step/declared command and the final current tree. It rejects
+  changed code/contracts or missing capture. Empty ship markers do not change
+  the gated tree; this does not restore deferred gate-outcome reuse (07m R1/R2).
+- Measured Python 3.9 clock defect: parent `CLOCK_MONOTONIC=204606.409292`
+  and child `204606.422588`, while process-relative `time.monotonic()` read
+  `0.026684791` and `0.003263333`. Transferred deadlines now use the shared
+  POSIX host clock. Local probe clocks remain local; no deadline extension or
+  new production timeout. Windows QPC clock is retained for legacy gates,
+  while code-only Windows process/sandbox adapters remain unbuilt.
