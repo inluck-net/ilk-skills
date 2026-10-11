@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Candidate driver acceptance transaction; not enabled in installed runners.
+"""Driver acceptance transaction for the opt-in owned Mac runner.
 
 Gates run against a captured working-tree object. Only the driver commits and
 CAS-advances one step. Changed commit-hook output is gated again; an unchanged

@@ -55,6 +55,11 @@ Plans, runtime state, and logs live under `~/.ilk-data/projects/<project-key>/`,
 keyed off the project's `.git` root — **your repository never grows a single
 skill artifact.**
 
+The local [loop performance preview](docs/implementation/loop-performance-operator-guide.md)
+adds measured dispatch/recovery improvements and an opt-in Mac profile where
+the driver owns gates, commits and plan state. Its rollout and limitations are
+recorded in the [manual tracker](docs/implementation/loop-execution-improvement-plan.md).
+
 ## Quick start
 
 > [!WARNING]

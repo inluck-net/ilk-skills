@@ -1887,3 +1887,22 @@ anchors at the time of inspection and can move as integration changes code.
   cases (15 deselected), so the corrected hyphen selection was run; zero-case
   invocation was not verification. Recheck these callers after committing
   the profile transport correction because the archive uses committed HEAD.
+
+### Operator delivery guide and detached caller verification
+
+- Added loop-performance-operator-guide.md and a README link with concrete
+  per-launch opt-in, unchanged defaults, focused-gate/final-verifier semantics,
+  recovery/upgrade boundaries and explicit unsupported platform/mode limits.
+  Corrected the driver acceptance module's stale pre-install header.
+- Current committed detached profile correction 042fe99e: actual archived
+  upgrade/drain/relaunch caller passed in 28.02s. No full suite; no production
+  active inputs changed. The guide reports the controlled consumer brief pair
+  with its limitations and directs current installation identity to this tracker.
+- Same-task shell/native actual-provider comparison is in progress privately
+  under controlled-toolkit-tools-pair-20261012-{shell,native}. Both snapshots
+  use 093d67d6, same deliberate reporter defect/base, MiMo PRO, explicit disabled
+  thinking, eight source hooks and seven focused tests. Native uses an isolated
+  shared clone at the same SHA so later owner commits cannot contaminate version
+  comparison. Host concurrency is uncontrolled; retain failed results unchanged.
+- Next: finish this measurement, activate the checked candidate only at a fresh
+  undispatched/paused boundary, then continue remaining tracked policy adapters.
