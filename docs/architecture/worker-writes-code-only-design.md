@@ -218,3 +218,35 @@ On replacing ilk: Orca already serves interactive multi-agent work here (this
 session runs in it). It has no unattended scheduler, gated resume or ship
 proof, and every unattended orchestrator needs the policing above. So the
 measured problem is not one a tool switch removes.
+
+
+## Manual implementation boundary findings (2026-10-11, candidate)
+
+`worker-write-scope.py` now observes native writes against frozen context and
+can deny native writes, but remains unregistered in production. Shell parsing
+is explicitly observational; a verb list cannot prove arbitrary Bash containment.
+The owner candidate therefore evaluates a Mac OS boundary (`worker_sandbox.py`):
+allow writes only to the execution tree and a private temporary directory;
+keep Git metadata/control inputs read-only. The CLI parent additionally needs
+a private transcript home and an exact diagnostic log allowance. Its immutable
+settings/hooks remain excluded. A tighter shell-child profile denies network,
+so Git push cannot bypass the hook through another transport. The model's API
+connection remains in the parent. A pinned shell wrapper and strict hook
+admission must ensure every Bash invocation enters that child boundary before
+claiming full enforcement. Other hosts require a measured adapter, not fallback
+permission broadening. Neither boundary nor driver-only gates are activated.
+
+Execution roles take precedence over broad parent paths: selfmod worktrees can
+live beneath the data/runtime root. Protect specific control-plane paths without
+misclassifying every legitimate execution-tree edit as a data write. Symlink
+escapes remain denied by the OS boundary. Fifteen scoped observation/OS fixture
+checks passed. Test subprocess bounds of 10s are judgment calls for operations
+observed below a second; a slow valid host would show those fixture bounds too
+low. These are test limits, not new worker defaults.
+
+Actual MiMo PRO resumed a session with copied production hooks and repaired a
+measured driver-red synthetic one-file fixture (initial 9.069s, resumed 5.413s,
+two turns each). No outside-scope native write was observed. This validates
+that narrow continuation path, not interrupted resume, Bash enforcement, the
+full driver controller or batch performance. Evidence and remaining work are
+in the [durable owner tracker](../implementation/loop-execution-improvement-plan.md).

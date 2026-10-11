@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Build a Mac write boundary from frozen context; shell children also deny network.
+
+Candidate boundary API. It is not enabled in production. Other hosts require
+an explicit adapter; lack of sandbox support must not silently weaken scope.
+"""
+from __future__ import annotations
+import json
+from pathlib import Path
+import subprocess
+import sys
+from iteration_context import ContextError
+
+
+def _inside(path,root):
+    try:path.relative_to(root);return True
+    except ValueError:return False
+
+
+def _rule(verb,operation,path):
+    return f'({verb} {operation} (subpath {json.dumps(str(path))}))'
+
+
+def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnostic_log: Path=None, shell=False) -> str:
+    if sys.platform!='darwin': raise ContextError('worker sandbox host adapter unavailable')
+    root=Path(context['exec_tree']).resolve(strict=True)
+    temporary=Path(temporary).resolve(strict=True)
+    broad=[(key,Path(context[key]).resolve()) for key in ('plans_dir','runtime_dir','data_root','code_root')]
+    protected=[]
+    for key,path in broad:
+        if _inside(root,path):
+            if key in {'data_root','runtime_dir'}: continue
+            raise ContextError('execution tree overlaps plans or pinned code')
+        protected.append(path)
+    if temporary==root or any(_inside(temporary,path) or _inside(path,temporary) for path in protected+[root]):
+        raise ContextError('private temporary directory overlaps execution/control inputs')
+    if context['mode']=='selfmod':protected.append(Path(context['clone']).resolve())
+    # Git commands may read metadata, but workers may not mutate it.
+    protected.append(root/'.git')
+    common=subprocess.run(['git','-C',str(root),'rev-parse','--git-common-dir'],capture_output=True,text=True)
+    if common.returncode==0:
+        raw=Path(common.stdout.strip());protected.append(raw.resolve() if raw.is_absolute() else (root/raw).resolve())
+    rules=['(version 1)','(allow default)','(deny file-write*)',
+           _rule('allow','file-write*',root),_rule('allow','file-write*',temporary)]
+    if shell:
+        rules.append('(deny network*)')
+    elif private_home:
+        home=Path(private_home).resolve(strict=True)
+        if _inside(home,root) or any(_inside(home,path) or _inside(path,home) for path in protected
+                                  if path not in {Path(context['data_root']).resolve(),Path(context['runtime_dir']).resolve()}):
+            raise ContextError('private home overlaps execution/control inputs')
+        rules.append(_rule('allow','file-write*',home))
+        protected.extend(home/name for name in ('settings.json','hooks','skills','commands'))
+    if diagnostic_log and not shell:
+        log=Path(diagnostic_log).resolve()
+        rules.append(f'(allow file-write* (literal {json.dumps(str(log))}))')
+    # Default denial already protects broad roots outside the explicit allowed
+    # execution/home directories; retain exact nested control-plane exclusions.
+    rules.extend(_rule('deny','file-write*',path) for path in protected
+                 if any(_inside(path,allowed) for allowed in [root,temporary]+([Path(private_home).resolve()] if private_home and not shell else [])))
+    return '\n'.join(rules)+'\n'

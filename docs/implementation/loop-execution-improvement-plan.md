@@ -402,3 +402,23 @@ No completion/ship/proof markers are inferred from this human tracker.
   Not full D2: launcher wiring, resolved CLI model/effort, MCP/plan-script
   adapters, hook dependencies and host runtime provenance remain open. No
   prepared home has yet been activated on a real batch.
+
+- Real hook-enabled continuation screening: committed toolkit 6b39094f,
+  private home with nine copied/observer hook registrations; MiMo PRO initial
+  native one-file write accepted in 9.069s (two turns), driver measured expected
+  assertion red; same-session resume repaired it in 5.413s (two turns), exact
+  driver gate green. Two cumulative native writes, none outside scope. Evidence
+  `hooked-resume-capability-probe.json`. Timeout 120s is an experiment judgment
+  for a handful of tool turns (prior call latency ~20s); a slow valid run would
+  falsify it. It is not a runner default. Interrupted resume, Bash boundary and
+  representative batch comparisons remain open.
+- Mac OS scope candidate: actual sandbox-exec permits execution/private-temp
+  writes and denies foreign/control-plane/Git metadata writes; shell profile
+  denies network before connection. Parent permits private transcripts while
+  keeping settings/hooks immutable. Symlink escape is denied. Fixed observer
+  precedence when selfmod execution lives beneath broad data/runtime roots.
+  Scoped observation and explicit Mac OS fixtures: 15 passed in 0.66s. Ten-
+  second test-process bounds are judgments for subsecond fixture operations;
+  a slow valid host would falsify them. No production activation. Required
+  next: strict pinned Bash wrapper, enforce-mode hook admission, full copied-
+  hook CLI check under the parent sandbox, then driver-controller wiring.

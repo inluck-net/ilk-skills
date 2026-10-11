@@ -1,0 +1,62 @@
+"""Explicit Mac OS-boundary integration fixtures; no live repos or network hosts."""
+from pathlib import Path
+import subprocess
+import sys
+import pytest
+from worker_sandbox import profile
+from iteration_context import ContextError
+pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='explicit Mac sandbox integration')
+
+
+def fixture(tmp_path):
+    root=tmp_path/'work';root.mkdir();temporary=tmp_path/'private-tmp';temporary.mkdir()
+    home=tmp_path/'private-home';home.mkdir();(home/'hooks').mkdir()
+    ctx={key:str(tmp_path/key) for key in ('plans_dir','runtime_dir','data_root','code_root')}
+    for key in ctx:Path(ctx[key]).mkdir()
+    ctx.update(exec_tree=str(root),clone=str(root),mode='none')
+    subprocess.run(['git','init','-q',str(root)],check=True)
+    subprocess.run(['git','-C',str(root),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-qm','base'],check=True)
+    return ctx,temporary,home
+
+
+def run(profile_text,*arguments):
+    return subprocess.run(['/usr/bin/sandbox-exec','-p',profile_text,*arguments],capture_output=True,text=True,timeout=10)
+
+
+def test_shell_can_write_code_but_not_control_plane_git_or_foreign_paths(tmp_path):
+    ctx,temporary,home=fixture(tmp_path);policy=profile(ctx,temporary=temporary,shell=True)
+    root=Path(ctx['exec_tree']);target=root/'accepted.py'
+    python=['/usr/bin/python3','-c','import pathlib,sys;pathlib.Path(sys.argv[1]).write_text("fixture")']
+    assert run(policy,*python,str(target)).returncode==0
+    for denied in (tmp_path/'outside.py',root/'.git/index',Path(ctx['plans_dir'])/'plan.md',home/'settings.json'):
+        before=denied.read_bytes() if denied.exists() else None
+        cp=run(policy,*python,str(denied));assert cp.returncode!=0
+        assert (denied.read_bytes() if denied.exists() else None)==before
+    assert run(policy,*python,str(temporary/'cache')).returncode==0
+    before=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True)
+    cp=run(policy,'/usr/bin/git','-C',str(root),'add','accepted.py')
+    assert cp.returncode!=0
+    assert subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True)==before
+
+
+def test_shell_network_is_denied_before_connecting(tmp_path):
+    ctx,temporary,_=fixture(tmp_path);policy=profile(ctx,temporary=temporary,shell=True)
+    cp=run(policy,'/usr/bin/python3','-c','import socket;socket.create_connection(("127.0.0.1",9))')
+    assert cp.returncode!=0 and 'PermissionError' in cp.stderr
+
+
+def test_parent_home_is_writable_but_settings_and_hooks_are_pinned(tmp_path):
+    ctx,temporary,home=fixture(tmp_path);policy=profile(ctx,temporary=temporary,private_home=home)
+    python=['/usr/bin/python3','-c','import pathlib,sys;pathlib.Path(sys.argv[1]).write_text("fixture")']
+    assert run(policy,*python,str(home/'session.jsonl')).returncode==0
+    for target in (home/'settings.json',home/'hooks/changed.py'):
+        assert run(policy,*python,str(target)).returncode!=0
+        assert not target.exists()
+
+
+def test_symlink_cannot_escape_shell_write_scope(tmp_path):
+    ctx,temporary,_=fixture(tmp_path);root=Path(ctx['exec_tree'])
+    (root/'escape').symlink_to(Path(ctx['plans_dir']),target_is_directory=True)
+    cp=run(profile(ctx,temporary=temporary,shell=True),'/usr/bin/python3','-c','from pathlib import Path;Path(__import__("sys").argv[1]).write_text("escaped")',str(root/'escape/changed.md'))
+    assert cp.returncode!=0
+    assert not (Path(ctx['plans_dir'])/'changed.md').exists()

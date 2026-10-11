@@ -41,6 +41,10 @@ def classify(event,context):
                    ('git-metadata',root/'.git')]
         row['scope']='worktree' if inside(path,root) else 'outside-worktree'
         for name,protected_root in protected:
+            # Selfmod worktrees can live beneath the data/runtime root. Their
+            # explicit execution scope is an exception to the broad parent.
+            if name in {'data','runtime'} and inside(root,protected_root):
+                continue
             if inside(path,protected_root): row['scope']=name;break
         row['target_sha256']=hashlib.sha256(str(path).encode()).hexdigest()
     elif tool=='Bash':

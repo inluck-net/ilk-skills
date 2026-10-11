@@ -45,3 +45,14 @@ from the report. The October 11 MiMo PRO calls accepted both phases with the sam
 session/model. Elapsed was 21.158s initially and 8.284s resumed; resumed reported
 API time was 27.958s, exceeding its wall time, so it cannot be treated as an
 exclusive per-call phase measurement. This is capability evidence, not a speedup.
+
+`hooked_resume_probe.py --inputs <prepared-run-inputs> --output <report> --timeout <seconds>`
+uses copied production hooks and a synthetic disposable consumer worktree.
+The first native write intentionally fails an exact driver assertion; resume
+receives that red and must repair the same file. Reports include actual model,
+session identity, turns, driver exit and scope-observer counts. The October 11
+MiMo PRO probe passed both phases (9.069s/5.413s, two turns each). This supports
+continuation with those hook copies; it does not prove interrupted resume,
+Bash containment or batch speed. Timeout 120s was an experiment judgment for
+a handful of tool turns based on sampled ~20s call latency; a slow valid run
+would falsify the bound. No runner default changed.

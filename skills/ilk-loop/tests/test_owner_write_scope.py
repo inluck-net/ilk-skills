@@ -57,3 +57,13 @@ def test_hook_observes_or_refuses_without_changing_target(tmp_path,mode,expected
     rows=[json.loads(line) for line in (tmp_path/'write-scope-1.jsonl').read_text().splitlines()]
     assert rows[0]['diagnostic_only'] and rows[0]['scope']=='outside-worktree'
     assert (tmp_path/'write-scope-1.jsonl').stat().st_mode & 0o777==0o600
+
+
+def test_execution_role_overrides_its_broad_data_parent(tmp_path):
+    ctx=context(tmp_path)
+    ctx['data_root']=str(tmp_path)
+    ctx['runtime_dir']=str(tmp_path)
+    row=module.classify({'tool_name':'Write','tool_input':{'file_path':str(tmp_path/'work/code.py')}},ctx)
+    assert row['scope']=='worktree'
+    row=module.classify({'tool_name':'Write','tool_input':{'file_path':str(tmp_path/'plans/step.md')}},ctx)
+    assert row['scope']=='plans'
