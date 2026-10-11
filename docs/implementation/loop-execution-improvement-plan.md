@@ -22,24 +22,28 @@ Delivery target: by 2026-10-12 00:48 Asia/Shanghai (two hours from Chad’s
 request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
-Current next action: finish remaining supported lifecycle/caller requirements
-in this isolated worktree, continue controlled performance analysis, and wait
-for the live batch's normal completion before overlap comparison/integration.
-Consumer compatibility is locally installed at 8472771f; toolkit installed
-preview is 2ed78097. New owner candidates are committed but uninstalled.
+Current next action: close remaining legacy reader/recovery/parity requirements
+and delivery documentation in this isolated worktree. Toolkit preview 4de1eb06
+and consumer compatibility 2cb713ae are locally installed and checked. The old
+toolkit controller was freshly proved paused before first dispatch, exited at
+that idle boundary, and the original pause/plan bytes were preserved. No active
+worker was interrupted. Source main fast-forwarded without overlapping batch
+output because the paused run had dispatched no work. Do not remove the pause
+or infer permission to change another host's working batch.
 Fresh-base selfmod, declared worktree, accepted-transaction recovery, native
 file tools, phase observations and prepared-pin drain/relaunch have archived
 Mac evidence. Actual provider red then green used the same session; a real
 consumer repair passed and a focused-diagnostics comparison is recorded.
 Windows/member/dirty-entry adapters and controlled shell pairing remain open.
 Continue here per Chad: “no more handover, until the whole thing done”.
-Overall estimate 62% remains a judgment over the whole installed/measured scope,
+Overall estimate about 70% is a judgment over the whole installed/measured scope,
 not a checkbox count. Do not infer whole completion from capability checks.
 
-Old runs 20261011-102057/130246/212131 and their scheduler identities are
-historical. Latest observed run 20261011-215532 is running under the installed
-2ed78097 launch identity. Do not reuse old pause or PID observations. Chad's
-latest instruction is to leave the progressing live batch alone. Owner
+Old runs 20261011-102057/130246/212131/215532 and their controller identities
+are historical. Run 215532 was proved paused and undispatched before its exact
+controller exited for activation. The pause remains. Fresh scheduler/worker
+identity must be checked before any later action. Chad's instruction remains:
+leave a progressing active batch alone. Owner
 checkpoints retain original main WIP ancestry and the external preservation
 records. No published release or global code-only enforcement has occurred.
 
@@ -82,10 +86,11 @@ Designs:
   local preview at 2c3b4039. Old idle controllers exited at a verified boundary;
   scheduler restored, source settings and pause preserved. No published release
   or globally enabled code-only/native/thinking profile is implied.
-- [ ] A4 Representative baseline/brief comparison with the same task, model,
+- [x] A4 Representative baseline/brief comparison with the same task, model,
   provider, settings/hooks, fixtures and focused gates. Record acceptance,
   elapsed, turns/thinking, discovery, reds and host concurrency; no unsupported
-  speed claim. Use a consumer first, then a small toolkit batch.
+  speed claim. Consumer pair 229.799s/199.194s, same MiMo/native/hooks; separate
+  eligible toolkit repair 97.725s. One pair is not causal or general proof.
 
 ### B. Canonical context and durable records
 
@@ -184,7 +189,7 @@ External evidence directory:
 `/Users/chad/.ilk-data/projects/users-chad-projects-github-inluck-net-ilk-skills-604d727/runtime/analysis/design-revision-20261011/`.
 Contains candidate patch, worker cost report, effort probe and earlier owner
 record. This tracker supersedes that narrow owner record for scope/progress.
-Known batch: `MASTER-2026-10-11b-gates-and-recovery-tell-the-truth-execution-plan.md`.
+Known batch (preserved): `MASTER-2026-10-11b-gates-and-recovery-tell-the-truth-execution-plan.md`.
 Old run `20261011-102057` and its iteration are historical. Chad reports the
 running batch is working now (latest instruction); do not reuse stale pause/PID
 observations or change its state. Overlap reconciliation remains read-only until
@@ -192,6 +197,30 @@ an actual safe landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- Local delivery activated: source main fast-forwarded 2ed78097 → 4de1eb06;
+  consumer main 8472771f → 2cb713ae. Fresh scheduler was sleep-only; three
+  consumer LaunchAgents had active count zero/no PID and no mutating consumer
+  daemon was observed. Temporarily exclude scheduler/idle services, stop only
+  freshly verified undispatched paused controller 53493 (outer 53462/53477
+  exited), confirm empty registry, then flip immutable preview. Original
+  pause, all plan Markdown, worker-home settings and LaunchAgent plist bytes
+  stayed identical; all services restored. No rezmac change, public release,
+  global code-only/native/thinking/drain toggle, or batch plan/status edit.
+  First flip used .ilk instead of .ilk/releases: installed-pointer assertion
+  caught unchanged old current; created home/current was removed after exact
+  identity check, helper corrected with empty registry and sleep-only scheduler.
+  Installed current/previous now 4de1eb06/2ed78097. Full boundary/correction
+  evidence is toolkit-delivery-preview-20261011/.
+- Installed actual consumer gate-first check passed 7.637s against 4de1eb06,
+  real production hooks copied eight times into private input home, zero model
+  calls, one gate, one advance/ship, positive integrity/state journal, idle
+  registry and unchanged source home. This is capability verification of
+  previously adopted behavior, not a new paired speed sample or recovery of
+  the original failed model run. Installed consumer pin/lint integration: four
+  focused tests passed in 0.91s with explicit immutable toolkit input; partial
+  run is not whole-repository coverage. No full suite.
+
 
 - All-attempt caller/recovery checks: 28 passed/2 fixture seam failures in
   17.19s; four corrected authority-loss checks passed in 1.00s. Archived
