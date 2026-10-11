@@ -1852,3 +1852,15 @@ anchors at the time of inspection and can move as integration changes code.
 - Candidate only; no installed pin or active worker changed. Next: canonical
   PowerShell scheduler terminal-path readers, followed by activation/remaining
   acceptance-policy migration.
+
+### Canonical PowerShell scheduler terminal reader
+
+- All three scheduler terminal lookups now use runtime/launcher/last-exit.json,
+  matching the runner writer. The old runtime/last-exit.json is a read-only
+  fallback only when the current file does not exist. A current corrupt file
+  does not fall through to potentially unrelated historical evidence.
+- Actual portable PowerShell reader probe passed in 0.27s: a legacy shipped
+  sentinel cannot free a current running controller, canonical terminal is
+  read, and legacy-only migration still works. Legacy PID policy itself is
+  unchanged; this does not establish Windows registry/process ownership.
+- Candidate only. No active scheduler or installed pin changed.

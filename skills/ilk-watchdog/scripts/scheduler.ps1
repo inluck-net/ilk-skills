@@ -140,6 +140,16 @@ function Invoke-IlkNotify {
   } catch {}
 }
 
+function Get-LauncherSentinelPath {
+  param([string]$ProjectDataPath)
+  $current = Join-Path $ProjectDataPath 'runtime/launcher/last-exit.json'
+  if (Test-Path -LiteralPath $current) { return $current }
+  # Read-only migration fallback; a malformed current file never falls back.
+  $legacy = Join-Path $ProjectDataPath 'runtime/last-exit.json'
+  if (Test-Path -LiteralPath $legacy) { return $legacy }
+  return $current
+}
+
 function Test-RunningPid {
   <#
     Check if a project has a live running.pid (sentinel mutex).
@@ -170,7 +180,7 @@ function Test-RunningPid {
   # Stale-sentinel cross-check: even if the pid is alive, a terminal
   # last-exit.json means the loop already finished.  The lingering
   # -NoExit shell keeps the pid alive past the loop's real exit.
-  $sentinelFile = Join-Path $ProjectDataPath 'runtime\last-exit.json'
+  $sentinelFile = Get-LauncherSentinelPath -ProjectDataPath $ProjectDataPath
   if (Test-Path $sentinelFile) {
     try {
       $sentinel = Get-Content $sentinelFile -Raw -ErrorAction Stop
@@ -535,7 +545,7 @@ function Invoke-ZombieReaper {
         }
 
         # Read last-exit.json
-        $sentinelFile = Join-Path $projDir.FullName 'runtime\last-exit.json'
+        $sentinelFile = Get-LauncherSentinelPath -ProjectDataPath $projDir.FullName
         if (Test-Path $sentinelFile) {
           try {
             $sentinel = Get-Content $sentinelFile -Raw -Encoding utf8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
@@ -720,7 +730,7 @@ function Run-Scheduler {
 
       # --- rapid-terminal check: project went terminal within ~60s of dispatch ---
       if ($dispatchTime.ContainsKey($key)) {
-        $sentinelFile = Join-Path $proj.path 'runtime\last-exit.json'
+        $sentinelFile = Get-LauncherSentinelPath -ProjectDataPath $proj.path
         if (Test-Path $sentinelFile) {
           # Parse the sentinel JSON (guard parse errors → treat as $null).
           $sentinel = $null
