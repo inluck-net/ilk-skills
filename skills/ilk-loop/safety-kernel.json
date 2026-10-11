@@ -274,6 +274,11 @@
       "path": "skills/ilk-loop/scripts/emit_jsonl_record.py",
       "guard": "owner",
       "why": "driver context, evidence or recovery authority"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/plan_fingerprint.py",
+      "guard": "owner",
+      "why": "canonical driver plan contract and retry identity"
     }
   ],
   "kernel_basenames": [

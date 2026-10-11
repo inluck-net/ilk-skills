@@ -468,80 +468,12 @@ def reconcile_master_registry(master_path: Path, plans_dir: Path) -> bool:
     Returns True if the file was modified, False if no change was needed.
     Idempotent: a table already in agreement is a no-op with no rewrite churn.
     """
+    from plan_state import reconcile_registry,_digest
     try:
-        text = master_path.read_text(encoding="utf-8-sig")
+        content=master_path.read_bytes()
     except OSError:
         return False
-
-    registered = extract_subplan_files(text)
-    if not registered:
-        return False
-
-    # Actual status per registered sub-plan, from the sub-plan file itself.
-    actual: dict[str, str] = {}
-    for fname in registered:
-        sub_path = plans_dir / fname
-        if not sub_path.exists():
-            continue  # still being authored — do not invent a status
-        try:
-            sub_text = sub_path.read_text(encoding="utf-8-sig")
-        except OSError:
-            continue
-        actual[fname] = parse_frontmatter(sub_text).get("status", "pending").strip()
-    if not actual:
-        return False
-
-    lines = text.splitlines(keepends=True)
-    status_idx = None
-    changed = False
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            # A table cannot span a non-table line; forget the header.
-            status_idx = None
-            continue
-
-        cells = line.rstrip("\n").rstrip("\r").split("|")
-
-        # Header row: locate the Status column by name.
-        if status_idx is None:
-            for idx, cell in enumerate(cells):
-                if cell.strip().lower() == "status":
-                    status_idx = idx
-                    break
-            continue
-
-        # Separator row (|---|---|) carries no data.
-        if set(stripped.replace("|", "").replace(":", "").strip()) <= {"-"}:
-            continue
-
-        if status_idx >= len(cells):
-            continue
-
-        row_fname = next((f for f in actual if f in line), None)
-        if row_fname is None:
-            continue
-
-        want = actual[row_fname]
-        if cells[status_idx].strip() == want:
-            continue
-
-        cells[status_idx] = f" {want} "
-        rebuilt = "|".join(cells)
-        # Preserve the original line ending.
-        if line.endswith("\r\n"):
-            rebuilt += "\r\n"
-        elif line.endswith("\n"):
-            rebuilt += "\n"
-        lines[i] = rebuilt
-        changed = True
-
-    if not changed:
-        return False
-
-    master_path.write_text("".join(lines), encoding="utf-8")
-    return True
+    return reconcile_registry(master_path,expected_digest=_digest(content))
 
 
 def reconcile_master_status(master_path: Path, plans_dir: Path) -> bool:

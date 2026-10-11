@@ -150,3 +150,41 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
         finally: temporary.unlink(missing_ok=True)
         _append(log,dict(row,phase='applied'))
         return True
+
+
+def reconcile_registry(path: Path, *, expected_digest: str) -> bool:
+    """CAS only master registry Status projections, derived under journal lock."""
+    if os.environ.get('ILK_WORKER_SESSION','').strip():raise TransitionError('workers cannot project registry state')
+    path=Path(path).resolve(strict=True)
+    from iteration_context import read_context
+    context=read_context()
+    if context and (context.get('dispatch') or {}).get('master_path')!=str(path):
+        raise TransitionError('registry projection is outside frozen master')
+    from plan_fingerprint import registry_rows
+    log=path.parent/'state-transitions.jsonl'
+    with _lock(path.parent/'.state-transitions.lock'):
+        content=path.read_bytes();_recover(log,path,content)
+        if _digest(content)!=expected_digest:raise TransitionError('master changed before registry projection')
+        text=content.decode('utf-8-sig');lines=text.splitlines(keepends=True);changed=False
+        for index,column,name in registry_rows(text):
+            child=(path.parent/name).resolve()
+            if child.parent!=path.parent:raise TransitionError('registry path escapes plans root')
+            if not child.is_file():continue
+            state=parse_frontmatter(child.read_text(encoding='utf-8-sig'))
+            want=state.get('status','pending').strip();line=lines[index];cells=line.rstrip('\r\n').split('|')
+            if cells[column].strip()==want:continue
+            cells[column]=' '+want+' '
+            ending='\r\n' if line.endswith('\r\n') else ('\n' if line.endswith('\n') else '')
+            lines[index]='|'.join(cells)+ending;changed=True
+        if not changed:return False
+        new=''.join(lines).encode('utf-8')
+        if content.startswith(b'\xef\xbb\xbf'):new=b'\xef\xbb\xbf'+new
+        row=dict(id=str(uuid.uuid4()),path=str(path),actor='driver',reason='registry status projection',
+                 from_={},to={},projection='registry',before_sha256=_digest(content),after_sha256=_digest(new),phase='intent')
+        _append(log,row)
+        with tempfile.NamedTemporaryFile(mode='wb',dir=path.parent,delete=False) as stream:
+            temporary=Path(stream.name);stream.write(new);stream.flush();os.fsync(stream.fileno())
+        try:temporary.chmod(path.stat().st_mode & 0o777);os.replace(temporary,path)
+        finally:temporary.unlink(missing_ok=True)
+        _append(log,dict(row,phase='applied'))
+        return True

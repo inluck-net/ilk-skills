@@ -502,3 +502,11 @@ gates. `plan_state.transition` has same-journal master guards checked under
 lock. Caller integration, member-repo/baseline-red adapters, finding import,
 bounded commit hooks and close/ship projection remain new/unbuilt prerequisites;
 existing worker-runs-gates instructions still apply to the installed runner.
+
+`plan_state.py:155` now journals registry Status projection under the shared
+state lock, with byte CAS and BOM/CRLF preservation. `plan_fingerprint.py:78`
+provides exact registered-row parsing, including legacy headings. This follows
+measured reconciler behavior rather than the older named-section-only prose;
+unknown/unregistered rows remain contract content. This normalizer now belongs
+to the protected owner kernel because driver contract/retry identity uses it.
+Neither status projection nor retry history produces green gate evidence.

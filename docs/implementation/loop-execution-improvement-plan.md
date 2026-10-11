@@ -556,3 +556,16 @@ No completion/ship/proof markers are inferred from this human tracker.
   restore return code (only 0/3 accepted), not merely logging rc=2. Actual
   production-entry corrupt-journal/invalid-status fixture plus legacy master
   guards: 14 passed in 15.04s. Syntax/diff checks passed. No real state changes.
+
+- C4 registry projection: `plan_state.reconcile_registry` derives exact
+  registered-row statuses under the shared lock, CAS-checks master bytes,
+  journals replacement and preserves BOM/CRLF and every frontmatter field.
+  Passive projection cannot lift a hold or change a contract. Reconciler code
+  already owned registered Status cells under legacy headings; canonical
+  fingerprint now shares that exact row parser, so those legitimate updates
+  cannot reset retry history. Normalizer is owner-kernel protected. Combined
+  check: 20 passed/one invalid fixture failed in 64.60s (seven amendment caller
+  tests passed). The failed fixture used undated step.md, which the real
+  registry parser does not register; changed to a valid dated reference.
+  Projection/context rerun: 14 passed in 1.29s. Do not repeat the already
+  passing watcher cases just for that fixture correction. No real master edit.

@@ -41,9 +41,12 @@ def test_live_clone_and_wrong_plan_refused(tmp_path):
 
 def test_recovery_identity_survives_registry_progress_but_not_contract_changes(tmp_path):
     args=fixture(tmp_path)
+    selected=Path(args['dispatch']['subplan_path'])
+    registered=selected.with_name('2026-10-11-step.md');selected.rename(registered)
+    args['dispatch']['subplan_path']=str(registered)
     master=Path(args['plans_dir'])/'MASTER-selected.md'
     master.write_text('---\nstatus: active\n---\n# Work\n## Sub-plan registry\n'
-                      '| File | Status |\n|---|---|\n| step.md | pending |\n'
+                      '| File | Status |\n|---|---|\n| 2026-10-11-step.md | pending |\n'
                       '## Progress log\nold progress\n## Contract\nkeep this\n')
     args['dispatch'].update(master_path=str(master),batch_base_sha='frozen-base')
     initial=resolve_context(**args)['recovery_dir']

@@ -5,8 +5,8 @@ above ``## Findings``, with the frontmatter keys ``current_step``,
 ``status``, and ``last_updated`` excluded (the runner writes those).
 
 For MASTER files, the surface also:
-- blanks the Status cell of every row in the ``## Sub-plan registry``
-  table (the reconciler writes those);
+- blanks reconciler-owned Status cells of exact registered rows in
+  tables (including legacy headings) (the reconciler writes those);
 - drops the ``## Progress log`` section entirely (sessions append rows).
 
 Two plan files that differ only below ``## Findings``, in the excluded
@@ -75,73 +75,30 @@ def surface(text: str, *, master: bool = False) -> str:
     return text
 
 
+def registry_rows(text: str):
+    """Exact registered table rows the reconciler owns, including legacy headings."""
+    from plan_status import extract_subplan_files
+    registered=set(extract_subplan_files(text));status_idx=None
+    for index,line in enumerate(text.splitlines(keepends=True)):
+        stripped=line.strip()
+        if not stripped.startswith('|'):
+            status_idx=None;continue
+        cells=line.rstrip('\r\n').split('|')
+        if status_idx is None:
+            status_idx=next((i for i,cell in enumerate(cells) if cell.strip().lower()=='status'),None)
+            continue
+        if set(stripped.replace('|','').replace(':','').strip())<={'-'}:continue
+        names=set(extract_subplan_files(line))&registered
+        if len(names)==1 and status_idx<len(cells):yield index,status_idx,next(iter(names))
+
+
 def _blank_registry_status_cells(text: str) -> str:
-    """Blank the Status column of every row in the ``## Sub-plan registry`` table.
-
-    Finds the column by its header name (case-insensitive), matching the
-    logic in ``reconcile_master_registry``.
-    """
-    lines = text.splitlines(keepends=True)
-    result: list[str] = []
-
-    in_registry = False
-    status_idx: int | None = None
-    header_found = False
-
-    for line in lines:
-        stripped = line.strip()
-
-        # Detect the registry section heading.
-        if re.match(r"^## Sub-plan registry\s*$", stripped):
-            in_registry = True
-            status_idx = None
-            header_found = False
-            result.append(line)
-            continue
-
-        # End of registry section: next ``## `` heading.
-        if in_registry and re.match(r"^## ", stripped):
-            in_registry = False
-            status_idx = None
-            header_found = False
-            result.append(line)
-            continue
-
-        if not in_registry:
-            result.append(line)
-            continue
-
-        # We're inside the registry section.
-        if not stripped.startswith("|"):
-            # Not a table row.
-            result.append(line)
-            continue
-
-        cells = line.rstrip("\n").rstrip("\r").split("|")
-
-        # Header row: locate the Status column.
-        if not header_found:
-            for idx, cell in enumerate(cells):
-                if cell.strip().lower() == "status":
-                    status_idx = idx
-                    break
-            header_found = True
-            result.append(line)
-            continue
-
-        # Separator row (|---|---|).
-        if set(stripped.replace("|", "").replace(":", "").strip()) <= {"-"}:
-            result.append(line)
-            continue
-
-        # Data row: blank the Status cell.
-        if status_idx is not None and status_idx < len(cells):
-            cells[status_idx] = " "
-            result.append("|".join(cells) + "\n" if line.endswith("\n") else "|".join(cells))
-        else:
-            result.append(line)
-
-    return "".join(result)
+    lines=text.splitlines(keepends=True)
+    for index,status_idx,_ in registry_rows(text):
+        line=lines[index];cells=line.rstrip('\r\n').split('|');cells[status_idx]=' '
+        ending='\r\n' if line.endswith('\r\n') else ('\n' if line.endswith('\n') else '')
+        lines[index]='|'.join(cells)+ending
+    return ''.join(lines)
 
 
 def _drop_progress_log(text: str) -> str:
