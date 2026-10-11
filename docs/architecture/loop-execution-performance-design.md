@@ -706,3 +706,11 @@ intervals were 4.868s versus 46.607s, but first-edit discovery grew to 146.443s
 from 87.640s. See the consumer baseline document for model, clocks, pins and
 limitations. This is a hypothesis-supporting observation, not a causal speed
 claim or reason to relax acceptance. Thinking time remains unknown.
+
+Final `capture_execution` uses the same owned Git helper for contexts carrying
+an original iteration deadline. Expired authority/deadline returns unknown
+head/tree/range and an explicit capture error rather than hang or borrow a new
+budget. Legacy records without deadlines retain historical semantics. A
+negative first reproduced successful capture after expiry; 24 context checks
+and the archived normal caller passed after the change. This is a new isolated
+candidate, not a change to the live worker's loaded toolkit.

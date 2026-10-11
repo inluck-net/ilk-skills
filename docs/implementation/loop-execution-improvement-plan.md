@@ -162,6 +162,14 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- fea36f7e final capture deadline: an expired-iteration negative first reproduced
+  a successful unbounded final Git capture (1 failed in 0.19s). Capture now uses
+  the same owned bounded Git helper for HEAD/tree/ancestry/commit-range and
+  returns explicit unknown fields/error when ownership or deadline is lost.
+  Twenty-four context checks passed 2.00s; archived actual normal runner passed
+  1 in 7.90s. No new timeout or production activation. Legacy captures without
+  a deadline retain historical behavior explicitly; no false parity claim.
+
 - Fresh read-only production observation: last-launch run 20261011-215532
   names installed 2ed78097; matching last-exit still running (owner PID 53493).
   This is a liveness observation, not a progress or acceptance claim. No pause,
