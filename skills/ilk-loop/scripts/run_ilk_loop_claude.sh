@@ -5974,6 +5974,28 @@ PY
     _RUN_REGISTRY_DIR="$runtime_dir"
   fi
 
+  # Finish an original accepted transaction before selecting another step.
+  # No provider is called and no worker budget/retry history is reset. The
+  # existing caller iteration cap bounds driver-only recovery; five-second
+  # TERM grace matches bounded_run's existing owned-child cleanup policy.
+  if [[ "${ILK_WORKER_MODE:-}" == "code-only" && -n "$runtime_dir" ]]; then
+    local _accept_recovery_cap _accept_recovery_pid _accept_recovery_rc=0
+    _accept_recovery_cap=$(resolve_iteration_timeout_sec)
+    set -m
+    gtimeout --kill-after=5s "${_accept_recovery_cap}s" python3 "${_ILK_SCRIPT_DIR}/acceptance_recovery.py" \
+      --runtime "$(dirname "$runtime_dir")" --project "$PROJECT_PATH" --log "$JSONL_LOG" \
+      --timeout "$_accept_recovery_cap" --registry-run-id "$RUN_ID" --owner-pid "$$" &
+    _accept_recovery_pid=$!
+    set +m
+    # The helper registers its group before touching state. Registration
+    # failure exits nonzero, so no parent-side PID race can grant dispatch.
+    wait "$_accept_recovery_pid" || _accept_recovery_rc=$?
+    if [[ "$_accept_recovery_rc" -ne 0 ]]; then
+      _write_terminal_sentinel "iteration_record_recovery_failed" "$runtime_dir"
+      return 1
+    fi
+  fi
+
   # Initial check: classify the loop status into runnable / all-shipped / blocked.
   classify_loop_status
 

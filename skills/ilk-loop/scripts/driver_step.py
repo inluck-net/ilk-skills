@@ -159,7 +159,7 @@ def _save_acceptance(context,result,phase):
                 path=Path(check[channel+'_path'])
                 captures.append(dict(path=str(path),sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
     row=dict(schema_version=1,phase=phase,context_sha256=hashlib.sha256(json.dumps(context,sort_keys=True).encode()).hexdigest(),
-             result=result,captures=captures)
+             result=result,captures=captures,context=context,context_path=os.environ.get('ILK_ITER_CONTEXT'))
     with tempfile.NamedTemporaryFile(mode='w',dir=target.parent,delete=False) as stream:
         temporary=Path(stream.name);json.dump(row,stream);stream.flush();os.fsync(stream.fileno())
     try:

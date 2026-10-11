@@ -790,3 +790,23 @@ No completion/ship/proof markers are inferred from this human tracker.
   not restored away. Pending exact-archive caller check: successful accepted
   step plus a coordinator hold introduced during the gate. Do not activate or
   claim the retirement verified until that caller evidence passes.
+- C6 production-entry evidence at `81e022df`: 2 focused exact-archive caller
+  checks passed in 9.38s. Normal accepted work still ships/proves; a coordinator
+  hold introduced during the driver gate survives unchanged, the pointer stays
+  at 0 and no ship is claimed. No legacy master/status/gate snapshot files are
+  created on the enforced path. These guards and the amendment watcher remain
+  enabled on legacy paths. Candidate-only retirement; no install or broad test.
+- Cross-launch closure candidate: acceptance receipts retain the exact frozen
+  context/path. New owner-only `acceptance_recovery.py` replays actual closes,
+  then completes at most one original accepted consumer transaction before
+  new dispatch. It checks original identity/contract/capture/tree/CAS/journal,
+  ships only the final authored step, checks step-commit integrity and writes
+  an actual close before ledger projection. Holds or unsupported landing refuse.
+  Startup uses an owned registered gtimeout group and the existing iteration
+  cap; no provider call or retry/budget reset. 10 focused same-context and
+  cross-launch checks passed in 4.02s. First fixture failures correctly refused
+  a selfmod context; corrected fixture to the supported ordinary consumer role.
+  A hold changes the contract fingerprint too; assertion now accepts either
+  precise refusal rather than weakening validation. Pending archived full
+  startup caller checks. Selfmod/member/declared-worktree closure adapters,
+  post-marker interruptions and earlier commit crash gaps remain open.

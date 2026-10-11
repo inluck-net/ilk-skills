@@ -46,6 +46,11 @@
       "why": "driver-owned scoped shell execution and cleanup authority"
     },
     {
+      "path": "skills/ilk-loop/scripts/acceptance_recovery.py",
+      "guard": "owner",
+      "why": "cross-launch acceptance closure and original transaction proof authority"
+    },
+    {
       "path": "skills/ilk-loop/scripts/driver_step.py",
       "guard": "owner",
       "why": "driver gate, accepted commit and pointer authority"
