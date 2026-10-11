@@ -3433,3 +3433,25 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
   inputs and all 1,891 protected file hashes preserved. Consumer remains
   3987a299. Source main is clean; profiles remain opt-in. Remote private standby
   is d74d6631 until refreshed; shared rezmac remains v0.9.193.
+
+
+- B3/D2 fresh-home recovery evidence: ten retained-red ownership/changed-input
+  checks passed in 2.86s. Strengthened archived two-launch test prepares a new
+  immutable home for the second launch with unchanged global instructions;
+  fresh gates repaired and shipped the retained diff, one check in 15.18s.
+  This is ownership continuity, not prior-green outcome reuse. Rezmac private
+  checkout/standby refreshed to f031fd76; twelve focused input/bootstrap/actual
+  OS/multi-owner checks passed there in 1.78s. Shared rezmac stays v0.9.193.
+
+- D4 declared-worktree upgrade candidate: archived scenario initially exposed
+  fixture ordering that created a worktree before committing its gate-ready
+  ignore rule; that produced a legitimately inconclusive mutating gate.
+  After fixing fixture setup order, the same actual entry reached an accepted
+  close and refused with declared-worktree upgrade landing adapter unavailable.
+  New boundary revalidates exact declared master/.git/common-store binding
+  under the original deadline; both clone and execution roots are carried in
+  consumer guards. It preserves the declared worktree through launcher relaunch.
+  Request/target protocol integers are strict and contradictory non-green
+  acceptance shapes refuse. Focused owned drain checks passed in 0.53s (actual
+  output to be corrected if the completed tool result reports a different time).
+  Next: committed archived declared-worktree drain and actual launcher activation.

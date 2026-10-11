@@ -24,7 +24,7 @@ def boundary(context_path, log_path):
     if not request.exists():
         return None
     raw=request.read_bytes();row=json.loads(raw)
-    if not isinstance(row,dict) or row.get('schema_version')!=1:
+    if not isinstance(row,dict) or type(row.get('schema_version')) is not int or row['schema_version']!=1:
         raise ContextError('unsupported upgrade drain request')
     selected=read_dispatch(context)
     snapshot=context.get('master_snapshot')
@@ -40,7 +40,7 @@ def boundary(context_path, log_path):
         raise ContextError('upgrade boundary requires enforced code-only dispatch')
     target=Path(row['next_inputs_dir']).resolve(strict=True)
     manifest=verify_launch_resources(target)
-    if manifest.get('upgrade_drain_protocol')!=1:
+    if type(manifest.get('upgrade_drain_protocol')) is not int or manifest['upgrade_drain_protocol']!=1:
         raise ContextError('prepared target lacks upgrade activation protocol')
     sha=manifest['toolkit_sha']
     if sha==context['toolkit_sha'] or row.get('next_toolkit_sha')!=sha or code_sha(Path(manifest['code_root']))!=sha:
@@ -56,8 +56,10 @@ def boundary(context_path, log_path):
     if len(closes)!=1:
         raise ContextError('upgrade boundary requires exactly one durable close')
     close=closes[0]
+    from ship_audit import ledger_record_has_green_shape
     if (close.get('context')!=context or close.get('stop_reason')
             or close.get('driver_acceptance',{}).get('accepted') is not True
+            or not ledger_record_has_green_shape(close.get('driver_acceptance',{}))
             or close.get('driver_integrity_passed') is not True
             or close.get('state_audit',{}).get('explained') is not True):
         raise ContextError('upgrade boundary requires positive accepted integrity/state close')
@@ -67,8 +69,17 @@ def boundary(context_path, log_path):
         raise ContextError('upgrade boundary lacks completed owned-child cleanup')
     if context['mode']=='selfmod' and close.get('merge_outcome')!='merged':
         raise ContextError('pending selfmod landing is not a completed drain')
-    if context['mode'] not in {'none','selfmod'}:
-        raise ContextError('declared-worktree upgrade landing adapter unavailable')
+    if context['mode'] not in {'none','selfmod','work_tree'}:
+        raise ContextError('upgrade execution adapter unavailable')
+    if context['mode']=='work_tree':
+        from iteration_context import validate_work_tree_binding
+        from driver_step import _deadline,_operation_context
+        deadline=context.get('iteration_deadline_monotonic')
+        if deadline is None:raise ContextError('declared-worktree boundary deadline unavailable')
+        budget=_deadline.set(deadline);owner=_operation_context.set(context)
+        try:validate_work_tree_binding(context)
+        finally:
+            _operation_context.reset(owner);_deadline.reset(budget)
     from plan_state import audit_context
     if audit_context(context).get('explained') is not True:
         raise ContextError('state changed since accepted close')
@@ -79,7 +90,7 @@ def boundary(context_path, log_path):
     require_driver(context)
     if request.read_bytes()!=raw:
         raise ContextError('upgrade request changed during boundary validation')
-    roots=sorted(set(context.get('observe_tree',{}).values())|{context['exec_tree']})
+    roots=sorted(set(context.get('observe_tree',{}).values())|{context['exec_tree'],context['clone']})
     return dict(schema_version=1,request_sha256=hashlib.sha256(raw).hexdigest(),
         drained_context_path=str(Path(context_path).resolve()),
         drained_context_sha256=hashlib.sha256(Path(context_path).read_bytes()).hexdigest(),
@@ -108,7 +119,7 @@ def activation(runtime,project):
             or row.get('consumer_protocol')!='upgrade-drain-v1-owner-confirmed'):
         raise ContextError('upgrade activation request changed or has no consumer agreement')
     target=Path(record['next_inputs_dir']);manifest=verify_launch_resources(target)
-    if manifest.get('upgrade_drain_protocol')!=1:
+    if type(manifest.get('upgrade_drain_protocol')) is not int or manifest['upgrade_drain_protocol']!=1:
         raise ContextError('prepared target lacks upgrade activation protocol')
     if (manifest['toolkit_sha']!=record['next_toolkit_sha'] or manifest.get('context_bindings')
             or code_sha(Path(manifest['code_root']))!=record['next_toolkit_sha']):

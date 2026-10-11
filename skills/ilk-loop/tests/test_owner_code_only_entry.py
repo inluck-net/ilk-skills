@@ -14,11 +14,11 @@ ROOT=Path(__file__).resolve().parents[3]
 
 
 @pytest.mark.timeout(90)
-@pytest.mark.parametrize('case',['normal','selfmod','work-tree','native-tools','native-tools-batch-optin','hold','pending-advance','pending-selfmod','pending-work-tree','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain','measured-red','measured-red-selfmod'])
+@pytest.mark.parametrize('case',['normal','selfmod','work-tree','native-tools','native-tools-batch-optin','hold','pending-advance','pending-selfmod','pending-work-tree','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain','upgrade-drain-work-tree','measured-red','measured-red-selfmod'])
 def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,monkeypatch,case):
     measured_red=case.startswith('measured-red')
     human_hold_during_gate=case=='hold'
-    upgrading=case=='upgrade-drain'
+    upgrading=case.startswith('upgrade-drain')
     spec=importlib.util.spec_from_file_location('entry_fixture',Path(__file__).with_name('test_pre_loop_exit_sentinel.py'))
     fixtures=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixtures)
     world=fixtures._build_world_shipped(tmp_path,with_steps=True);work=world['project']
@@ -46,9 +46,8 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
         master.write_text(master.read_text().replace('status: active',
             'status: active\nilk_profile: unattended\nresult_file: '+str(tmp_path/'automatic-result.json')))
     declared_root=None
-    if case in {'work-tree','pending-work-tree'}:
+    if case in {'work-tree','pending-work-tree','upgrade-drain-work-tree'}:
         declared_root=tmp_path/'declared-execution'
-        git('worktree','add','--detach',str(declared_root))
         master.write_text(master.read_text().replace('status: active','status: active\nwork_tree: '+str(declared_root)))
     source_head=git('rev-parse','HEAD').stdout.strip()
     if case.startswith('gate-first-'):
@@ -81,6 +80,7 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
         (work/'.ilk-launch.json').write_text(json.dumps({'ship':{'verification_subplan':'required',
             'suite':{'command':'python3 -I -c '+shlex.quote(command),'flags':[],'timeout':10}}}))
         git('add','.gitignore','.ilk-launch.json');git('commit','-qm','fixture optional final suite')
+    if declared_root:git('worktree','add','--detach',str(declared_root))
     home=tmp_path/'source-home';home.mkdir()
     (home/'CLAUDE.md').write_text('fixture global instruction')
     (home/'rules').mkdir();(home/'rules/entry.md').write_text('fixture global rule')
@@ -187,7 +187,7 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             # Fixture startup judgment: observed gates begin within ~12s;
             # 20s stays below the caller's existing 40s outer fixture bound.
             deadline=monotonic()+20
-            while not (work/'gate-ready').exists():
+            while not ((declared_root or work)/'gate-ready').exists():
                 assert process.poll() is None and monotonic()<deadline
                 threading.Event().wait(.02)
             if human_hold_during_gate:

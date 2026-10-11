@@ -43,21 +43,26 @@ close=dict(record_phase='close',context=context,run_id=context['run_id'],iterati
 log.write_text(json.dumps(close)+'\n')
 result=boundary(ctx,log)
 assert result['next_toolkit_sha']==manifest['toolkit_sha'] and result['master_path']==str(master)
-assert result['consumer_worktrees']==[str(work)]
+assert result['consumer_worktrees']==sorted({str(work),context['clone']})
 assert 'status: active' in master.read_text() and 'current_step: 0' in plan.read_text()
 def refused():
  try:boundary(ctx,log)
  except (ValueError,RuntimeError):return
  raise AssertionError('invalid drain accepted')
-for field,value in [('run_id','another-run'),('next_toolkit_sha','0'*40),('consumer_protocol','unknown')]:
+for field,value in [('run_id','another-run'),('next_toolkit_sha','0'*40),('consumer_protocol','unknown'),('schema_version',True)]:
  bad=dict(row);bad[field]=value;request.write_text(json.dumps(bad));refused()
  request.write_text(json.dumps(row))
 for field,value in [('driver_integrity_passed',False),('state_audit',{'explained':False}),
  ('driver_acceptance',{'accepted':False}),('stop_reason','timeout'),('merge_outcome','deferred'),
+ ('driver_acceptance',{'accepted':True,'green_accepted':False}),
+ ('driver_acceptance',{'accepted':True,'progress_accepted':True}),
  ('driver_phase_observation',{'intervals':[]})]:
  bad=copy.deepcopy(close);bad[field]=value;log.write_text(json.dumps(bad)+'\n');refused()
 log.write_text(json.dumps(close)+'\n'+json.dumps(close)+'\n');refused()
 log.write_text(json.dumps(close)+'\n')
+metadata=inputs/'inputs.json';pinned=json.loads(metadata.read_text())
+pinned['upgrade_drain_protocol']=True;metadata.write_text(json.dumps(pinned));refused()
+pinned['upgrade_drain_protocol']=1;metadata.write_text(json.dumps(pinned))
 os.environ['ILK_WORKER_SESSION']='1';refused();os.environ.pop('ILK_WORKER_SESSION')
 finish(registry,context['run_id'],identity=process_identity(os.getpid()))
 refused()
