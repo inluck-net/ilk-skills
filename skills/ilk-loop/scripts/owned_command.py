@@ -22,6 +22,11 @@ def main():
     if not command:raise ValueError('owned command missing')
     require_driver(owner)
     register_child(Path(owner['run_registry_dir']),owner['run_id'],pid=os.getpid(),owner_pid=owner['runner_owner_pid'])
+    if os.environ.get('ILK_GATE_TEST_ISOLATION')=='1':
+        # Registration needs driver authority; the test process must not
+        # inherit that descriptor as its own default test context.
+        for key in ('ILK_ITER_CONTEXT','ILK_MASTER','ILK_RUN_ID'):
+            os.environ.pop(key,None)
     if owner.get('exec_worker'):os.environ['ILK_WORKER_SESSION']='1'
     os.execvpe(command[0],command,os.environ)
 

@@ -52,6 +52,7 @@ def test_session_kernel_policy_is_frozen_at_base(tmp_path: Path, legacy: bool):
     "skills/ilk-loop/scripts/emit_jsonl_record.py",
     "skills/ilk-loop/scripts/launch_inputs_root.py",
     "skills/ilk-loop/scripts/migration_guard.py",
+    "skills/ilk-loop/scripts/bounded_run.py",
 ])
 def test_new_authority_and_deployment_paths_are_kernel(path):
     assert safety_kernel.touches_kernel(path) == path

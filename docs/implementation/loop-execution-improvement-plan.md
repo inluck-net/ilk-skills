@@ -3589,3 +3589,44 @@ in 0.06s; 25 focused kernel/current-and-historical-policy checks passed in
 **1.60s** after registration. Historical bases retain their own list/policy;
 report-only tools remain outside this authority extension. These last append
 and policy corrections are candidate-only until the next safe activation.
+
+
+### Private rezmac closure refresh
+
+Independent standby toolkit clone fast-forwarded `f031fd76` → `e5fbbc49` from a
+verified private Git bundle; common Git store checked independent, checkout
+clean. Read-only standby release prepared. Eighteen launch-root, triage state
+and migration registry checks passed in **0.45s** on rezmac. Shared current
+remains `v0.9.193`; no legacy job, claim or shared checkout was changed.
+An initial common-dir assertion mistakenly resolved relative `.git` against
+remote cwd; it refused before fetch/mutation. Corrected relative resolution to
+the private repository and reran the boundary. Evidence: rezmac-preview-20261012/
+`release-prepared-e5fbbc49.json` and `closure-checks-e5fbbc49.txt`.
+
+### Test-gate environment isolation (candidate)
+
+A real registered sandboxed pytest child inherited its driver's HOME/data and
+frozen context (1 failed, 1 deselected in **0.44s**). The owned Mac gate adapter
+now recognizes direct `pytest` / `python -m pytest` invocations, including a
+single Bash command, and gives them separate gate-owned HOME, both data-root
+aliases, standard XDG directories and scratch. The ownership wrapper registers
+the child first, then removes inherited iteration/master/run context before
+exec. Generic gates preserve their frozen-context contract. Runtime package
+lookup preserves the explicit Python user base; those system libraries remain
+observed inputs, not claimed immutable.
+
+Five actual ownership/recovery/base-sample checks passed in **1.58s**. After
+adding direct-command/pipeline/redirect/malformed boundary cases and kernel
+registration, forty focused checks passed in **2.45s**. `bounded_run.py` is now
+registered as owner-only kernel authority alongside its existing registered
+wrapper. No new numeric production cap was introduced. The existing recovery
+fixture's 5/10/15-second gate/reservation/outer bounds are judgments for the
+observed subsecond local process path; legitimate overruns falsify those
+fixture margins, not runtime requirements.
+
+This closes ambient HOME/data/context inheritance for that explicit test-runner
+adapter. It does not prove all test eligibility, process-table hermeticity,
+compound shell wrappers, arbitrary test runners, or native Windows isolation.
+It does not alter generic metadata gates or grant proof from historical tests.
+Archived measured-red caller validation and safe local installation remain
+pending. No live batch plans or dispatched inputs changed.

@@ -353,6 +353,11 @@
       "path": "skills/ilk-loop/scripts/migration_guard.py",
       "guard": "owner",
       "why": "Canonical run ownership guards movement of project plans and runtime."
+    },
+    {
+      "path": "skills/ilk-loop/scripts/bounded_run.py",
+      "guard": "owner",
+      "why": "Owned gate scope, isolated test environment and bounded process-group lifecycle."
     }
   ],
   "kernel_basenames": [

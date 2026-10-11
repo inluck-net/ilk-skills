@@ -36,6 +36,34 @@ STALL_CPU_S = 1.0          # minimum CPU gain across the window
 STALL_SAMPLE_S = 30        # sampling interval
 
 
+def _is_direct_pytest(argv, *, shell=False):
+    """Recognize only an unambiguous direct pytest command, never shell pipelines."""
+    import shlex,re
+    from pathlib import Path
+    if isinstance(argv,str):
+        if not shell:return False
+        command=argv
+    elif len(argv)==3 and Path(argv[0]).name in {'bash','sh'} and argv[1]=='-c':
+        command=argv[2]
+    else:
+        command=None
+    if command is not None:
+        try:
+            lexer=shlex.shlex(command,posix=True,punctuation_chars=';&|<>')
+            lexer.whitespace_split=True;lexer.commenters=''
+            parts=list(lexer)
+        except ValueError:return False
+        if any(part and set(part)<=set(';&|<>') for part in parts):return False
+    else:parts=list(argv)
+    if not parts:return False
+    name=Path(parts[0]).name
+    if name in {'pytest','pytest-3'}:return True
+    if not re.fullmatch(r'python(?:3(?:\.\d+)?)?',name):return False
+    index=1
+    while index<len(parts) and parts[index] in {'-I','-B','-u','-s'}:index+=1
+    return parts[index:index+2]==['-m','pytest']
+
+
 def run(
     argv_or_cmd: Union[str, list],
     *,
@@ -113,6 +141,7 @@ def _run_posix(
     )
     from iteration_context import read_context
     context=read_context()
+    original_argv=argv_or_cmd;original_shell=shell
     if protect_control_plane:
         from pathlib import Path
         from worker_sandbox import profile
@@ -125,6 +154,19 @@ def _run_posix(
         child_env={key:value for key,value in (env if env is not None else os.environ).items()
                    if not key.startswith('ANTHROPIC_')}
         child_env.update(TMPDIR=gate_temporary,ILK_GATE_CHILD='1',ILK_ITER_RECORD_STAGE='')
+        child_env.pop('ILK_GATE_TEST_ISOLATION',None)
+        # Preserve explicit runtime dependency lookup while separating test
+        # HOME/data from the driver. Generic gates keep their frozen context.
+        if _is_direct_pytest(original_argv,shell=original_shell):
+            import site
+            home=Path(gate_temporary)/'test-home';home.mkdir()
+            data=Path(gate_temporary)/'test-data';data.mkdir()
+            child_env.setdefault('PYTHONUSERBASE',site.getuserbase())
+            child_env.update(HOME=str(home),USERPROFILE=str(home),
+                             ILK_DATA_HOME=str(data),ILK_DATA_DIR=str(data),
+                             XDG_CONFIG_HOME=str(home/'config'),XDG_CACHE_HOME=str(home/'cache'),
+                             XDG_DATA_HOME=str(home/'data'),XDG_STATE_HOME=str(home/'state'),
+                             ILK_GATE_TEST_ISOLATION='1')
         kwargs['env']=child_env
     if context and context.get('worker_sandbox_adapter')=='macos-brokered-shell':
         from owned_command import wrap_command

@@ -318,3 +318,15 @@ profiles retain historical semantics; they do not acquire code-only proof.
 See the durable implementation tracker for candidate/installed distinctions,
 actual checks and remaining rollout. The currently running legacy batch is
 left untouched; future integration must reconcile its completed changes first.
+
+
+### Direct pytest gate environment (2026-10-12 owner candidate)
+
+`bounded_run.py:_is_direct_pytest` recognizes a direct test invocation, refusing
+to classify pipelines/redirects/compound wrappers as this adapter. Its owned Mac
+caller assigns gate-owned HOME/data/XDG paths; `owned_command.py:main` registers
+ownership before removing inherited driver context for the test executable.
+Generic gates retain their frozen context. Actual sandboxed recovery and base
+sample checks passed; this is a new candidate, with archived caller/activation
+pending in the durable tracker. Full test eligibility, arbitrary runner adapters,
+process-table isolation and native Windows support remain separate accepted gaps.
