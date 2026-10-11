@@ -67,6 +67,19 @@ def run(
         if protect_control_plane:raise RuntimeError('Windows gate write-scope adapter unavailable')
         return _run_nt(argv_or_cmd, cwd=cwd, timeout=timeout,
                        shell=shell, env=env)
+    if protect_control_plane:
+        import tempfile
+        from iteration_context import read_context
+        from run_registry import require_driver
+        context=read_context()
+        if not context or not context.get('run_registry_dir'):
+            raise RuntimeError('gate write scope needs frozen registered dispatch')
+        require_driver(context)
+        # Each gate owns scratch independently of a former worker/broker.
+        # Recovery retains the original descriptor and acceptance hashes.
+        with tempfile.TemporaryDirectory(prefix='ilk-driver-gate-') as scratch:
+            return _run_posix(argv_or_cmd,cwd=cwd,timeout=timeout,shell=shell,
+                             env=env,protect_control_plane=True,gate_temporary=scratch)
     return _run_posix(argv_or_cmd, cwd=cwd, timeout=timeout,
                       shell=shell, env=env,protect_control_plane=protect_control_plane)
 
@@ -81,6 +94,7 @@ def _run_posix(
     shell: bool,
     env: Optional[dict],
     protect_control_plane: bool = False,
+    gate_temporary: Optional[str] = None,
 ) -> Tuple[Optional[int], str, str, bool]:
     """POSIX implementation: new process group + SIGTERM/SIGKILL on timeout.
 
@@ -104,12 +118,13 @@ def _run_posix(
         from worker_sandbox import profile
         if not context or not context.get('run_registry_dir'):
             raise RuntimeError('gate write scope needs frozen registered dispatch')
-        policy=profile(context,temporary=Path(context['worker_tmp_dir']),shell=True)
+        if gate_temporary is None:raise RuntimeError('gate-owned scratch missing')
+        policy=profile(context,temporary=Path(gate_temporary),shell=True)
         argv_or_cmd=['/usr/bin/sandbox-exec','-p',policy,*(['/bin/sh','-c',argv_or_cmd] if shell else argv_or_cmd)]
         shell=False
         child_env={key:value for key,value in (env if env is not None else os.environ).items()
                    if not key.startswith('ANTHROPIC_')}
-        child_env.update(TMPDIR=context['worker_tmp_dir'],ILK_GATE_CHILD='1',ILK_ITER_RECORD_STAGE='')
+        child_env.update(TMPDIR=gate_temporary,ILK_GATE_CHILD='1',ILK_ITER_RECORD_STAGE='')
         kwargs['env']=child_env
     if context and context.get('worker_sandbox_adapter')=='macos-brokered-shell':
         from owned_command import wrap_command

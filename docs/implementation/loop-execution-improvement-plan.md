@@ -982,3 +982,15 @@ No completion/ship/proof markers are inferred from this human tracker.
   observer reported a touched real project; it is not isolation evidence.
   Exact archived caller check pending local commit. Hook dependency adapters,
   Windows parity and activation remain open.
+- `66c2dbe9` exact archived settings caller: normal/external-hold checks passed,
+  2 in 11.64s. The provider stub asserts the empty automatic setting-source
+  argument; actual CLI help confirms it supports `--setting-sources`. This
+  does not independently establish managed-policy or all-version precedence.
+- Recovery scratch defect independently reproduced: after original worker
+  scratch disappears, scoped gate setup raises FileNotFoundError (focused
+  fixture failed in 0.21s). Each protected driver gate now allocates its own
+  temporary directory after fresh driver authorization and removes it after
+  exact group cleanup. The frozen old context/receipt remains byte-identical;
+  it is neither rewritten nor supplemented with renewed budget/provider state.
+  Recovery-scratch and registered scope/dispatch checks: 4 passed in 6.68s.
+  Exact archived normal/recovery callers pending this local checkpoint.
