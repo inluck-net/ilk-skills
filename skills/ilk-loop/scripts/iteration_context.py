@@ -64,6 +64,26 @@ def root_for_plan(context: dict, subplan: Path) -> Path:
     return Path(context['exec_tree'])
 
 
+def integrity_scope(context: dict, plans_dir: Path) -> list[str]:
+    """Use the frozen registry after dispatch, never a new queue selection."""
+    registry=context.get('plans')
+    if not isinstance(registry,dict) or not registry:
+        raise ContextError('integrity frozen registry invalid or empty')
+    root=Path(context['plans_dir']).resolve()
+    if plans_dir.resolve()!=root:
+        raise ContextError('integrity plans root differs from frozen registry')
+    names=[]
+    for name,row in registry.items():
+        if not isinstance(row,dict) or not isinstance(row.get('path'),str):
+            raise ContextError('integrity registry row invalid')
+        path=Path(row['path']).resolve()
+        if path.parent!=root or path.name!=name or path.suffix!='.md' or path.name.startswith('MASTER-'):
+            raise ContextError('integrity plan escapes frozen registry')
+        names.append(name)
+    read_dispatch(context)
+    return names
+
+
 def red_inputs(context: dict, slug: str, step: int) -> dict:
     """Attribution roots and bases come from this dispatch, never a new queue."""
     matches=[row for row in context.get('plans',{}).values() if row.get('slug')==slug]

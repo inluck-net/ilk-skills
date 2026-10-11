@@ -2799,3 +2799,23 @@ anchors at the time of inspection and can move as integration changes code.
   not claim an exact whole-process hard deadline or complete transaction
   support from these cleanup checks. Retained samples need ownership-aware
   recovery, not unconditional deletion. Current local installation 2991c82a.
+
+### Bash integrity and point ledger retain frozen batch identity
+
+- Executing the actual embedded integrity reader with two active masters
+  reproduced selecting a different higher-priority batch and rediscovering
+  it even with invalid frozen context (2 failed/1 passed in 0.29s).
+  Adjacent point-ledger reader reproduced the same pair (2 failed in 0.23s).
+- New iteration_context.integrity_scope validates the exact frozen registry
+  and plans root. Bash uses it after dispatch; legacy queue choice stays
+  available only without context. Unavailable scope returns 2 and the actual
+  caller records local_checks_inconclusive, no integrity proof or rollback.
+  Point-ledger records the frozen master, skips unavailable identity.
+- Scope/caller, missing validator, gate-output lifecycle and context checks:
+  32 passed in 3.47s. Combined adjacent unknown/status/scope checks:
+  19 passed/1 skipped in 1.36s (explicit PS runtime absent); no native Windows
+  parity claim. Bash syntax and diff checks passed. Final registry-malformation
+  negatives and archived production-entry checks follow before activation.
+- Candidate only. Local 2991c82a and remote v0.9.193 remain installed.
+  B2 is still open across remaining readers/terminal adapters; this removes
+  two measured competing derivations rather than declaring all readers done.

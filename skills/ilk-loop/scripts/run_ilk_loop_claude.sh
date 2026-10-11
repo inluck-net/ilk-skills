@@ -3953,6 +3953,16 @@ test_ship_integrity() {
 import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[2])
+from iteration_context import read_context, integrity_scope, ContextError
+try:
+    context = read_context()
+    if context:
+        for name in integrity_scope(context, Path(sys.argv[1])):
+            print(name)
+        raise SystemExit(0)
+except ContextError as error:
+    print('integrity scope unavailable: '+str(error), file=sys.stderr)
+    raise SystemExit(2)
 try:
     from plan_status import extract_subplan_files
     from loop_status import pick_active_master, parse_frontmatter
@@ -4007,7 +4017,10 @@ try:
         print('__MASTERS_EXIST__')
 except Exception:
     pass
-" "$plans_dir" "${_SKILL_ROOT}/ilk-loop/scripts" "${PRE_ITER_ALL_STEPS:-}" 2>/dev/null)
+" "$plans_dir" "${_SKILL_ROOT}/ilk-loop/scripts" "${PRE_ITER_ALL_STEPS:-}") || {
+    echo "[ship-integrity] frozen scope unavailable; no enforcement or rollback" >&2
+    return 2
+  }
 
   for f in "$plans_dir"/*.md; do
     [[ "$(basename "$f")" == MASTER* ]] && continue
@@ -5697,11 +5710,25 @@ import sys
 sys.path.insert(0, sys.argv[1])
 from loop_status import pick_active_master
 from pathlib import Path
+from iteration_context import read_context, integrity_scope, ContextError
+context = read_context()
+if context:
+    integrity_scope(context, Path(sys.argv[2]))
+    master = (context.get('dispatch') or {}).get('master_path')
+    if master:
+        path = Path(master).resolve()
+        if path.parent != Path(context['plans_dir']).resolve() or not path.name.startswith('MASTER-'):
+            raise ContextError('point ledger master outside frozen plans')
+        print(path.name)
+    raise SystemExit(0)
 masters = sorted(Path(sys.argv[2]).glob('MASTER-*.md'))
 if masters:
     chosen, _ = pick_active_master(masters, json_mode=True)
     print(chosen.name)
-" "${_SKILL_ROOT}/ilk-loop/scripts" "$_rpd" 2>/dev/null) || master_basename=""
+" "${_SKILL_ROOT}/ilk-loop/scripts" "$_rpd") || {
+      echo "[ledger] point skipped: frozen batch identity unavailable" >&2
+      return 0
+    }
   fi
   local result=""
   result=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/suite_ledger.py" \
@@ -8009,6 +8036,10 @@ append_revert_row(
     else
     if _si_stderr=$(test_ship_integrity "$(get_plans_dir)" "$local_checks_results" "$heads_before_file" "$heads_after_file" 2>&1 1>/dev/null); then
       _ship_integrity_passed=1
+    elif [[ "$?" -eq 2 ]]; then
+      # Missing frozen scope is observation failure, never rollback authority.
+      stop_reason="local_checks_inconclusive"
+      iter_stop_reason="local_checks_inconclusive"
     else
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"
