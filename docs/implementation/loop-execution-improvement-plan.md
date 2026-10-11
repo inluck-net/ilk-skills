@@ -2079,3 +2079,31 @@ anchors at the time of inspection and can move as integration changes code.
 - Baseline-unknown, complete output and both strike readers: 13 passed in
   0.95s including actual portable PowerShell. No test suite/provider/active
   run changed. Next: original-budget attribution and frozen baseline readers.
+
+### Attribution spends one budget, not one budget per node
+
+- Verified _run_at_base_worktree gave each selected node the full budget, and
+  bisect tests used a fresh fixed 300s timeout. A deterministic-clock negative
+  observed [0.15, 0.15, 0.15] for three nodes and failed in 0.09s; simulated
+  probe cost is 0.1s, not a host speed measurement or production default.
+  CLI negative showed an available 0.5s original iteration budget becoming
+  300s (failed in 0.04s).
+- Attribution now shares one nested deadline across node measurements, Git
+  preparation, baselines and bisect. CLI clips it to a transferred original
+  iteration deadline when available. Legacy contexts without that field retain
+  the explicit existing per-attribution cap; completing their transferred
+  deadline is still open, not silently claimed. The existing bounded cleanup
+  allowance remains cleanup only and supplies no accepted gate evidence.
+- Baseline test commands use bounded process-group execution. Timeout/usage/
+  collection unknowns are not red samples and cannot become a bisected owner.
+  A capped candidate aborts ownership identification rather than blaming its
+  commit. No budget is reset at a nested measurement. No numeric production
+  cap was added or increased.
+- Deterministic budget/unknown/output selection: 9 passed in 0.35s. Adjacent
+  actual focused fixture tests for inherited, pre-existing and owned attribution
+  plus budget/unknown controls: 9 passed/12 deselected in 3.26s with explicit
+  pytest import path and private HOME/data. These are tiny disposable projects,
+  not the toolkit's suite or a routine verification subplan.
+- Candidate only. Current installed/source main remains 95be4d75; old paused
+  controller retains 4de1eb06. Next: canonical frozen baseline/root reader,
+  accumulated installation at a fresh safe boundary, then remaining adapters.

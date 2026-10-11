@@ -33,13 +33,37 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+_clock = time.monotonic
+_budget_deadline = ContextVar('red_owner_budget_deadline', default=None)
+
+
+@contextmanager
+def _budget_scope(seconds):
+    if isinstance(seconds, bool) or not math.isfinite(seconds) or seconds < 0:
+        raise ValueError('finite nonnegative attribution budget required')
+    deadline = _clock() + seconds
+    previous = _budget_deadline.get()
+    token = _budget_deadline.set(min(previous, deadline) if previous is not None else deadline)
+    try: yield
+    finally: _budget_deadline.reset(token)
+
+
+def _remaining(cap):
+    deadline = _budget_deadline.get()
+    remaining = min(cap, deadline - _clock()) if deadline is not None else cap
+    if remaining <= 0: raise subprocess.TimeoutExpired('attribution budget', cap)
+    return remaining
+
 
 # Sibling module — bounded subprocess execution with process-group cleanup.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from bounded_run import run as _bounded_run  # noqa: E402
 
 
-def _run_test(repo: Path, cmd: str, nodes: list[str]) -> bool:
+def _run_test(repo: Path, cmd: str, nodes: list[str]) -> bool | None:
     """Run the test command in ``repo``.  Returns True if green.
 
     When *nodes* is non-empty, only the node ids are passed to the test
@@ -57,8 +81,9 @@ def _run_test(repo: Path, cmd: str, nodes: list[str]) -> bool:
         full_cmd = cmd
     rc, _stdout, _stderr, _timed_out = _bounded_run(
         ["bash", "-c", full_cmd],
-        cwd=str(repo), timeout=300,
+        cwd=str(repo), timeout=_remaining(300),
     )
+    if _timed_out or rc is None or rc in _USAGE_COLLECTION_EXITS:return None
     return rc == 0
 
 
@@ -71,7 +96,7 @@ def _commit_subject(repo: Path, sha: str) -> str:
     r = subprocess.run(
         ["git", "log", "--format=%B", "-1", sha],
         cwd=repo, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=30,
+        encoding="utf-8", errors="replace", timeout=_remaining(30),
     )
     return r.stdout.strip()
 
@@ -81,13 +106,13 @@ def _rev_list_first_parent(repo: Path, base: str, head: str) -> list[str]:
     r = subprocess.run(
         ["git", "rev-list", "--first-parent", f"{base}..{head}"],
         cwd=repo, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=60,
+        encoding="utf-8", errors="replace", timeout=_remaining(60),
     )
     assert r.returncode == 0, f"rev-list failed: {r.stderr}"
     return [l.strip() for l in r.stdout.splitlines() if l.strip()]
 
 
-def bisect_red_owner(
+def _bisect_red_owner(
     repo: Path,
     base: str,
     head: str,
@@ -104,7 +129,7 @@ def bisect_red_owner(
       - ``reason``: present only when ``first_red`` is None due to budget
     """
     import time
-    start = time.monotonic()
+    start = _clock()
 
     # Step 1: binary search.
     commits = list(reversed(_rev_list_first_parent(repo, base, head)))
@@ -117,11 +142,13 @@ def bisect_red_owner(
     subprocess.run(
         ["git", "worktree", "add", "--detach", str(wt_path), base],
         cwd=repo, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=60,
+        encoding="utf-8", errors="replace", timeout=_remaining(60),
     )
     try:
         # Verify base is green (in the worktree, at the base commit).
         base_green = _run_test(wt_path, cmd, nodes)
+        if base_green is None:
+            return {"first_red": None, "first_red_subject": None, "base_green": None, "reason": "unmeasured"}
         if not base_green:
             return {"first_red": None, "first_red_subject": None, "base_green": False}
         lo, hi = 0, len(commits) - 1
@@ -131,7 +158,7 @@ def bisect_red_owner(
         runs = 0
 
         while lo <= hi and runs < max_runs:
-            if time.monotonic() - start > budget_s:
+            if _clock() - start > budget_s:
                 return {"first_red": None, "first_red_subject": None,
                         "base_green": True, "reason": "budget"}
 
@@ -142,10 +169,13 @@ def bisect_red_owner(
             subprocess.run(
                 ["git", "checkout", "--detach", sha],
                 cwd=wt_path, capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=30,
+                encoding="utf-8", errors="replace", timeout=_remaining(30),
             )
 
-            red_here = not _run_test(wt_path, cmd, nodes)
+            passed = _run_test(wt_path, cmd, nodes)
+            if passed is None:
+                return {"first_red": None, "first_red_subject": None, "base_green": True, "reason": "unmeasured"}
+            red_here = not passed
             runs += 1
 
             if red_here:
@@ -197,7 +227,7 @@ def _strip_runner_flags(cmd: str) -> str:
 _USAGE_COLLECTION_EXITS = {2, 3, 4, 5}
 
 
-def _run_at_base_worktree(
+def _measure_at_base_worktree(
     repo: Path, base_sha: str, cmd: str, nodes: list[str], budget_s: int,
 ) -> dict:
     """Run the command (or specific nodes) at base_sha in a detached worktree.
@@ -215,7 +245,7 @@ def _run_at_base_worktree(
         add = subprocess.run(
             ["git", "worktree", "add", "--detach", str(wt), base_sha],
             cwd=repo, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=60,
+            encoding="utf-8", errors="replace", timeout=_remaining(60),
         )
         if add.returncode != 0:
             raise RuntimeError(
@@ -250,20 +280,14 @@ def _run_at_base_worktree(
         if nodes:
             results: dict[str, str] = {}
             for nid in nodes:
-                r = subprocess.run(
-                    f"{runner} {nid}", shell=True, cwd=wt,
-                    capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", timeout=budget_s,
-                )
-                results[nid] = _classify(r.returncode, r.stdout, r.stderr)
+                rc, stdout, stderr, timed_out = _bounded_run(
+                    f"{runner} {nid}", shell=True, cwd=str(wt), timeout=_remaining(budget_s))
+                results[nid] = 'unmeasured' if timed_out or rc is None else _classify(rc, stdout, stderr)
             return results
         else:
-            r = subprocess.run(
-                runner, shell=True, cwd=wt,
-                capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=budget_s,
-            )
-            return {"_command": _classify(r.returncode, r.stdout, r.stderr)}
+            rc, stdout, stderr, timed_out = _bounded_run(
+                runner, shell=True, cwd=str(wt), timeout=_remaining(budget_s))
+            return {"_command": 'unmeasured' if timed_out or rc is None else _classify(rc, stdout, stderr)}
     finally:
         subprocess.run(
             ["git", "worktree", "remove", "--force", str(wt)],
@@ -279,7 +303,7 @@ def _extract_plan_slug(commit_msg: str) -> str | None:
     return m.group(1) if m else None
 
 
-def attribute_red(
+def _attribute_red(
     repo: Path,
     iteration_base: str,
     batch_base: str | None,
@@ -307,7 +331,7 @@ def attribute_red(
       - unmeasured: budget ran out, worktree failed, or base unknown.
         Blocks acceptance, but does not identify an owner or authorize a strike.
     """
-    start = time.monotonic()
+    start = _clock()
 
     # Parse node ids from stdout_tail.
     node_ids = _parse_pytest_nodes(stdout_tail) if stdout_tail else []
@@ -323,7 +347,7 @@ def attribute_red(
             "owner_subject": None,
             "owner_slug": None,
             "reason": "budget of 0 — cannot measure",
-            "elapsed_s": round(time.monotonic() - start, 2),
+            "elapsed_s": round(_clock() - start, 2),
             "nodes": [],
         }
 
@@ -331,7 +355,7 @@ def attribute_red(
     def _sha_exists(sha: str) -> bool:
         r = subprocess.run(
             ["git", "cat-file", "-e", sha],
-            cwd=repo, capture_output=True, text=True, timeout=30,
+            cwd=repo, capture_output=True, text=True, timeout=_remaining(30),
         )
         return r.returncode == 0
 
@@ -345,7 +369,7 @@ def attribute_red(
             "owner_subject": None,
             "owner_slug": None,
             "reason": f"iteration base {iteration_base[:12]} not found in repo",
-            "elapsed_s": round(time.monotonic() - start, 2),
+            "elapsed_s": round(_clock() - start, 2),
             "nodes": [],
         }
 
@@ -375,7 +399,7 @@ def attribute_red(
             "owner_subject": None,
             "owner_slug": None,
             "reason": "worktree creation or test run failed at iteration base",
-            "elapsed_s": round(time.monotonic() - start, 2),
+            "elapsed_s": round(_clock() - start, 2),
             "nodes": [],
         }
 
@@ -390,14 +414,14 @@ def attribute_red(
             "owner_subject": None,
             "owner_slug": None,
             "reason": "usage or collection error at iteration base — cannot measure",
-            "elapsed_s": round(time.monotonic() - start, 2),
+            "elapsed_s": round(_clock() - start, 2),
             "nodes": [],
         }
 
     # If green at iteration base, this iteration broke it (owned).
     if iter_green:
         # Bisect to find which commit in iteration_base..head broke it.
-        elapsed_now = time.monotonic() - start
+        elapsed_now = _clock() - start
         bisect_budget = max(1, budget_s - int(elapsed_now))
 
         owner_sha = None
@@ -447,7 +471,7 @@ def attribute_red(
             "owner_subject": owner_subject,
             "owner_slug": owner_slug,
             "reason": "green at iteration base — this iteration broke it",
-            "elapsed_s": round(time.monotonic() - start, 2),
+            "elapsed_s": round(_clock() - start, 2),
             "nodes": nodes,
         }
 
@@ -475,12 +499,12 @@ def attribute_red(
             "owner_subject": None,
             "owner_slug": None,
             "reason": "red at iteration base and batch base is unresolved",
-            "elapsed_s": round(time.monotonic() - start, 2),
+            "elapsed_s": round(_clock() - start, 2),
             "nodes": nodes,
         }
 
     # Measure at batch base.
-    elapsed_so_far = time.monotonic() - start
+    elapsed_so_far = _clock() - start
     remaining_budget = max(1, budget_s - int(elapsed_so_far))
     try:
         if node_ids:
@@ -511,7 +535,7 @@ def attribute_red(
             "owner_subject": None,
             "owner_slug": None,
             "reason": "red at iteration base and batch base measurement failed",
-            "elapsed_s": round(time.monotonic() - start, 2),
+            "elapsed_s": round(_clock() - start, 2),
             "nodes": nodes,
         }
 
@@ -523,7 +547,7 @@ def attribute_red(
         return dict(verdict='unmeasured',iteration_base=iteration_base,batch_base=batch_base,
                     node_ids=node_ids,owner_sha=None,owner_subject=None,owner_slug=None,
                     reason='batch base measurement unavailable or mixed; per-node attribution required',
-                    batch_results=batch_results,elapsed_s=round(time.monotonic()-start,2),nodes=[])
+                    batch_results=batch_results,elapsed_s=round(_clock()-start,2),nodes=[])
 
     if batch_green:
         # Red at iteration base, green at batch base — inherited.
@@ -533,7 +557,7 @@ def attribute_red(
         owner_slug = None
 
         # Budget for bisect: whatever remains.
-        elapsed_now = time.monotonic() - start
+        elapsed_now = _clock() - start
         bisect_budget = max(1, budget_s - int(elapsed_now))
 
         if node_ids:
@@ -603,7 +627,7 @@ def attribute_red(
             "owner_subject": owner_subject,
             "owner_slug": owner_slug,
             "reason": "red at iteration base, green at batch base — inherited",
-            "elapsed_s": round(time.monotonic() - start, 2),
+            "elapsed_s": round(_clock() - start, 2),
             "nodes": nodes,
         }
     else:
@@ -624,9 +648,31 @@ def attribute_red(
             "owner_subject": None,
             "owner_slug": None,
             "reason": "red at both iteration base and batch base",
-            "elapsed_s": round(time.monotonic() - start, 2),
+            "elapsed_s": round(_clock() - start, 2),
             "nodes": nodes,
         }
+
+
+def _run_at_base_worktree(repo, base_sha, cmd, nodes, budget_s):
+    with _budget_scope(budget_s):
+        try:return _measure_at_base_worktree(repo, base_sha, cmd, nodes, budget_s)
+        except subprocess.TimeoutExpired:return {node:'unmeasured' for node in nodes or ['_command']}
+
+
+def bisect_red_owner(repo, base, head, cmd, nodes, budget_s=300):
+    with _budget_scope(budget_s):
+        try:return _bisect_red_owner(repo, base, head, cmd, nodes, budget_s)
+        except subprocess.TimeoutExpired:
+            return dict(first_red=None, first_red_subject=None, base_green=None, reason='budget')
+
+
+def attribute_red(repo, iteration_base, batch_base, head, cmd, stdout_tail='', budget_s=300):
+    with _budget_scope(budget_s):
+        try:return _attribute_red(repo, iteration_base, batch_base, head, cmd, stdout_tail, budget_s)
+        except subprocess.TimeoutExpired:
+            return dict(verdict='unmeasured',iteration_base=iteration_base,batch_base=batch_base,
+                        node_ids=_parse_pytest_nodes(stdout_tail),owner_sha=None,owner_slug=None,
+                        reason='original attribution budget exhausted',nodes=[])
 
 
 def main(argv: list[str]) -> int:
@@ -681,6 +727,22 @@ def main(argv: list[str]) -> int:
                         reason='named complete gate output unavailable')))
                     return 0
 
+        budget = args.budget_s
+        try:
+            from iteration_context import read_context
+            from iteration_clock import monotonic
+            context = read_context()
+            if context and context.get('iteration_deadline_monotonic') is not None:
+                deadline = float(context['iteration_deadline_monotonic'])
+                if not math.isfinite(deadline):raise ValueError('invalid original iteration deadline')
+                if context.get('worker_sandbox_adapter') == 'macos-brokered-shell':
+                    from run_registry import require_driver
+                    require_driver(context)
+                budget = min(budget, max(0, deadline-monotonic()))
+        except (ValueError, RuntimeError, OSError):
+            print(json.dumps(dict(verdict='unmeasured',owner_sha=None,owner_slug=None,
+                                  reason='original attribution context unavailable',nodes=[])))
+            return 0
         result = attribute_red(
             args.repo,
             iteration_base=args.iteration_base,
@@ -688,7 +750,7 @@ def main(argv: list[str]) -> int:
             head=args.head,
             cmd=args.cmd,
             stdout_tail=stdout_tail,
-            budget_s=args.budget_s,
+            budget_s=budget,
         )
         print(json.dumps(result, ensure_ascii=False))
         return 0
