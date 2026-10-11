@@ -24,7 +24,7 @@ required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: finish declared-worktree settings/dependency root validation,
 then reconcile the remaining accepted design requirements against the implementation
-and evidence map. Toolkit preview 8fc3cf66
+and evidence map. Toolkit preview 2b1f554a
 and consumer compatibility 3987a299 are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -3489,3 +3489,56 @@ The overall percentage remains a judgment, not a measurement. Compatibility
 requirements must be reconciled against agreed designs instead of silently
 expanding the checklist after each Mac fix. This does not mark unbuilt adapters
 complete or authorize abandoning accepted delivery requirements.
+
+
+### Settings-root delivery and remaining-scope reconciliation
+
+Committed snapshot `2b1f554a` passed both archived real declared-worktree
+entry/upgrade checks: 2 passed, 16 deselected in 39.38s. Locally installed as
+`owner-loop-performance-20261012-2b1f554a`; consumer remains `3987a299`.
+Fresh verified paused-undispatched controller 94556 stayed alive; all 1,891
+protected hashes matched. Idle consumer services and sleep-only scheduler were
+restored. Evidence: `toolkit-delivery-preview-20261012v/installed.json`.
+
+There are **16 unchecked top-level delivery items**, each partial rather than
+16 new components. Do not convert capability checks into blanket completion.
+Remaining accepted work is bounded by the checklist and its linked designs;
+new speculative adapters or unrelated audits are not added to this delivery.
+
+Execution order after the installed settings correction:
+
+1. C4/B2/D1: enumerate remaining state writers and authority readers, migrate
+   each named caller with a concrete regression check. Start with watchdog
+   triage's direct status/step writes, then project lifecycle/record consumers.
+2. B1/C2/C3/D2: complete declared member execution and checked portable parity,
+   preserve exact role/ownership and legacy fallbacks. Native Windows evidence
+   requires that platform; Mac refusal must not be counted as delivered.
+3. B3/E2: close accepted recovery/verdict/hermeticity gaps, with bounded
+   focused diagnostics, never routine full-suite runs or historical-green reuse.
+4. D3/D4/E4: finish coordinated consumer/upgrade reader mapping, refresh checked
+   private rezmac inputs, activate only at a proven boundary, reconcile the
+   accepted requirements and evidence, and record any actual external blocker.
+5. E1: reuse the existing representative provider evidence unless a concrete
+   newly changed behavior needs a new comparison. No paid replay for a progress
+   number. Preserve final-verification opt-in.
+
+This is an execution order, not a scope reduction or new release authorization.
+The previous 76% judgment cannot support a credible duration estimate. Report
+remaining mechanisms and completed deliveries until the coverage map permits
+an evidence-based completion verdict.
+
+### Shared state writer: watchdog triage (candidate)
+
+Two negatives reproduced direct triage writes with no transition journal and
+reopening a human-held plan (2 failed in 0.04s). `_set_plan_status` now delegates
+to `plan_state.transition` with exact-byte CAS, triage actor and reason. The
+unused direct scalar writer was removed. The public apply path records a
+`triage-refused` result on transition refusal and does not acknowledge/relaunch;
+blocked amendments attempt the protected transition before appending findings.
+Unqualified blocked/human-held states cannot be released by this caller.
+
+Checks: 23 targeted triage state/rails/kernel-screening checks passed in 0.14s,
+including durable intent/applied journal, human hold, no resume acknowledgement
+on refusal, and concurrent edit preservation. No numeric production default
+was added. This migrates one named writer, not every state writer, and is not
+installed yet. No live plan or worker was changed.

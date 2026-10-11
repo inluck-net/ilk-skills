@@ -104,19 +104,6 @@ def _read_plan_frontmatter(plan_path: Path) -> dict[str, str]:
     return parse_frontmatter(text)
 
 
-def _write_plan_field(plan_path: Path, key: str, value: str) -> None:
-    """Set a scalar frontmatter key in a sub-plan file."""
-    text = plan_path.read_text(encoding="utf-8")
-    fm = parse_frontmatter(text)
-    if key not in fm:
-        return
-    old_line = f"{key}: {fm[key]}"
-    new_line = f"{key}: {value}"
-    text = text.replace(old_line, new_line, 1)
-    _assert_write_allowed(plan_path, plan_path.parent.parent)
-    plan_path.write_text(text, encoding="utf-8")
-
-
 def _append_finding(
     plan_path: Path,
     data_dir: Path,
@@ -153,27 +140,20 @@ def _set_plan_status(
     status: str | None = None,
     current_step: int | None = None,
 ) -> None:
-    """Update status and/or current_step in a sub-plan's frontmatter."""
+    """Compare-and-set triage state through the shared durable transition API."""
+    from plan_state import transition
     _assert_write_allowed(plan_path, data_dir)
-    text = plan_path.read_text(encoding="utf-8")
-    fm = parse_frontmatter(text)
-
-    now_str = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
-    text = text.replace(
-        f"last_updated: {fm.get('last_updated', '')}",
-        f"last_updated: {now_str}",
-        1,
-    )
-
-    if status is not None and "status" in fm:
-        text = text.replace(f"status: {fm['status']}", f"status: {status}", 1)
-    if current_step is not None and "current_step" in fm:
-        text = text.replace(
-            f"current_step: {fm['current_step']}",
-            f"current_step: {current_step}",
-            1,
-        )
-    plan_path.write_text(text, encoding="utf-8")
+    raw=plan_path.read_bytes()
+    fm=parse_frontmatter(raw.decode('utf-8-sig'))
+    wanted={}
+    if status is not None and 'status' in fm:wanted['status']=status
+    if current_step is not None and 'current_step' in fm:wanted['current_step']=current_step
+    if not wanted:return
+    if 'last_updated' in fm:
+        wanted['last_updated']=datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d')
+    transition(plan_path,{key:fm[key] for key in wanted},wanted,
+               actor='triage',reason='validated stopped-run triage state correction',
+               expected_digest=hashlib.sha256(raw).hexdigest())
 
 
 def _find_plans_dir(data_dir: Path) -> Path:
@@ -492,7 +472,19 @@ def validate(
 # ── apply ────────────────────────────────────────────────────────────────────
 
 
-def apply(
+def apply(decision, data_dir, *, run_id, data_root=None, repo=None):
+    """Return a recorded refusal if a shared state transition loses its CAS."""
+    from plan_state import TransitionError
+    try:
+        return _apply(decision,data_dir,run_id=run_id,data_root=data_root,repo=repo)
+    except TransitionError as exc:
+        reason='state_transition_refused: '+str(exc)
+        write_audit('triage-refused',_project_name(data_dir),root=data_dir,
+                    run_id=run_id,reason=reason)
+        return {'action':'refused','reason':reason,'audit_kind':'triage-refused'}
+
+
+def _apply(
     decision: dict[str, Any],
     data_dir: Path,
     *,
@@ -667,6 +659,9 @@ def _do_amend(
 ) -> dict[str, Any]:
     """Amend: append finding; if blocked set to pending; ack."""
     if target_path:
+        fm = _read_plan_frontmatter(target_path)
+        if fm.get("status") == "blocked":
+            _set_plan_status(target_path,data_dir,status="pending")
         _append_finding(
             target_path, data_dir,
             run_id=run_id,
@@ -674,12 +669,6 @@ def _do_amend(
             basis=decision.get("basis", ""),
             falsifier=decision.get("falsifier", ""),
         )
-        fm = _read_plan_frontmatter(target_path)
-        if fm.get("status") == "blocked":
-            _set_plan_status(
-                target_path, data_dir,
-                status="pending",
-            )
 
     write_resume_ack(data_dir)
 
