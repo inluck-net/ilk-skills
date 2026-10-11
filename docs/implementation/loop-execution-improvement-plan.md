@@ -24,8 +24,8 @@ required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: wire candidate measured-red progress into opt-in Mac
 worker/loop, close/result and consumer readers, then finish remaining
-legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview 376f3096
-and consumer compatibility 4f74ae4e are locally installed and checked. The original idle controller exit is historical. Current controller 94556
+legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview c2345ab0
+and consumer compatibility 3987a299 are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
 worker was interrupted. Source main fast-forwarded without overlapping batch
@@ -3214,3 +3214,22 @@ Reverted protocol-brief owned iteration **1 passed / 3 deselected in 8.80s**.
 No new provider run is needed merely to repeat the successful baseline. Next:
 commit provenance/fallback checkpoint, private remote consumer preparation,
 new archived close entry, safe local delivery, then remaining whole-plan work.
+
+
+- Local delivery c2345ab0 + consumer 3987a299: freshly proved all three
+  gh-resolve LaunchAgents idle (active count zero/no PID), excluded only those
+  idle services and the sleep-only scheduler during the fast-forward, restored
+  all services. Controller 94556 stayed alive with original frozen inputs;
+  1,891 protected hashes unchanged. Archived measured-red public entry passed
+  1 test / 16 deselected in 23.74s, including corrected non-green provenance.
+  Capsule experiment removed; no full suite, shared rezmac activation, worker
+  interruption, global profile enablement or public release occurred.
+- B2 feedback fallback defect reproduced: per-iteration JSONL kept its first
+  open row and accepted a foreign recorded run merely from directory placement.
+  Negative focused check failed before correction. Candidate reader now prefers
+  an outcome over open, preserves opened_at in either order, and excludes an
+  explicit foreign run while retaining legacy rows without run_id. Initial
+  adjacent checks under private HOME lacked an explicit toolkit root and failed
+  discovery, not behavior; repeat uses private HOME/data plus owner skill root.
+  Corrected focused owner/fallback/BOM CLI checks: 13 passed in 1.13s under
+  explicit isolated roots. This closes that reader defect, not all I2 readers.

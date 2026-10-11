@@ -631,7 +631,7 @@ def read_per_iter_jsonl(
 
     De-duplicates by iteration number.  Returns records sorted by iteration.
     """
-    seen: set[int] = set()
+    seen: dict[int, int] = {}
     records: list[dict] = []
     for root in _iter_log_root_candidates(project_path, last_launch):
         runs_dir = root / "runs" / run_id
@@ -650,11 +650,23 @@ def read_per_iter_jsonl(
                             continue
                         if not isinstance(rec, dict):
                             continue
-                        it = rec.get("iteration", 0)
-                        if it in seen:
+                        # Directory placement is not recorded run identity.
+                        # Legacy records without run_id retain their old path binding.
+                        if rec.get("run_id") not in (None, "", run_id):
                             continue
-                        seen.add(it)
-                        records.append(rec)
+                        it = rec.get("iteration", 0)
+                        prev = seen.get(it)
+                        if prev is None:
+                            seen[it] = len(records)
+                            records.append(rec)
+                        elif _carries_outcome(rec) and not _carries_outcome(records[prev]):
+                            opened = records[prev].get('timestamp')
+                            if opened and not rec.get('opened_at'):
+                                rec = dict(rec, opened_at=opened)
+                            records[prev] = rec
+                        elif not _carries_outcome(rec) and _carries_outcome(records[prev]):
+                            if rec.get('timestamp') and not records[prev].get('opened_at'):
+                                records[prev] = dict(records[prev], opened_at=rec['timestamp'])
             except OSError:
                 continue
     records.sort(key=lambda r: r.get("iteration", 0))

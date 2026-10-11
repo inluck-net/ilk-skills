@@ -59,3 +59,21 @@ def test_feedback_keeps_measured_progress_non_green_and_exact_run(tmp_path):
         else:modified['driver_acceptance']['green_accepted']=True
         assert collect.recorded_measured_progress([modified],'run')==[]
     assert collect.recorded_measured_progress([row],'other')==[]
+
+
+def test_per_iteration_fallback_uses_close_and_refuses_foreign_run(tmp_path,monkeypatch):
+    root=tmp_path/'logs';directory=root/'runs'/'run';directory.mkdir(parents=True)
+    log=directory/'iter-01.log.jsonl'
+    common={'run_id':'run','iteration':1}
+    opened=dict(common,record_phase='open',timestamp='start')
+    closed=dict(common,record_phase='close',timestamp='close',driver_elapsed_sec=600,exit_code=0)
+    foreign=dict(closed,run_id='other',driver_elapsed_sec=999)
+    monkeypatch.setattr(collect,'_iter_log_root_candidates',lambda *args:[root])
+    for rows in ([opened,closed,foreign],[foreign,closed,opened]):
+        log.write_text('\n'.join(json.dumps(row) for row in rows))
+        result=collect.read_per_iter_jsonl('run',tmp_path)
+        assert len(result)==1
+        assert result[0]['record_phase']=='close'
+        assert result[0]['run_id']=='run'
+        assert result[0]['opened_at']=='start'
+        assert collect.measured_iteration_elapsed(result[0])==600
