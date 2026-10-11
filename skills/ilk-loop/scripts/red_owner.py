@@ -306,12 +306,17 @@ def _measure_at_base_worktree(
                 runner,
             )
 
-        def _classify(rc: int, stdout: str, stderr: str) -> str:
+        def _classify(rc: int, stdout: str, stderr: str, expected_node=None) -> str:
             if rc == 0:
                 return "passed"
             blob = (stdout or "") + (stderr or "")
             if rc in _USAGE_COLLECTION_EXITS or "no tests ran" in blob:
                 return "unmeasured"
+            if expected_node is not None:
+                clean=re.sub(r"\x1b\[[0-9;]*m", "", blob)
+                failed='\n'.join(line for line in clean.splitlines() if line.startswith('FAILED '))
+                if rc!=1 or _parse_pytest_nodes(failed)!=[expected_node] or _parse_pytest_nodes(clean)!=[expected_node]:
+                    return 'unmeasured'
             return "failed"
 
         if nodes:
@@ -321,7 +326,7 @@ def _measure_at_base_worktree(
                 rc, stdout, stderr, timed_out = _bounded_run(
                     f"{runner} {shlex.quote(nid)}", shell=True, cwd=str(wt), timeout=_remaining(budget_s),
                     env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1'))
-                results[nid] = 'unmeasured' if timed_out or rc is None or not _sample_unchanged(wt,sample_head) else _classify(rc, stdout, stderr)
+                results[nid] = 'unmeasured' if timed_out or rc is None or not _sample_unchanged(wt,sample_head) else _classify(rc, stdout, stderr, nid)
             return results
         else:
             sample_head=_prepare_sample(wt,base_sha)

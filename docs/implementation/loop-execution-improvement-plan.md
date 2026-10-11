@@ -23,7 +23,7 @@ request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: close remaining legacy reader/recovery/parity requirements
-and delivery documentation in this isolated worktree. Toolkit preview abbadf8a
+and delivery documentation in this isolated worktree. Toolkit preview 18454a64
 and consumer compatibility 2cb713ae are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -2667,3 +2667,39 @@ anchors at the time of inspection and can move as integration changes code.
 - This removes an unsafe shortcut before adding any owned unproven-progress
   adapter. It does not implement that adapter or change the strict owned
   raw-green contract. Commit before the archived normal entry check.
+
+
+### Unknown-attribution correction delivered locally
+
+- Committed 18454a64 archived owned normal entry: 1 passed/14 deselected in
+  16.29s. Fresh local immutable activation preserved exact controller 94556
+  and all 1,891 protected hashes, with idle scheduler restored. Evidence:
+  toolkit-delivery-preview-20261012j/installed.json. No live worker interrupted.
+- Remote private independent standby is now 18454a64; its eight new integrity
+  cases passed in 0.04s. Remote installed v0.9.193 and shared checkout/services
+  remain unchanged.
+- Pre-existing-red owned transaction work is now being traced through gate
+  observations, prepared acceptance recovery, CAS, projection, finalization,
+  integrity, selfmod landing, close ledger, optional drain and consumer result.
+  Do not implement it by changing all_passed or synthesizing pass outcomes.
+
+
+### Requested-node base measurement needs actual node failure evidence
+
+- Three real detached-Git samples classified import failure (exit 1), missing
+  command (exit 127), and an unrelated FAILED selector as the requested node
+  being red (3 failed in 0.36s). This cannot justify pre-existing-red progress.
+- Node-level base classifier now requires pytest failure exit 1 and the exact
+  requested FAILED selector, with no additional FAILED/ERROR selectors.
+  Missing runner output, fixture ERROR-only output and other exits remain
+  unmeasured. Existing command-level legacy behavior and numeric caps remain;
+  no full-command fallback or whole-suite run was added.
+- Real pytest failing-node positive plus runner/selector/fixture negatives:
+  5 passed in 0.97s. Node quoting, shared budget and attribution callers:
+  22 passed/3 skipped in 3.31s without the explicit PS runtime. Then selected
+  actual portable PS attribution plus multiple-owner/stale-bytecode callers:
+  11 passed in 9.82s with private pwsh 7.6.6, no skips. Native Windows remains
+  unestablished. Local fixture/Git checks dispatch no agent/model.
+- The owned unproven-progress transaction adapter is still not implemented;
+  this strengthens its necessary measurement primitive first. Candidate only
+  until the next independently checked idle activation.
