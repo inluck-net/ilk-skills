@@ -113,6 +113,12 @@ def capture_execution(context: dict) -> dict:
 
 def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
                     runtime_dir, data_root, dispatch, run_id, iteration, mode):
+    # Empty paths must not resolve to cwd and create control metadata there.
+    # Validate all supplied roots before any journal lock or state recovery.
+    for label,raw in (('clone',clone),('exec_tree',exec_tree),('code_root',code_root),
+                      ('plans_dir',plans_dir),('runtime_dir',runtime_dir),('data_root',data_root)):
+        if not isinstance(raw,(str,os.PathLike)) or not str(raw).strip():
+            raise ValueError(f'explicit non-empty {label} required')
     if mode not in {'none','selfmod','work_tree'}:
         raise ValueError('unknown execution mode')
     def directory(raw):

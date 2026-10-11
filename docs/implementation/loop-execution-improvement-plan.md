@@ -17,8 +17,9 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: wire selfmod recovery and remaining state/lifecycle adapters,
-then safe first-increment integration. One actual native-tool consumer step now
+Current next action: prepare safe first-increment integration/installation;
+finish remaining lifecycle and caller adapters without replacing active inputs.
+Fresh-base selfmod normal and zero-provider recovery have archived Mac evidence. One actual native-tool consumer step now
 has closed acceptance and a completed zero-model recovery; controlled comparisons
 and production install remain open. Prepared-pin
 drain/relaunch has archived native caller evidence; production activation is still open. D1 POSIX callers and D2 private launch
@@ -154,6 +155,17 @@ output/context work; verify current state at the actual landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- `e9b36cc5` archived normal selfmod, pending selfmod, pending committed
+  acceptance and strict over-cap regression checks: 4 passed in 21.68s.
+  No provider dispatch in recovery; normal source/worktree exact head and
+  durable close are asserted. No full suite was invoked.
+- Empty control paths could resolve to cwd before context validation and
+  create a journal lock there. The 20:53 failed selfmod setup created a known
+  zero-byte owner-checkout lock; freshly observed unheld inode was removed.
+  Root inputs now refuse empty values before any journal work. Negative checks
+  reproduced missing runtime/data refusal and wrong plans error (3 failed in
+  0.33s); corrected context checks passed 15 in 1.58s.
 
 - Selfmod state Git queries and lock readiness now use the existing owned
   deadline, fresh driver checks and bounded registered children. The generic

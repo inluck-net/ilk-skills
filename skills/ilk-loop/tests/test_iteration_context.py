@@ -193,3 +193,14 @@ def test_dispatch_cli_uses_the_same_frozen_record(tmp_path,monkeypatch):
     identity=json.loads(completed.stdout)
     assert identity['subplan_path']==context['dispatch']['subplan_path']
     assert identity['step']==0
+
+
+@pytest.mark.parametrize('missing',['plans_dir','runtime_dir','data_root'])
+def test_empty_control_root_refuses_before_creating_state_lock(tmp_path,monkeypatch,missing):
+    args=fixture(tmp_path);monkeypatch.chdir(tmp_path)
+    args[missing]=''
+    if missing=='plans_dir':args['dispatch']=None
+    with pytest.raises(ValueError,match='non-empty'):
+        resolve_context(**args)
+    assert not (tmp_path/'.state-transitions.lock').exists()
+    assert not (Path(args['plans_dir'])/'.state-transitions.lock').exists()
