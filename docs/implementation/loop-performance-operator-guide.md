@@ -99,3 +99,11 @@ while future toolkit inputs are updated. It does not permit updating the
 checkout that a batch is editing or will land into. The registry host guard
 checks both cloned and execution roots for overlap with that update target.
 Leave a working batch alone; activate at its checked accepted/idle boundary.
+
+
+Unattended results are driver output. Their absolute path must stay outside
+both the source project and execution worktree, including symlink aliases;
+invalid paths refuse before parent-directory creation. The frozen context
+checks this again against its resolved roots. A result reader with the existing
+close log reports its exact recorded run range; missing/conflicting capture
+stays unknown. A current Git parent is not a run baseline.

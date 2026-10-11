@@ -251,6 +251,21 @@ def _recorded_git_info(log: Path, run_id: str, master: str, project: str):
         return unknown('iteration records unavailable or malformed')
 
 
+def validate_result_path(result_file: Path, roots) -> Path:
+    """Keep owner output outside writable roots, including symlink aliases."""
+    raw=Path(result_file)
+    if not raw.is_absolute():raise ValueError('result_file is not absolute')
+    canonical=raw.resolve();lexical=Path(os.path.abspath(raw))
+    for root in roots:
+        if not root:continue
+        root=Path(root)
+        if not root.is_absolute():raise ValueError('result root is not absolute')
+        if (canonical.is_relative_to(root.resolve()) or
+                lexical.is_relative_to(Path(os.path.abspath(root)))):
+            raise ValueError('result_file overlaps the writable project/worktree')
+    return canonical
+
+
 def write_result(
     result_file: Path,
     *,
@@ -270,6 +285,8 @@ def write_result(
     iteration_log: Path | None = None,
 ) -> None:
     """Write the result file atomically (tmp + os.replace)."""
+    if os.environ.get('ILK_WORKER_SESSION', '').strip():
+        raise ValueError('workers cannot write a runner result')
     if iteration_log is not None:
         base_sha, head_sha, commits, git_provenance = _recorded_git_info(
             iteration_log, run_id, master_slug, project_path)

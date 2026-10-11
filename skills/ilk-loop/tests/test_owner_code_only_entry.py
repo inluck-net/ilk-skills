@@ -30,6 +30,9 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
     plan=world['plans']/(fixtures.STEM+'.md')
     plan.write_text('---\nplan: '+fixtures.SLUG+'\nstatus: pending\ncurrent_step: 0\nestimated_steps: 1\nverification_tier: loop-verified\n---\n# Counter\n## Steps\n### Step 0: fix counter\n```yaml\nlocal_checks:\n  - command: python3 -I -c "from pathlib import Path;exec(Path(\'counter.py\').read_text());assert f(4)==6"\n```\n')
     master=world['plans']/'MASTER-2026-08-29-execution-plan.md'
+    if case=='selfmod':
+        master.write_text(master.read_text().replace('status: active',
+            'status: active\nilk_profile: unattended\nresult_file: '+str(tmp_path/'automatic-result.json')))
     declared_root=None
     if case in {'work-tree','pending-work-tree'}:
         declared_root=tmp_path/'declared-execution'
@@ -300,6 +303,9 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             state=json.loads((runtime/'selfmod-state.json').read_text())
             assert state['state']=='MERGED'
             assert not (work/'.ilk-merge-deferred').exists()
+            automatic=json.loads((tmp_path/'automatic-result.json').read_text())
+            assert automatic['git_provenance']['observation_complete'] is True,automatic['git_provenance']
+            assert automatic['head_sha']==closed['execution']['head_commit']
             # Consume the actual archived driver's context, whose canonical
             # clone differs from execution; a hand-shaped fixture missed this.
             result_file=tmp_path/'selfmod-result.json'

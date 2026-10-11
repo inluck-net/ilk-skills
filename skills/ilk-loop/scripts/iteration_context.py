@@ -251,6 +251,11 @@ def _resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
         master=dispatch.get('master_path')
         if master and Path(master).resolve(strict=True).parent!=Path(plans_dir):
             raise ValueError('master belongs to another plans root')
+        if master:
+            master_fields=parse_frontmatter(Path(master).read_text(encoding='utf-8-sig'))
+            if master_fields.get('ilk_profile')=='unattended' and master_fields.get('result_file'):
+                from run_result import validate_result_path
+                validate_result_path(Path(master_fields['result_file']), [clone, exec_tree])
     work_tree_contract=None
     if mode=='work_tree':
         master=(dispatch or {}).get('master_path')

@@ -2513,3 +2513,28 @@ anchors at the time of inspection and can move as integration changes code.
   Strengthened the archived selfmod case to invoke the pinned result CLI on
   its actual close context from the original clone path. Commit before
   running this archived validation so it exercises corrected code.
+
+
+### Driver result ownership and actual profile output boundary
+
+- Corrected committed 4438fd66 result CLI consumed the actual archived selfmod
+  close context from its distinct source clone: 1 passed/14 deselected in
+  13.33s. This closes the previously missed canonical-root adapter regression.
+- Measured three additional negatives before edits (3 failed in 0.21s): a
+  worker-flagged result API wrote runner provenance, and the actual profile
+  accepted/created result parents inside its writable project, directly and
+  through an outside-looking symlink. The source comment required an outside
+  result but implemented only an absolute-path check.
+- New run_result.validate_result_path rejects lexical/resolved overlap with
+  writable roots; profile validation occurs before mkdir and retains the
+  canonical output path. Frozen context also checks clone/execution roots,
+  covering an execution root resolved after profile discovery. Result API
+  refuses worker calls before any write. No new threshold or timeout.
+- Driver-output, frozen root, existing context and unattended callers: 41
+  passed/4 deselected in 16.19s. Result/legacy path contracts separately 27
+  passed/7 deselected in 1.95s. No agent/model dispatched or full-suite run.
+- Strengthened the archived selfmod case with a real unattended profile and
+  automatic outside result output. Commit first, then check the production
+  entry. Installed local preview remains 311265c2; remote remains v0.9.193,
+  with only e434e346 prepared privately. Do not activate that older remote
+  candidate as the final delivery; it needs these checked corrections.

@@ -2343,6 +2343,23 @@ print(fm.get('result_file', ''))
     return 0
   fi
 
+  # Resolve before mkdir: a writable project alias is not driver output.
+  result_file=$(python3 -c '
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from run_result import validate_result_path
+from plan_status import parse_frontmatter
+fm=parse_frontmatter(Path(sys.argv[3]).read_text(encoding="utf-8-sig"))
+roots=[value for value in sys.argv[4:] if value]
+if fm.get("work_tree"): roots.append(fm["work_tree"])
+print(validate_result_path(Path(sys.argv[1]), roots))
+' "$result_file" "${_SKILL_ROOT}/ilk-loop/scripts" "$master_file" "$PROJECT_PATH" "${ILK_EXEC_TREE:-}" "${SELFMOD_WORKTREE_PATH:-}" 2>/dev/null) || {
+    echo "[unattended] result_file refused: overlaps or lacks a valid execution root" >&2
+    _UNATTENDED_RESULT_FILE=""
+    return 0
+  }
+
   # Check parent directory exists or is creatable.
   local rf_parent
   rf_parent=$(dirname "$result_file")
