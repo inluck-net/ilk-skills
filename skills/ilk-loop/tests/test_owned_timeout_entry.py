@@ -44,19 +44,21 @@ time.sleep(120)
         ILK_DATA_DIR=str(world['data_home']), ILK_SKILL_HOME=str(code/'skills'),
         ILK_CODE_ROOT=str(code), ILK_RUN_INPUTS=str(inputs), ILK_WORKER_MODE='code-only',
         CLAUDE_CONFIG_DIR=manifest['worker_home'], ILK_CLAUDE_BIN=str(cli),
+        ILK_ITERATION_TIMEOUT_SEC='15',
         PATH=str(world['bin'])+os.pathsep+os.environ['PATH'])
     env.pop('PYTHONPATH', None)
     for name in ('ILK_SKIP_MAIN', 'ILK_ITER_CONTEXT', 'ILK_WORKER_SESSION', 'ILK_ITER_RECORD_STAGE'):
         env.pop(name, None)
     runtime = world['data_home']/'projects'/world['key']/'runtime/launcher'
     try:
-        # 95s outer fixture bound is a judgment: 60s configured iteration plus
-        # sampled preparation/cleanup. A valid slower close falsifies the bound.
+        # Existing runner test affordance supplies a 15s original cap; the
+        # 45s outer fixture bound is a judgment based on sampled ~12s startup
+        # plus cleanup. A valid slower close falsifies this fixture bound.
         result = subprocess.run(['bash', str(code/'skills/ilk-loop/scripts/run_ilk_loop_claude.sh'),
             '--project-path', str(work), '--max-iterations', '1',
             '--iteration-timeout-min', '1', '--run-local-checks',
             '--mcp-config-path', str(inputs/'mcp.json')], env=env,
-            capture_output=True, text=True, timeout=95, start_new_session=True)
+            capture_output=True, text=True, timeout=45, start_new_session=True)
         (tmp_path/'entry.stdout').write_text(result.stdout)
         (tmp_path/'entry.stderr').write_text(result.stderr)
         terminal = json.loads((runtime/'last-exit.json').read_text())
