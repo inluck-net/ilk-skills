@@ -34,7 +34,7 @@ Fresh-base selfmod, declared worktree, accepted-transaction recovery, native
 file tools, phase observations and prepared-pin drain/relaunch have archived
 Mac evidence. Actual provider red then green used the same session; a real
 consumer repair passed and a focused-diagnostics comparison is recorded.
-Windows/member/dirty-entry adapters and controlled shell pairing remain open.
+Windows/member/dirty-entry adapters remain open. The controlled shell/native pairing is recorded in docs/verification/loop-tools-comparison-2026-10-12.md.
 Continue here per Chad: “no more handover, until the whole thing done”.
 Overall estimate about 70% is a judgment over the whole installed/measured scope,
 not a checkbox count. Do not infer whole completion from capability checks.
@@ -1934,3 +1934,33 @@ anchors at the time of inspection and can move as integration changes code.
   claimed successful unattended resume.
 - Preparation f3687bd7 is superseded before activation by this correction.
   Source/installed main stays 4de1eb06 until the fresh boundary is rechecked.
+
+### Owned timeout entry and confirmation attempt identity
+
+- First real timeout fixture was cut off by pytest's configured 60s guard,
+  before the caller's 95s bound; cleanup also encountered an inaccessible
+  zombie group. No production controller was signalled. Isolated the fixture
+  process session, then used the existing 15s timeout test affordance with a
+  45s outer judgment bound (~12s sampled startup plus cleanup). This changes
+  no production timeout. Historical disposable fixture registries are now
+  empty and their recorded controllers absent; no guessed process was killed.
+- Corrected fixture exposed a genuine defect: worker_iteration caught its
+  bounded communicate TimeoutExpired and recorded acceptance failure. It now
+  retains timeout and a bounded diagnostic without the full provider argv/
+  prompt; other errors after the original deadline retain timeout. Real
+  archived entry plus audit/WIP negatives: 5 passed in 17.81s. No ungated
+  commit, no pointer advance, retained diff, unknown audit and idle registry.
+- Confirmation previously collapsed all retry records to the last slug/step
+  row and accepted a different command's pass. Two negative checks reproduced
+  those gaps (2 failed/2 passed in 0.05s); initial duplicate expectation was
+  corrected to the design's mixed-result flaky verdict before implementing.
+  Confirmation now retains every retry, compares complete check identities
+  (including scope/files/partition/tree when available), and treats changed
+  checks as inconclusive. Display labels alone do not stand in for a complete
+  check set. Added scope to the additive check observations. Existing legacy
+  first-flaky acceptance remains its explicit historical policy; rolling
+  escalation/actual-base attribution remains open. Focused caller/record/
+  attempt checks: 24 passed in 0.69s.
+- Current next action: deliver this checked candidate at a freshly observed
+  safe boundary, then complete rolling flaky escalation and remaining adapters.
+  Installed main/current remains 4de1eb06; no worker or batch state changed.

@@ -74,7 +74,7 @@ def build_record(
     if results:
         # Each real check retains its own attempt/output/timing, including
         # passes and later failures; this is additive observation, not reuse.
-        observed_fields = ('command', 'attempt_id', 'exit_code', 'cmd_exit_code',
+        observed_fields = ('command', 'scope', 'attempt_id', 'exit_code', 'cmd_exit_code',
                            'outcome', 'duration_sec', 'started_monotonic',
                            'ended_monotonic', 'stdout_path', 'stderr_path',
                            'files', 'partition_index', 'partition_count', 'tree_sha')

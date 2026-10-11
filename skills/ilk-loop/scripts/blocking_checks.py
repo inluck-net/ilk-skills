@@ -111,8 +111,10 @@ def confirm_rerun(first_path: Path, rerun_path: Path) -> dict[str, Any]:
     runner parsed from its old inline block.
     """
     first = read_records(first_path)
-    rerun = {(r.get("slug"), _step_of(r)): r for r in read_records(rerun_path)
-             if r.get("slug")}
+    rerun = {}
+    for row in read_records(rerun_path):
+        if row.get('slug'):
+            rerun.setdefault((row['slug'], _step_of(row)), []).append(row)
     confirmed: list[str] = []
     inconclusive: list[str] = []
     transient: list[str] = []
@@ -120,19 +122,20 @@ def confirm_rerun(first_path: Path, rerun_path: Path) -> dict[str, Any]:
     for rec in first:
         if rec.get("outcome") in BLOCKING_OUTCOMES and rec.get("slug"):
             key = (rec["slug"], _step_of(rec))
-            again = rerun.get(key)
+            retries = rerun.get(key, [])
             first_outcome = rec.get("outcome")
             history = list(rec.get('attempt_records') or [dict(rec)])
-            if again is not None:
-                history.append(dict(again))
+            history.extend(dict(row) for row in retries)
             outcomes = list(rec.get('attempts') or [first_outcome])
-            outcomes.append(again.get('outcome') if again is not None else 'not-rerun')
-            if not _needs_rerun(rec)[0] or (again is not None and again.get("outcome") in BLOCKING_OUTCOMES):
+            outcomes.extend([row.get('outcome') for row in retries] or ['not-rerun'])
+            measured = bool(retries) and all(_same_checks(rec, row) and
+                row.get('outcome') in (*BLOCKING_OUTCOMES, 'pass') for row in retries)
+            if not _needs_rerun(rec)[0] or (measured and 'pass' not in outcomes):
                 confirmed.append(f"{key[0]}#{key[1]}")
                 rec = {**rec, "attempts": outcomes, "attempt_records": history, 'verdict': 'red'}
-            elif again is not None and again.get('outcome') == 'pass':
+            elif measured and 'pass' in outcomes:
                 transient.append(str(key))
-                rec = {**rec, "outcome": again.get("outcome"),
+                rec = {**rec, "outcome": 'pass',
                        "attempts": outcomes, "attempt_records": history,
                        "flaky": True, 'verdict': 'flaky'}
             else:
@@ -146,6 +149,19 @@ def confirm_rerun(first_path: Path, rerun_path: Path) -> dict[str, Any]:
     return {"blocked": bool(confirmed or inconclusive), "transient_cleared": transient,
             "inconclusive": bool(inconclusive), "inconclusive_checks": inconclusive,
             "confirmed": confirmed}
+
+
+def _same_checks(first, retry):
+    # The failing display label can differ from a green gate's first label.
+    # Compare the complete measured check set when present, for both callers.
+    def identity(row):
+        checks = row.get('check_observations') or (row.get('raw') or {}).get('results')
+        if checks:
+            fields = ('command', 'scope', 'files', 'partition_index', 'partition_count', 'tree_sha')
+            return sorted(json.dumps({key: check[key] for key in fields if key in check},
+                                     sort_keys=True) for check in checks)
+        return row.get('command')
+    return identity(first) == identity(retry)
 
 
 def _step_of(rec: dict[str, Any]) -> int:
