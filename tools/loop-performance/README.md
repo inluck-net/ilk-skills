@@ -33,3 +33,15 @@ Deployment: this owner branch is a candidate, not a released toolkit. Keep
 active workers pinned. Reconcile the existing batch's pending context plan
 before landing; do not enqueue competing runner changes. A future installation
 and a comparable accepted consumer step are needed before claiming a speedup.
+
+`resume_probe.py --worker-home <home> --output <report> --timeout <seconds>`
+checks session identity and opaque prior-context recall on the actual provider
+in a disposable, tools-disabled home. It retains the temporary transcript for
+its second call, then deletes the home. Production hooks and red repair are
+unverified. Timeout is an explicit experiment judgment: enough to distinguish
+unsupported resume from the sampled provider's normal latency; a slow successful
+call would show the chosen bound too low. Raw prompts, token and auth are absent
+from the report. The October 11 MiMo PRO calls accepted both phases with the same
+session/model. Elapsed was 21.158s initially and 8.284s resumed; resumed reported
+API time was 27.958s, exceeding its wall time, so it cannot be treated as an
+exclusive per-call phase measurement. This is capability evidence, not a speedup.

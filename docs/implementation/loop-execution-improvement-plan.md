@@ -17,8 +17,11 @@ Keep it updated after each checked increment and before any context handoff.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
 Current next action: complete kernel admission and caller checks, then finish
-B3 recovery replay and C2/C3 driver ownership. Safe boundary is verified: old
-run `20261011-102057` ended at 12:53 after its own timeout, PID/PGID gone.
+C2/C3 driver ownership and the actual-provider resume prerequisite. Old run
+`20261011-102057` ended at 12:53 after its own timeout, PID/PGID gone.
+The watchdog subsequently relaunched old run `20261011-130246`; PID 1016
+is idling at the existing pause flag before dispatch. Integration/activation
+requires a fresh verified quiescent boundary, not the old terminal record.
 Owner checkpoints are rebased onto main `5081038b`; implementation bytes match
 the pre-rebase tested candidate. Do not restart the pending overlapping batch.
 PowerShell function parity passed on macOS; full Windows entry remains untested.
@@ -310,3 +313,20 @@ No completion/ship/proof markers are inferred from this human tracker.
   Retry policy helper added to the protected kernel list. Focused recovery,
   existing retry callers and production entry: 59 passed in 10.73s; Bash syntax
   and diff checks passed. PowerShell retry recovery parity remains open.
+
+- Coordination update: fresh process inspection found watchdog PID 354 and
+  relaunched runner PID 1016, run `20261011-130246`. Sentinel reports running;
+  child `sleep 5`, absent iteration logs and retained pause.flag confirm it is
+  waiting before dispatch. No worker was interrupted. Do not merge/install on
+  the strength of the previous run's terminal state; keep owner work isolated.
+  Consumer/provider probes use disposable homes and never release that pause.
+
+- Actual-provider resume screening: disposable tools-disabled MiMo PRO home,
+  explicit session ID then `claude -p --resume` same ID, opaque prior token
+  correctly recalled. Both calls accepted with matching actual model/session;
+  initial 21.158s, resumed 8.284s. Reported resumed API 27.958s exceeds wall time;
+  do not add it or claim performance. External evidence:
+  `runtime/analysis/design-revision-20261011/resume-capability-probe.json`.
+  Timeout 60s is an experiment judgment (sampled normal latency fits; a slow
+  successful run would falsify it), not a batch default. Production hooks,
+  interrupted transcript and real driver-red repair remain C5 requirements.
