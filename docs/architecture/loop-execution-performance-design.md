@@ -491,17 +491,21 @@ result resumes to green. Evidence is retained externally in
 speed inference. Claude scratch paths require both CLAUDE_CODE_TMPDIR and
 CLAUDE_TMPDIR pinned to private temp. Kernel list is frozen in context;
 OS denial includes listed paths, basename creation and ancestor renames.
-Broker cleanup handles idle connections and background descendants, but the
-shared lifecycle registry is not built. Driver-controller wiring remains new.
+Broker cleanup handles idle connections and background descendants. The owner
+candidate now has an additive POSIX registry (`run_registry.py:1`) and driver
+controller (`worker_iteration.py:1`); Windows lifecycle adapters and rollout
+remain incomplete. These statements describe the candidate, not installed code.
 
 The owner candidate now contains `driver_step.py:1`: alternate-index tree
 capture, driver gates, driver commit and one-step CAS advancement. It checks
 that gates did not mutate the shipping tree; changed commit-hook output needs
 another measured gate, while an unchanged commit does not repeat identical
 gates. `plan_state.transition` has same-journal master guards checked under
-lock. Caller integration, member-repo/baseline-red adapters, finding import,
-bounded commit hooks and close/ship projection remain new/unbuilt prerequisites;
-existing worker-runs-gates instructions still apply to the installed runner.
+lock. Mac Bash caller integration, finding import, bounded commit hooks and
+close/ship projection now have focused archived-entry evidence recorded in the
+manual tracker. Member-repo/baseline-red and remaining landing/state adapters
+are incomplete. Existing worker-runs-gates instructions still apply to the
+installed runner. Neither I1 nor I2 is complete across all callers/readers.
 
 `plan_state.py:155` now journals registry Status projection under the shared
 state lock, with byte CAS and BOM/CRLF preservation. `plan_fingerprint.py:78`
@@ -510,3 +514,46 @@ measured reconciler behavior rather than the older named-section-only prose;
 unknown/unregistered rows remain contract content. This normalizer now belongs
 to the protected owner kernel because driver contract/retry identity uses it.
 Neither status projection nor retry history produces green gate evidence.
+
+### Measured provider control mismatch (owner candidate, 2026-10-11)
+
+The installed actual Claude CLI sends `thinking: adaptive` with effort high
+for MiMo PRO. `MAX_THINKING_TOKENS=0` and `alwaysThinkingEnabled=false` omit
+thinking instead of sending disabled. A local fake SSE endpoint measured all
+three request bodies without real credentials or provider calls. MiMo's
+[official Anthropic API](https://mimo.mi.com/docs/en-US/api/chat/anthropic-api)
+documents thinking enabled when omitted and supports explicit disabled.
+CLI effort selection therefore cannot establish provider thinking-off.
+
+Two exact-entry synthetic MiMo PRO runs with eight copied production hooks
+reached the unchanged 120s fixture deadline without an edit or acceptance.
+An explicit-disabled private manual proxy experiment completed in 47.732s wall,
+41.840s observed CLI, with one accepted gate/commit/CAS, positive integrity and
+clear registry. Model/init provenance and limitations are in the manual
+tracker and `full-entry-provider-thinking-disabled-coding/`. The experimental
+proxy also removed output_config; it does not isolate that field's contribution.
+This is capability evidence on one synthetic task, not a representative speed
+or quality comparison. No default/provider settings were changed.
+
+New mechanism `provider_control.py:1` is an opt-in owned MiMo adapter. It
+replaces only thinking with explicit disabled, retaining other request fields.
+`run_inputs.prepare` freezes worker_thinking (default remains default) and
+refuses an unsupported endpoint/model or a snapshot lacking the adapter.
+The Bash launcher accepts `ILK_WORKER_THINKING=disabled` only with code-only
+dispatch. Each CLI turn gets a private loopback capability; upstream credentials
+remain in the driver. Authenticated messages/count-token requests must use the
+pinned model and official HTTPS endpoint; redirects/other paths refuse. Private
+client settings live inside the existing protected settings directory and are
+deleted after joined server cleanup. It retains the original iteration deadline,
+CLI retry/budget behavior and same-session resume. No persistent proxy daemon.
+This adapter is candidate-only; actual entry/recovery and representative
+consumer quality are required before choosing any faster default/profile.
+
+Numeric implementation choices are judgment calls: 64KiB read1 chunks use a
+common bounded transfer buffer and return available stream bytes; unexpected
+buffering or added time-to-first-output falsifies the choice. The stdlib server's
+0.5s shutdown polling is retained initially; material per-turn cleanup cost
+would justify a measured shorter interval. Neither creates a new run timeout.
+The 120s fixture deadline stays unchanged; valid slower completion falsifies
+that experiment bound, not the production run cap. Final verification remains
+opt-in; this work invokes no routine suite.

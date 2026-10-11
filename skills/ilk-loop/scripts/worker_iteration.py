@@ -72,9 +72,19 @@ def instructions(context,path):
 
 
 def worker_turn(context,path,prompt,*,claude,model,budget,mcp,session=None):
-    deadline=context['iteration_deadline_monotonic'];bound=binding(path)
+    bound=binding(path)
     from run_inputs import verify_launch_resources
+    from provider_control import session as provider_session
     manifest=verify_launch_resources(Path(context['worker_inputs_dir']))
+    with provider_session(context,path,manifest,bound['settings_path'],model) as control:
+        outcome=_worker_turn(context,path,prompt,claude=claude,model=model,budget=budget,
+                             mcp=mcp,session=session,bound=bound,manifest=manifest,control=control)
+        outcome['provider_control']=control['observation']
+        return outcome
+
+
+def _worker_turn(context,path,prompt,*,claude,model,budget,mcp,session,bound,manifest,control):
+    deadline=context['iteration_deadline_monotonic']
     import hashlib
     for row in context.get('root_instruction_inventory',[]):
         if hashlib.sha256(Path(row['path']).read_bytes()).hexdigest()!=row['sha256']:
@@ -85,7 +95,7 @@ def worker_turn(context,path,prompt,*,claude,model,budget,mcp,session=None):
     if mcp is None or Path(mcp).resolve()!=Path(manifest['mcp']['path']):
         raise ContextError('worker MCP configuration contradicts frozen launch inputs')
     args=[claude,'-p','--dangerously-skip-permissions','--output-format','stream-json',
-          '--verbose','--include-partial-messages','--tools','Bash','--settings',bound['settings_path'],
+          '--verbose','--include-partial-messages','--tools','Bash','--settings',control['settings_path'],
           '--setting-sources','',
           '--append-system-prompt',instructions(context,path)]
     if model:args+=['--model',model]
@@ -95,6 +105,7 @@ def worker_turn(context,path,prompt,*,claude,model,budget,mcp,session=None):
     args.append(prompt)
     env=dict(os.environ,ILK_WORKER_SESSION='',ILK_ITER_RECORD_STAGE='',TMPDIR=bound['worker_tmp_dir'],
              CLAUDE_CODE_TMPDIR=bound['worker_tmp_dir'],CLAUDE_TMPDIR=bound['worker_tmp_dir'])
+    env.update(control['env'])
     cli_started=monotonic()
     from owned_command import wrap_command
     process=subprocess.Popen(wrap_command(['/usr/bin/sandbox-exec','-f',bound['sandbox_path'],*args],context,worker=True),

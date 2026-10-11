@@ -3,6 +3,11 @@
   "loop_kernel_policy": "owner-only",
   "rules": [
     {
+      "path": "skills/ilk-loop/scripts/provider_control.py",
+      "guard": "owner",
+      "why": "owned provider request, credential isolation and original-deadline authority"
+    },
+    {
       "path": "skills/ilk-loop/scripts/phase_observation.py",
       "guard": "owner",
       "why": "truthful additive phase and gate-repeat observations in driver close records"

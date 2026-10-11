@@ -1051,3 +1051,18 @@ No completion/ship/proof markers are inferred from this human tracker.
   fsyncs replacement/parent with private file permissions. Normal deferred /
   landed / isolated reentry and worker refusal checks: 2 passed in 0.27s.
   Remaining state/landing adapters and production-entry checks remain open.
+- Owned MiMo thinking-control candidate: explicit profile frozen by preparation,
+  launcher permits it only for code-only; original deadline, budget and retry
+  logic retained. Each CLI turn uses a capability-authenticated loopback server
+  and protected private client settings without the upstream auth key. Only
+  pinned-model messages/count-token API is forwarded to supported official
+  HTTPS endpoints; no redirects, foreign paths/models or custom-auth adapter.
+  Handler/server threads join on close; settings removed. Request payloads,
+  prompts and headers are not logged, only model/control/API/status observations.
+  Default has no adapter or copy. Candidate rewrite retains output_config;
+  earlier experimental proxy removed it, so its single result is not pure
+  thinking-only attribution. Six adapter checks passed in 0.59s; explicit-pin
+  snapshot/default checks 1 passed in 0.18s. Earlier adapter/default caller/input
+  checks 22 passed in 21.04s, before private directory correction; corrected
+  adapter checks passed separately. Bash syntax/diff checks passed. Pending
+  local checkpoint and actual archived provider-entry/recovery evidence.

@@ -154,6 +154,24 @@ def test_release_pin_uses_manifest_commit_and_resource_hashes(tmp_path):
     with pytest.raises(InputPinError,match='changed'):verify_launch_resources(destination)
 
 
+def test_thinking_profile_is_explicit_and_requires_adapter_in_selected_snapshot(tmp_path):
+    repo,home,_=fixture(tmp_path)
+    data=json.loads((home/'settings.json').read_text())
+    data['env'].update(ANTHROPIC_MODEL='mimo-v2.6-pro',
+                       ANTHROPIC_BASE_URL='https://token-plan-cn.xiaomimimo.com/anthropic')
+    (home/'settings.json').write_text(json.dumps(data))
+    destination=tmp_path/'unsupported'
+    with pytest.raises(InputPinError,match='absent in pinned revision'):
+        prepare(repo,home,destination,worker_thinking='disabled')
+    assert not destination.exists()
+    helper=repo/'skills/ilk-loop/scripts/provider_control.py';helper.write_text('# supported fixture adapter')
+    subprocess.run(['git','-C',str(repo),'add','.'],check=True)
+    subprocess.run(['git','-C',str(repo),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','adapter'],check=True)
+    manifest=prepare(repo,home,tmp_path/'supported',worker_thinking='disabled')
+    assert manifest['worker_thinking']=='disabled'
+    assert prepare(repo,home,tmp_path/'default')['worker_thinking']=='default'
+
+
 @pytest.mark.parametrize('quoted',[False,True])
 def test_plan_script_uses_pinned_code_with_space_in_path(tmp_path,quoted):
     from run_local_checks import pin_gate_command

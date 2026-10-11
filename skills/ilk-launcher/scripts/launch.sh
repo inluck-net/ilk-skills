@@ -745,6 +745,13 @@ start_ilk_window() {
   esac
   if [[ "$engine" == claude* ]]; then
     local pin_args=(--repo "${_SKILL_ROOT}/.." --worker-home "$source_home" --destination "$inputs_dir" --project "$project_path" --observe-scope)
+    if [[ "${ILK_WORKER_THINKING:-default}" != default ]]; then
+      if [[ "${ILK_WORKER_MODE:-}" != code-only ]]; then
+        echo "[ilk] worker thinking control requires enforced code-only dispatch" >&2
+        return 1
+      fi
+      pin_args+=(--worker-thinking "$ILK_WORKER_THINKING")
+    fi
     [[ -n "$mcp_config_path" ]] && pin_args+=(--mcp "$mcp_config_path")
     python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_inputs.py" "${pin_args[@]}" >/dev/null || return 1
     local pinned_root="${inputs_dir}/code" private_home="${inputs_dir}/worker-home"

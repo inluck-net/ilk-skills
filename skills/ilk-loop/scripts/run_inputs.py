@@ -102,7 +102,7 @@ def _settings_sources(worker_home, project):
     return effective,observations
 
 
-def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD', observe_scope=False, project=None):
+def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD', observe_scope=False, project=None, worker_thinking='default'):
     repo=repo.resolve();worker_home=worker_home.resolve();destination=destination.resolve()
     source_root=repo
     marker=repo/'.ilk-release.json'
@@ -114,6 +114,10 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
     sha=subprocess.check_output(['git','-C',str(repo),'rev-parse',revision+'^{commit}'],text=True).strip()
     archive=subprocess.check_output(['git','-C',str(repo),'archive',sha])
     source,settings_sources=_settings_sources(worker_home,project)
+    if worker_thinking not in {'default','disabled'}:raise InputPinError('unknown worker thinking profile')
+    if worker_thinking=='disabled':
+        from provider_control import validate_settings
+        validate_settings(source,source.get('env',{}).get('ANTHROPIC_MODEL') or source.get('model'))
     pinned=json.loads(json.dumps(source));hooks=[]
     # Pre-validate all hook commands before creating any prepared home.
     for phase,entries in pinned.get('hooks',{}).items():
@@ -138,6 +142,8 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
                     if link.is_absolute() or not (code/member.name).parent.joinpath(link).resolve().is_relative_to(code):
                         raise InputPinError('archive link escapes snapshot')
             stream.extractall(code)
+        if worker_thinking=='disabled' and not (code/'skills/ilk-loop/scripts/provider_control.py').is_file():
+            raise InputPinError('thinking-control adapter absent in pinned revision')
         (home/'skills').symlink_to(code/'skills',target_is_directory=True)
         (home/'commands').symlink_to(code/'commands',target_is_directory=True)
         hookdir=home/'hooks';hookdir.mkdir(mode=0o700)
@@ -174,6 +180,7 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
                   'hooks':observations,'credentials_provisioned':'private settings copy; no values in manifest',
                   'scope_observation_only':observe_scope,
                   'settings_sources':settings_sources,'cli_setting_sources':'',
+                  'worker_thinking':worker_thinking,
                   'managed_settings':'remain enforced by Claude; not overridden or claimed pinned',
                   'remaining':'launcher wiring, model/effort resolution, MCP/plan-script adapters and shell enforcement'}
         (destination/'inputs.json').write_text(json.dumps(manifest,indent=2)+'\n')
@@ -298,8 +305,9 @@ def main():
     parser.add_argument('--observe-scope',action='store_true')
     parser.add_argument('--project',type=Path)
     parser.add_argument('--mcp',type=Path)
+    parser.add_argument('--worker-thinking',choices=['default','disabled'],default='default')
     args=parser.parse_args()
-    result=prepare(args.repo,args.worker_home,args.destination,revision=args.revision,observe_scope=args.observe_scope,project=args.project)
+    result=prepare(args.repo,args.worker_home,args.destination,revision=args.revision,observe_scope=args.observe_scope,project=args.project,worker_thinking=args.worker_thinking)
     if args.project:result=pin_launch_resources(args.destination,project=args.project,mcp=args.mcp)
     print(json.dumps({'toolkit_sha':result['toolkit_sha'],'hook_count':len(result['hooks']),
                       'scope_observation_only':result['scope_observation_only']}))
