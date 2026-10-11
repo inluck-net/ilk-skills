@@ -68,8 +68,10 @@ def main():
     parser.add_argument('--timeout',type=int,required=True)
     parser.add_argument('--enforce-scope',action='store_true')
     parser.add_argument('--interrupt-after-write',action='store_true')
+    parser.add_argument('--driver-accept',action='store_true')
     args=parser.parse_args()
     if args.interrupt_after_write and not args.enforce_scope:parser.error('interruption requires owned broker fixture')
+    if args.driver_accept and not args.enforce_scope:parser.error('driver acceptance requires owned broker fixture')
     manifest=json.loads((args.inputs/'inputs.json').read_text())
     home=Path(manifest['worker_home']);code=Path(manifest['code_root'])
     settings=home/'settings.json';configured=json.loads(settings.read_text())
@@ -86,7 +88,18 @@ def main():
         root=Path(temporary);project=root/'consumer';project.mkdir();plans=root/'plans';plans.mkdir()
         subprocess.run(['git','init','-q',str(project)],check=True)
         subprocess.run(['git','-C',str(project),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-qm','base'],check=True)
+        if args.driver_accept:
+            subprocess.run(['git','-C',str(project),'config','user.name','Fixture'],check=True)
+            subprocess.run(['git','-C',str(project),'config','user.email','fixture@example.invalid'],check=True)
         subplan=plans/'probe.md';subplan.write_text('---\nplan: probe\nstatus: pending\ncurrent_step: 0\n---\n# Synthetic one-file probe\n')
+        if args.driver_accept:
+            subplan.write_text(subplan.read_text()+'''## Steps
+### Step 0: counter repair
+```yaml
+local_checks:
+  - command: python3 -I -c 'exec(open("counter.py").read()); assert f(4)==6'
+```
+''')
         logs=root/'logs';logs.mkdir();context=resolve_context(clone=project,exec_tree=project,
             observe_tree={str(project):str(project)},code_root=code,plans_dir=plans,
             runtime_dir=root/'runtime',data_root=root/'data',run_id='hooked-resume-probe',iteration=1,
@@ -139,7 +152,15 @@ def main():
                     cp,interrupted=interrupt_after_tool(command+flags+[prompt],cwd=project,env=env,timeout=args.timeout)
                 else:cp=subprocess.run(command+flags+[prompt],cwd=project,env=env,capture_output=True,text=True,timeout=args.timeout)
                 init,result,_=collect(cp.stdout)
-                gate=subprocess.run(['python3','-I','-c','from pathlib import Path; exec(Path("counter.py").read_text()); assert f(4)==6'],cwd=project,env=env,capture_output=True,text=True,timeout=args.timeout)
+                if args.driver_accept:
+                    from driver_step import accept_step
+                    accepted=accept_step(context,default_timeout=args.timeout)
+                    row.update(driver_accepted=accepted['accepted'],driver_commit_count=len(accepted.get('commits',[])),
+                        driver_attempt_count=len(accepted['attempts']),pointer_advanced='current_step: 1' in subplan.read_text(),
+                        shipping_proof_provisional=accepted.get('proof_provisional'))
+                    gate=subprocess.CompletedProcess([],0 if accepted['accepted'] else 1,'',
+                        '\n'.join(check['stderr_tail'] for attempt in accepted['attempts'] for check in attempt['check_observations']))
+                else:gate=subprocess.run(['python3','-I','-c','from pathlib import Path; exec(Path("counter.py").read_text()); assert f(4)==6'],cwd=project,env=env,capture_output=True,text=True,timeout=args.timeout)
                 observed=logs/'write-scope-1.jsonl'
                 events=[json.loads(line) for line in observed.read_text().splitlines()] if observed.exists() else []
                 writes=[event for event in events if event.get('write_observed')]
