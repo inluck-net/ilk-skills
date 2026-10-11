@@ -3159,6 +3159,10 @@ def _extract_registry_slugs(master_path: Path) -> list[str]:
 
 BASE_SELECTION_EXPLICIT = "explicit"
 BASE_SELECTION_DERIVED = "derived"
+# Legacy record-only use: the base came off a record, with no --master and no
+# explicit --base-sha to check it against.  Supported, but never claimed as
+# validated provenance (AC-3 of a-verdict-carries-its-base-provenance).
+BASE_SELECTION_UNVALIDATED = "unvalidated"
 
 _BASE_PROVENANCE_LINE_RE = re.compile(
     r"^base_(?:selection|derivation|frontmatter|provenance_conflict):[ \t]*.*$\n?",
@@ -3225,6 +3229,8 @@ class BaseSelection:
     def derivation_text(self) -> str:
         if self.selection_mode == BASE_SELECTION_EXPLICIT:
             return "operator-supplied"
+        if self.selection_mode == BASE_SELECTION_UNVALIDATED:
+            return "unvalidated (record-only)"
         if self.derivation_commit and self.derivation_slug:
             return f"{self.derivation_commit} [plan:{self.derivation_slug}#…]"
         return "unknown"
@@ -3416,6 +3422,87 @@ def resolve_batch_base_sha(
     """
     sel = select_batch_base(project, master_path, explicit_sha=explicit_sha)
     return sel.base_sha, sel.evidence
+
+
+def unvalidated_base_selection(base_sha: str) -> BaseSelection:
+    """A record-only base: carried, but never claimed as validated provenance.
+
+    AC-3: legacy record-only use remains supported, with the provenance
+    explicitly marked ``unvalidated``.  Nothing here has been checked against
+    a second source, so nothing here may be read as if it had been.
+    """
+    return BaseSelection(
+        base_sha=base_sha,
+        selection_mode=BASE_SELECTION_UNVALIDATED,
+        evidence=(f"base_sha: {base_sha} (unvalidated: record-only, "
+                  f"no --master and no explicit --base-sha)"),
+        derivation_commit=None,
+        derivation_slug=None,
+        frontmatter_sha=None,
+        conflict=False,
+    )
+
+
+def resolve_remeasure_base(
+    *,
+    supplied: BaseSelection | None,
+    stored_sha: str | None,
+) -> tuple[str | None, BaseSelection | None, str | None]:
+    """Validate the base a stale re-measure will use — before any suite runs.
+
+    AC-2 and AC-3 of ``a-verdict-carries-its-base-provenance``.  Attribution
+    and remeasurement ask this the same question verification asks
+    :func:`select_batch_base`; this is the part that decides whether the
+    answer is allowed to launch work.
+
+    Returns ``(base_sha, selection, refusal)``.
+
+    * *refusal* non-None means **do not launch a suite**.  It names both SHAs
+      and a recovery command: an explicit ``--base-sha`` choice is the only
+      thing that resolves a provenance conflict.
+    * *selection* is a :class:`BaseSelection` whenever a base was resolved and
+      there is no refusal — including the legacy record-only case, which is
+      marked ``unvalidated``.
+    * *base_sha* is None only when nothing supplies a base at all (no stored
+      one and no supplied one); the caller reports that separately.
+
+    *supplied* is what the operator handed over — an explicit SHA, or the
+    derivation from a supplied master — already built by
+    :func:`select_batch_base`.  *stored_sha* is what the record says.
+    """
+    if supplied is None:
+        # Legacy record-only: no --master and no explicit --base-sha.  Still
+        # supported; provenance is marked unvalidated rather than invented.
+        if not stored_sha:
+            return None, None, None
+        return stored_sha, unvalidated_base_selection(stored_sha), None
+
+    # AC-2: a derived base that disagrees with the MASTER's declared base is
+    # an actionable provenance conflict until an explicit operator choice
+    # resolves it.  It is not proof the derivation is wrong, and it is never a
+    # licence to declare the recorded failure excused.
+    if supplied.conflict and supplied.selection_mode != BASE_SELECTION_EXPLICIT:
+        return None, None, (
+            f"base provenance conflict: derived {supplied.base_sha} != "
+            f"master frontmatter {supplied.frontmatter_sha}. "
+            f"Recover with an explicit choice: "
+            f"--base-sha {supplied.base_sha} (keep derivation) or "
+            f"--base-sha {supplied.frontmatter_sha} (adopt the master)."
+        )
+
+    # AC-3: the stored base must agree with the supplied one before a suite is
+    # launched.  A mismatch is not proof the record is wrong — it is a question
+    # an operator has to answer, and answering it is not this code's job.
+    if stored_sha and not _sha_equal(stored_sha, supplied.base_sha):
+        return None, None, (
+            f"base provenance conflict: record base {stored_sha} != "
+            f"supplied {supplied.base_sha} ({supplied.selection_mode}). "
+            f"Recover with an explicit choice: "
+            f"--base-sha {stored_sha} (keep the record) or "
+            f"--base-sha {supplied.base_sha} (adopt the supplied base)."
+        )
+
+    return supplied.base_sha, supplied, None
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(

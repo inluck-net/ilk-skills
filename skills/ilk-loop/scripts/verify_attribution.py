@@ -1214,30 +1214,44 @@ def main(argv: list[str] | None = None) -> int:
                          "--base-sha is 'auto'")
     args = ap.parse_args(argv)
 
-    # Resolve --base-sha auto before any code path reads args.base_sha.
+    # Canonical base-selection policy — the same one verification_record uses
+    # (AC-2).  A supplied master resolves the base here the way it resolves it
+    # there; an explicit SHA is still a selection, and the record says which.
+    master_path = Path(args.master).resolve() if args.master else None
+    if master_path is not None and not master_path.is_file():
+        print(f"ERROR: master plan not found: {master_path}",
+              file=sys.stderr)
+        return 1
+    explicit_choice = args.base_sha not in (None, "auto")
+    args.base_selection = None
+
+    vr_scripts = Path(__file__).resolve().parent
+    if str(vr_scripts) not in sys.path:
+        sys.path.insert(0, str(vr_scripts))
+    from verification_record import select_batch_base
+
     if args.base_sha == "auto":
-        if not args.master:
+        if master_path is None:
             print("ERROR: --base-sha auto requires --master",
                   file=sys.stderr)
             return 2
-        master_path = Path(args.master).resolve()
-        if not master_path.is_file():
-            print(f"ERROR: master plan not found: {master_path}",
-                  file=sys.stderr)
-            return 1
         project_for_resolve = Path(args.project).resolve()
-        vr_scripts = Path(__file__).resolve().parent
-        if str(vr_scripts) not in sys.path:
-            sys.path.insert(0, str(vr_scripts))
-        from verification_record import resolve_batch_base_sha
         try:
-            resolved_sha, provenance = resolve_batch_base_sha(
-                project_for_resolve, master_path,
-            )
+            selection = select_batch_base(project_for_resolve, master_path)
         except SystemExit as exc:
             return exc.code
-        args.base_sha = resolved_sha
-        print(provenance)
+        args.base_sha = selection.base_sha
+        args.base_selection = selection
+        print(selection.evidence)
+    elif explicit_choice and master_path is not None:
+        project_for_resolve = Path(args.project).resolve()
+        try:
+            args.base_selection = select_batch_base(
+                project_for_resolve, master_path,
+                explicit_sha=args.base_sha,
+            )
+        except SystemExit:
+            args.base_selection = None
 
     project = Path(args.project).resolve()
 
@@ -1313,6 +1327,7 @@ def main(argv: list[str] | None = None) -> int:
             import os as _os
             is_stale = False
             base_sha = None
+            stored_sha = None
             text = None  # populated when the record file exists
 
             if record_path is None or not record_path.is_file():
@@ -1325,7 +1340,8 @@ def main(argv: list[str] | None = None) -> int:
                     is_stale = True
                 if is_stale:
                     m3 = re.search(r"^base_sha:\s*(\S+)", text, re.MULTILINE)
-                    base_sha = m3.group(1) if m3 else args.base_sha
+                    stored_sha = m3.group(1) if m3 else None
+                    base_sha = stored_sha or args.base_sha
 
             if is_stale:
                 # Refuse in a worker session.
@@ -1339,6 +1355,33 @@ def main(argv: list[str] | None = None) -> int:
 
                 # Resolve batch slug for the record path.
                 batch_slug = args.batch
+
+                # AC-2 / AC-3: validate the base this re-measure will use
+                # against the supplied master or explicit base — before any
+                # suite is launched.  A provenance conflict refuses with both
+                # SHAs and a recovery command; it never silently picks one.
+                import verification_record as _vr
+                supplied_sel = getattr(args, "base_selection", None)
+                if supplied_sel is None and master_path is not None:
+                    try:
+                        supplied_sel = _vr.select_batch_base(
+                            project, master_path)
+                    except SystemExit as exc:
+                        return exc.code
+                elif supplied_sel is None and explicit_choice:
+                    try:
+                        supplied_sel = _vr.select_batch_base(
+                            project, None, explicit_sha=args.base_sha)
+                    except SystemExit:
+                        supplied_sel = None
+
+                base_sha, chosen_sel, refusal = _vr.resolve_remeasure_base(
+                    supplied=supplied_sel, stored_sha=stored_sha)
+                if refusal:
+                    print(f"ATTRIBUTION FAILED: {refusal}", file=sys.stderr)
+                    return 1
+                if chosen_sel is not None:
+                    print(chosen_sel.evidence)
 
                 if not base_sha:
                     # Name the record that's missing so the operator knows
@@ -1384,10 +1427,6 @@ def main(argv: list[str] | None = None) -> int:
                 if scope_mode == "full":
                     vr_args += ["--scope", "full"]
 
-                vr_scripts = Path(__file__).resolve().parent
-                if str(vr_scripts) not in sys.path:
-                    sys.path.insert(0, str(vr_scripts))
-                import verification_record as _vr
                 ret = _vr.main(vr_args)
                 if ret != 0:
                     print(f"ATTRIBUTION FAILED: re-measurement failed "
@@ -1398,6 +1437,17 @@ def main(argv: list[str] | None = None) -> int:
                 if args.batch:
                     record_path = resolve_batch_record(project, args.batch)
                 # else: record_path already set
+
+                # The record this re-measure wrote carries the selection this
+                # validation accepted — not whatever the writer guessed from
+                # the bare SHA.  Legacy record-only use is marked unvalidated
+                # rather than being silently promoted to an operator choice.
+                if chosen_sel is not None and record_path is not None:
+                    rec_text = record_path.read_text(
+                        encoding="utf-8-sig", errors="replace")
+                    record_path.write_text(
+                        _vr.inject_base_provenance(rec_text, chosen_sel),
+                        encoding="utf-8")
 
         message, excused, flaky_owed, counts = verify_detailed(record_path, project=project)
     except VerificationError as exc:

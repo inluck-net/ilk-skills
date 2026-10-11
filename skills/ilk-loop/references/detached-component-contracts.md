@@ -2477,6 +2477,62 @@ when the record is missing and they were passed), then attributes as
 today. Inside a worker session the flag does NOT re-measure: it fails
 with the same refusal as `--run-suite` in a worker session.
 
+Since `a-verdict-carries-its-base-provenance` (2026-10-11) the
+re-measure **validates its base before it launches a suite** — see
+"Base provenance" below. A conflict refuses instead of re-measuring.
+
+### Base provenance (added 2026-10-11, additive)
+
+A recorded base carries how it was chosen. Measured on gh-resolve run
+20261011-061345: the recorder ran `--base-sha auto`, the MASTER
+frontmatter named `84a572e3`, the record stored `5d79154c`, and a
+worker's pre-existing claim cited `a1623fba` — a marker that landed
+*after* the implementation. The resolver derives from the earliest
+matching trailers, so a difference from frontmatter is not by itself
+proof of an incorrect base. The selection itself therefore has to be on
+the record.
+
+**Additive record fields** (omitted entirely when the writer has no
+selection — an old record and an old caller both stay valid):
+
+| Field | Meaning |
+|---|---|
+| `base_selection:` | `explicit`, `derived`, or `unvalidated` |
+| `base_derivation:` | `operator-supplied`, `<commit> [plan:<slug>#…]`, or `unvalidated (record-only)` |
+| `base_frontmatter:` | the MASTER's declared `base_sha`, when one was declared |
+| `base_provenance_conflict:` | both SHAs of a mismatch, and the recovery command |
+
+`base_derivation` names the trailer commit and the registry slug that
+*actually* matched — not the first registry slug regardless of match,
+which is what the previous provenance string printed.
+
+**One selection policy.** `verification_record.select_batch_base` is the
+canonical policy and both consumers use it: an explicit `--base-sha` is
+the operator's choice and wins; otherwise the base is derived from the
+parent of the earliest commit whose message carries
+`[plan:<registry-slug>#`. A derived base that disagrees with the
+MASTER's declared `base_sha` is carried as a conflict with both SHAs. It
+is not proof the derivation is wrong, and it is never a licence to
+declare the recorded failure excused.
+
+**Validation before the suite.** `verification_record.resolve_remeasure_base`
+decides whether a stale re-measure may launch work. It runs *before*
+`verification_record.main(..., "--run-suite", ...)`:
+
+* stored base ≠ supplied (master-derived or explicit) base ⇒ refuse, with
+  both SHAs and a recovery command naming the two `--base-sha` choices.
+* derived base ≠ MASTER frontmatter, without an explicit `--base-sha` ⇒
+  refuse the same way. An explicit operator choice resolves it and keeps
+  the conflict on the record as evidence that a question was settled.
+* no `--master` and no explicit `--base-sha` ⇒ legacy record-only use.
+  Still supported. The base is the record's, and the re-measured record is
+  marked `base_selection: unvalidated` — carried, never claimed as
+  validated. (Before this change the writer marked any bare `--base-sha`
+  `explicit`, which read as an operator choice nobody had made.)
+
+A refusal is a refusal, not a verdict: it never picks a base and never
+reaches the suite.
+
 ## Contract 14: The stale-record step-0 fallback (25c)
 
 A `batch_verification: true` sub-plan whose step 1 gate is the pre-25a
