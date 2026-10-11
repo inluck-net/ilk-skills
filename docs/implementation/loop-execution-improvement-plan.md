@@ -171,7 +171,7 @@ No completion/ship/proof markers are inferred from this human tracker.
   falsely counted as bootstrap under a .ilk-data fixture root. Negative failed
   1 in 0.03s; seven reporter checks passed 0.03s after exact-root normalization.
   Separate v6 reparses preserve original raw/v5 reports and rows: corrected
-  policy remains three adjusted bootstrap indicators, focused diagnostics is
+  policy is two adjusted bootstrap indicators (three in v5), focused diagnostics is
   five rather than eleven. Runtime/acceptance unchanged. No new execution.
 
 - Chad asked to target completion in two hours or less (22:48 local). Finish

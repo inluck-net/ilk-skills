@@ -173,7 +173,7 @@ instead of 0. Parser-v6 normalizes that exact root to `.` while preserving
 actual subpaths and outside-root references. Seven focused reporter checks
 passed. Saved streams were reparsed into separate cost-report-v6.json files;
 original v5 reports and CSV rows remain unchanged. The corrected-policy sample
-still has three adjusted bootstrap indicators; focused-diagnostics now has five
+has two adjusted bootstrap indicators (three in v5); focused-diagnostics now has five
 instead of eleven. Timing, acceptance and tool/message counts are unchanged.
 CSV v6 rows are reparses of the same runs, not new independent samples. These
 indicators still do not establish wasted work. No provider or suite was rerun.
