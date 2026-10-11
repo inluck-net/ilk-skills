@@ -33,6 +33,7 @@ import time
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 # Sibling module — bounded subprocess execution with process-group cleanup.
@@ -1799,7 +1800,8 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
                   owner_reused: tuple[int, int] | None = None,
                   head_rerun_bound_hit: bool = False,
                   carried_from: str | None = None,
-                  rerun_selection: int | None = None) -> str:
+                  rerun_selection: int | None = None,
+                  base_selection: BaseSelection | None = None) -> str:
     """Render the complete record.  Measurements only — no verdict column.
 
     The ``attributed`` column is deliberately absent.  It was the cell that
@@ -1829,6 +1831,13 @@ def render_record(*, batch: str, head: str, tree: str, base_sha: str,
         f"verified_head: {head}",
         f"verified_tree: {tree}",
         f"base_sha: {base_sha}",
+    ]
+    # How the base was chosen travels with it.  Omitted entirely when the
+    # caller has no selection — an old record and an old caller both stay
+    # valid, which is what "extend the record compatibly" means here.
+    if base_selection is not None:
+        lines.extend(base_selection.record_fields())
+    lines += [
         f"suite_invocation: {invocation}",
         f"suite_scope: {scope['mode']}",
         f"suite_scope_reason: {scope.get('reason', '').replace(chr(10), '; ')}",
@@ -2536,6 +2545,7 @@ def _write_measured_record(project: Path, record: Path, args,
                 _atomic_write(record, render_record(
                     batch=args.batch or record.stem,
                     head=head, tree=tree, base_sha=args.base_sha,
+                    base_selection=getattr(args, "base_selection", None),
                     invocation=invocation, scope=scope, results=results,
                     at_base={}, base_red=base_red, head_red=head_red,
                     at_base_error=error_msg,
@@ -2550,6 +2560,7 @@ def _write_measured_record(project: Path, record: Path, args,
             _atomic_write(record, render_record(
                 batch=args.batch or record.stem,
                 head=head, tree=tree, base_sha=args.base_sha,
+                base_selection=getattr(args, "base_selection", None),
                 invocation=invocation, scope=scope, results=results,
                 at_base={}, base_red=base_red, head_red=head_red,
                 at_base_error=str(exc),
@@ -2734,6 +2745,7 @@ def _write_measured_record(project: Path, record: Path, args,
     record_text = render_record(
         batch=args.batch or record.stem,
         head=head, tree=tree, base_sha=args.base_sha,
+        base_selection=getattr(args, "base_selection", None),
         invocation=invocation, scope=scope, results=results,
         at_base=at_base, base_red=base_red, head_red=head_red,
         head_reruns=all_reruns or None,
@@ -2964,6 +2976,7 @@ def _write_record_from_output(project: Path, record: Path, args,
             _atomic_write(record, render_record(
                 batch=args.batch or record.stem,
                 head=head, tree=tree, base_sha=args.base_sha,
+                base_selection=getattr(args, "base_selection", None),
                 invocation=configured_invocation, scope=scope,
                 results=results,
                 at_base={}, base_red=base_red, head_red=head_red,
@@ -2983,6 +2996,7 @@ def _write_record_from_output(project: Path, record: Path, args,
             _atomic_write(record, render_record(
                 batch=args.batch or record.stem,
                 head=head, tree=tree, base_sha=args.base_sha,
+                base_selection=getattr(args, "base_selection", None),
                 invocation=configured_invocation, scope=scope,
                 results=results,
                 at_base={}, base_red=[], head_red=[],
@@ -3078,6 +3092,7 @@ def _write_record_from_output(project: Path, record: Path, args,
     record_text = render_record(
         batch=args.batch or record.stem,
         head=head, tree=tree, base_sha=args.base_sha,
+        base_selection=getattr(args, "base_selection", None),
         invocation=configured_invocation, scope=scope, results=results,
         at_base=at_base, base_red=base_red, head_red=head_red,
         head_reruns=all_reruns or None,
@@ -3131,42 +3146,135 @@ def _extract_registry_slugs(master_path: Path) -> list[str]:
     return slugs
 
 
-def resolve_batch_base_sha(
-    project: Path,
-    master_path: Path,
-    *,
-    explicit_sha: str | None = None,
-) -> tuple[str, str]:
-    """Derive the batch base from the MASTER's registry slugs.
+# ── Base selection provenance ─────────────────────────────────────────────
+#
+# A recorded base has to carry how it was chosen.  Measured 2026-10-11 on
+# gh-resolve run 20261011-061345: the recorder ran with ``--base-sha auto``,
+# the MASTER frontmatter named 84a572e3, the record stored 5d79154c, and a
+# worker's pre-existing claim cited a1623fba — a post-implementation marker.
+# A difference from frontmatter is not by itself proof of an incorrect base,
+# because the resolver derives from the earliest matching trailers.  So the
+# selection itself has to be on the record, with its evidence, before any
+# verdict is read.
 
-    Returns ``(base_sha, provenance)`` where *provenance* is a human-readable
-    string like ``base_sha: abc1234 (derived from def5678 [plan:alpha#…])``.
+BASE_SELECTION_EXPLICIT = "explicit"
+BASE_SELECTION_DERIVED = "derived"
 
-    When *explicit_sha* is not ``None`` and not ``"auto"``, it is returned
-    unchanged (pass-through for explicit ``--base-sha <sha>``).
+_BASE_PROVENANCE_LINE_RE = re.compile(
+    r"^base_(?:selection|derivation|frontmatter|provenance_conflict):[ \t]*.*$\n?",
+    re.MULTILINE,
+)
 
-    Raises ``SystemExit`` with a non-zero code when:
-    * ``explicit_sha == "auto"`` but no ``--master`` was supplied.
-    * No commit matches any registry slug (the operator must pass an
-      explicit sha).
+
+def _sha_equal(a: str | None, b: str | None) -> bool:
+    """True when two SHA strings name the same object (prefix-tolerant)."""
+    a = (a or "").strip().lower()
+    b = (b or "").strip().lower()
+    if not a or not b:
+        return False
+    n = min(len(a), len(b))
+    return n >= 7 and a[:n] == b[:n]
+
+
+def _master_declared_base_sha(master_path: Path | None) -> str | None:
+    """The MASTER frontmatter's declared ``base_sha``, or None if undeclared.
+
+    Absence is reported as None only after the frontmatter block was actually
+    read: a missing file, a missing key and an unparseable block are three
+    different things and only the last one is worth a warning later.  Uses
+    ``plan_status.parse_frontmatter`` — one parser, not a second copy.
     """
-    if explicit_sha is not None and explicit_sha != "auto":
-        return explicit_sha, f"base_sha: {explicit_sha} (explicit)"
+    if master_path is None:
+        return None
+    try:
+        text = master_path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return None
+    scripts = Path(__file__).resolve().parent
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    try:
+        from plan_status import parse_frontmatter
+    except ImportError:
+        return None
+    value = (parse_frontmatter(text).get("base_sha") or "").strip()
+    value = value.strip("`").strip()
+    return value or None
 
-    slugs = _extract_registry_slugs(master_path)
-    if not slugs:
-        print(f"ERROR: no sub-plan filenames found in {master_path.name}",
-              file=sys.stderr)
-        raise SystemExit(1)
 
-    # Build a regex alternation for git log --grep.
+@dataclass(frozen=True)
+class BaseSelection:
+    """What the batch base is, and how that answer was obtained.
+
+    AC-1 of ``a-verdict-carries-its-base-provenance``: a recorded base carries
+    its selection mode (explicit or derived), its resolved SHA, and its
+    derivation evidence.  Derivation names the trailer commit and the registry
+    slug that *actually* matched — not the first registry slug regardless of
+    match, which is what the previous provenance string printed.
+    """
+
+    base_sha: str
+    selection_mode: str
+    evidence: str
+    derivation_commit: str | None = None
+    derivation_slug: str | None = None
+    frontmatter_sha: str | None = None
+    conflict: bool = False
+
+    @property
+    def derivation_text(self) -> str:
+        if self.selection_mode == BASE_SELECTION_EXPLICIT:
+            return "operator-supplied"
+        if self.derivation_commit and self.derivation_slug:
+            return f"{self.derivation_commit} [plan:{self.derivation_slug}#…]"
+        return "unknown"
+
+    def record_fields(self) -> list[str]:
+        """The machine-read ``key: value`` lines this selection puts on a record."""
+        lines = [
+            f"base_selection: {self.selection_mode}",
+            f"base_derivation: {self.derivation_text}",
+        ]
+        if self.frontmatter_sha:
+            lines.append(f"base_frontmatter: {self.frontmatter_sha}")
+        if self.conflict:
+            lines.append(
+                f"base_provenance_conflict: resolved {self.base_sha} != "
+                f"frontmatter {self.frontmatter_sha}; resolve with an explicit "
+                f"--base-sha choice before trusting the verdict"
+            )
+        return lines
+
+
+def inject_base_provenance(text: str, sel: BaseSelection) -> str:
+    """Return *text* with the base-selection evidence present (idempotent).
+
+    Additive: a record written before these fields existed keeps its meaning
+    and gains them on the next pass.  Per-field replacement, so a re-run
+    updates rather than duplicates.
+    """
+    cleaned = _BASE_PROVENANCE_LINE_RE.sub("", text)
+    block = "\n".join(sel.record_fields()) + "\n"
+    stripped = cleaned.rstrip("\n")
+    if stripped:
+        return stripped + "\n\n" + block
+    return block
+
+
+def _first_matching_trailer(
+    project: Path, slugs: list[str],
+) -> tuple[str, str] | None:
+    """Earliest commit whose message carries ``[plan:<slug>#`` for a registry slug.
+
+    Returns ``(commit_sha, matched_slug)`` — the slug that matched *that*
+    commit.  The previous provenance string printed ``slugs[0]`` no matter
+    which slug the grep had actually hit.
+    """
     escaped = [re.escape(s) for s in slugs]
     grep_pattern = r"\[plan:(" + "|".join(escaped) + r")#"
-
-    # Find the earliest commit whose message matches any slug.
     try:
         log_out = subprocess.run(
-            ["git", "log", "--reverse", "--format=%H", "-E",
+            ["git", "log", "--reverse", "--format=%x1e%H%n%B", "-E",
              f"--grep={grep_pattern}", "HEAD"],
             cwd=project,
             capture_output=True, text=True,
@@ -3176,16 +3284,79 @@ def resolve_batch_base_sha(
         print(f"ERROR: git log failed: {exc}", file=sys.stderr)
         raise SystemExit(1)
 
-    first_line = (log_out.stdout or "").strip().splitlines()
-    if not first_line:
+    # Same record shape as ``_batch_commit_files``: ``\x1e<sha>\n<body>``.
+    for entry in (log_out.stdout or "").split("\x1e"):
+        sha, _, body = entry.strip().partition("\n")
+        if not sha or not re.fullmatch(r"[0-9a-fA-F]{7,40}", sha):
+            continue
+        matched = [s for s in slugs if f"[plan:{s}#" in body]
+        if matched:
+            return sha, matched[0]
+    return None
+
+
+def select_batch_base(
+    project: Path,
+    master_path: Path | None,
+    *,
+    explicit_sha: str | None = None,
+) -> BaseSelection:
+    """The canonical base-selection policy shared by verification and attribution.
+
+    * ``explicit_sha`` given (and not ``"auto"``) is the operator's choice.  It
+      wins, and any disagreement with the MASTER frontmatter is recorded as
+      resolved-by-choice rather than silently dropped.
+    * otherwise the base is derived: the parent of the earliest commit whose
+      message carries ``[plan:<registry-slug>#``, with the slug that actually
+      matched recorded.
+
+    A derived base that disagrees with the MASTER's declared ``base_sha`` is a
+    provenance conflict: it is carried on the selection (and therefore on the
+    record) with both SHAs.  This function persists the conflict; it does not
+    declare the recorded failure excused, and it never rewrites history.
+
+    Raises ``SystemExit`` non-zero when the base cannot be derived at all:
+    no registry slugs in the master, or no commit matches any of them.
+    """
+    declared = _master_declared_base_sha(master_path)
+
+    if explicit_sha is not None and explicit_sha != "auto":
+        conflict = declared is not None and not _sha_equal(explicit_sha, declared)
+        evidence = f"base_sha: {explicit_sha} (explicit)"
+        if conflict:
+            evidence += (
+                f"; CONFLICT with master frontmatter {declared} — the explicit "
+                f"choice resolves it"
+            )
+        return BaseSelection(
+            base_sha=explicit_sha,
+            selection_mode=BASE_SELECTION_EXPLICIT,
+            evidence=evidence,
+            derivation_commit=None,
+            derivation_slug=None,
+            frontmatter_sha=declared,
+            conflict=conflict,
+        )
+
+    if master_path is None:
+        print("ERROR: --base-sha auto requires --master", file=sys.stderr)
+        raise SystemExit(2)
+
+    slugs = _extract_registry_slugs(master_path)
+    if not slugs:
+        print(f"ERROR: no sub-plan filenames found in {master_path.name}",
+              file=sys.stderr)
+        raise SystemExit(1)
+
+    matched = _first_matching_trailer(project, slugs)
+    if matched is None:
         searched = ", ".join(slugs)
         print(f"ERROR: no commit matches any registry slug [{searched}]. "
               f"Pass an explicit --base-sha.", file=sys.stderr)
         raise SystemExit(1)
 
-    first_sha = first_line[0]
+    first_sha, matched_slug = matched
 
-    # The base is the parent of that commit.
     try:
         parent = subprocess.run(
             ["git", "rev-parse", f"{first_sha}^"],
@@ -3203,10 +3374,48 @@ def resolve_batch_base_sha(
               file=sys.stderr)
         raise SystemExit(1)
 
-    provenance = (f"base_sha: {base_sha} "
-                  f"(derived from {first_sha[:8]} [plan:{slugs[0]}#…])")
-    return base_sha, provenance
+    conflict = declared is not None and not _sha_equal(base_sha, declared)
+    evidence = (f"base_sha: {base_sha} "
+                f"(derived from {first_sha[:8]} [plan:{matched_slug}#…])")
+    if conflict:
+        evidence += (
+            f"; CONFLICT with master frontmatter {declared} — pass an explicit "
+            f"--base-sha to resolve"
+        )
+    return BaseSelection(
+        base_sha=base_sha,
+        selection_mode=BASE_SELECTION_DERIVED,
+        evidence=evidence,
+        derivation_commit=first_sha,
+        derivation_slug=matched_slug,
+        frontmatter_sha=declared,
+        conflict=conflict,
+    )
 
+
+def resolve_batch_base_sha(
+    project: Path,
+    master_path: Path,
+    *,
+    explicit_sha: str | None = None,
+) -> tuple[str, str]:
+    """Derive the batch base from the MASTER's registry slugs.
+
+    Returns ``(base_sha, provenance)`` — the historical tuple.  The full
+    selection evidence (mode, derivation commit/slug, frontmatter, conflict)
+    lives on :func:`select_batch_base`; this wrapper keeps every existing
+    caller working.
+
+    When *explicit_sha* is not ``None`` and not ``"auto"``, it is returned
+    unchanged (pass-through for explicit ``--base-sha <sha>``).
+
+    Raises ``SystemExit`` with a non-zero code when:
+    * ``explicit_sha == "auto"`` but no ``--master`` was supplied.
+    * No commit matches any registry slug (the operator must pass an
+      explicit sha).
+    """
+    sel = select_batch_base(project, master_path, explicit_sha=explicit_sha)
+    return sel.base_sha, sel.evidence
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
@@ -3292,13 +3501,14 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         project_for_resolve = Path(args.project).resolve()
         try:
-            resolved_sha, provenance = resolve_batch_base_sha(
+            selection = select_batch_base(
                 project_for_resolve, master_path,
             )
         except SystemExit as exc:
             return exc.code
-        args.base_sha = resolved_sha
-        print(provenance)
+        args.base_sha = selection.base_sha
+        args.base_selection = selection
+        print(selection.evidence)
 
     # Extract registry slugs from --master for the adding-commit rerun.
     # Available when --master is provided (required for --base-sha auto,
@@ -3310,6 +3520,18 @@ def main(argv: list[str] | None = None) -> int:
             registry_slugs = set(_extract_registry_slugs(master_for_slugs))
 
     project = Path(args.project).resolve()
+
+    # A base that was passed explicitly is still a selection, and the record
+    # says so.  Built here so every writer downstream — measured, ingest, and
+    # the lightweight field-injection path — carries the same evidence.
+    if getattr(args, "base_selection", None) is None and args.base_sha:
+        master_for_sel = Path(args.master).resolve() if args.master else None
+        try:
+            args.base_selection = select_batch_base(
+                project, master_for_sel, explicit_sha=args.base_sha,
+            )
+        except SystemExit:
+            args.base_selection = None
 
     if bool(args.record) == bool(args.batch):
         print(
@@ -3360,6 +3582,8 @@ def main(argv: list[str] | None = None) -> int:
 
     text = record.read_text(encoding="utf-8-sig", errors="replace")
     updated = inject_verified_head(text, sha)
+    if getattr(args, "base_selection", None) is not None:
+        updated = inject_base_provenance(updated, args.base_selection)
 
     if args.compute_scope:
         if not args.base_sha:
