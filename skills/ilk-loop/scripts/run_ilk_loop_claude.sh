@@ -7536,7 +7536,7 @@ if os.path.exists(gh_path):
                 _red_owner_skip_quarantine="true"
               fi
             else
-              echo "  [red-owner] attribution script or iteration base unavailable; the strike stands on the running sub-plan" >&2
+              echo "  [red-owner] attribution unavailable; red remains blocking but grants no strike" >&2
             fi
 
             # Confirmed blocking — try auto-quarantine before stopping.
@@ -7562,16 +7562,13 @@ if os.path.exists(gh_path):
               if [[ -n "$q_plans_dir" && -d "$q_plans_dir" ]]; then
                 # Extract slugs from blocking results
                 local q_slugs
-                q_slugs=$(python3 "$blocking_checks_script" "$local_checks_results" --slugs 2>/dev/null)
+                q_slugs=$(python3 "$blocking_checks_script" "$local_checks_results" --strike-targets 2>/dev/null)
                 local failing_desc
                 failing_desc=$(python3 "$blocking_checks_script" "$local_checks_results" --describe 2>/dev/null)
                 while IFS= read -r q_slug; do
                   [[ -z "$q_slug" ]] && continue
-                  # If owner differs from gate's slug, quarantine the owner.
+                  # Each target is its own positively measured commit owner.
                   local _quarantine_target="$q_slug"
-                  if [[ -n "$_redirect_quarantine_to" ]]; then
-                    _quarantine_target="$_redirect_quarantine_to"
-                  fi
                   local q_outcome
                   q_outcome=$(python3 "$blocking_checks_script" "$local_checks_results" --outcome-for-slug "$q_slug" 2>/dev/null || echo "fail")
                   local q_out
@@ -7590,10 +7587,6 @@ print('true' if d.get('blocked') else 'false')
                       q_thresh=$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('threshold','?'))" "$q_out" 2>/dev/null || echo "?")
                       echo "  [quarantine] sub-plan $_quarantine_target auto-quarantined after $q_fails failures (threshold: $q_thresh)" >&2
                     fi
-                  fi
-                  # Only quarantine the first slug (redirect once).
-                  if [[ -n "$_redirect_quarantine_to" ]]; then
-                    break
                   fi
                 done <<< "$q_slugs"
               fi

@@ -23,7 +23,7 @@ request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: close remaining legacy reader/recovery/parity requirements
-and delivery documentation in this isolated worktree. Toolkit preview 4de1eb06
+and delivery documentation in this isolated worktree. Toolkit preview 95be4d75
 and consumer compatibility 2cb713ae are locally installed and checked. The old
 toolkit controller was freshly proved paused before first dispatch, exited at
 that idle boundary, and the original pause/plan bytes were preserved. No active
@@ -1964,3 +1964,46 @@ anchors at the time of inspection and can move as integration changes code.
 - Current next action: deliver this checked candidate at a freshly observed
   safe boundary, then complete rolling flaky escalation and remaining adapters.
   Installed main/current remains 4de1eb06; no worker or batch state changed.
+
+### Delivery without disturbing the existing pinned controller
+
+- Checked candidate 95be4d75 was extracted to an immutable local preview and
+  installed. Source main fast-forwarded to the same commit. Fresh observation
+  proved run 20261011-234448 / PID 94556 paused before first dispatch, with
+  private pinned code/home and no registered worker children. Host dependency
+  guard confirmed no run depends on the mutable toolkit clone. Left this
+  controller running with its original 4de1eb06 inputs, rather than stopping
+  and relaunching it for another install. No pause or plan change.
+- Sleeping scheduler alone was excluded for the pointer/source update and
+  restored as PID 73481. Consumer registry was idle; no consumer service or
+  claim was changed. Hashes of all plan Markdown, pause, worker-home files,
+  input manifest and scheduler plist stayed identical. Exact controller
+  PID/start/PGID stayed identical. Evidence: toolkit-delivery-preview-20261012.
+- Native archived production entry against installed source commit: one
+  selected check passed in 7.77s (14 deselected), including accepted diff/
+  pointer, closed record and default final-verifier skip. This is correctness
+  verification, not a new provider performance sample. No published release.
+- Two-hour target has passed without full delivery. Remaining whole-plan
+  requirements are still explicit; continue rather than pretending readiness.
+
+### Attribution before strikes: legacy caller safety
+
+- Read production Bash and PowerShell branches: unavailable attribution
+  previously granted quarantine on the running slug; PowerShell also used
+  the original pre-confirmation blocking list. An actual Bash target-command
+  negative failed in 0.12s because unmeasured attribution selected victim.
+- Shared strike-target reader now requires a confirmed red, measured owned/
+  inherited verdict, actual batch/iteration bases, bisected commit and named
+  owner. Missing evidence stays blocking without a strike. Per-row owners
+  replace the cross-row global redirect, preventing one regression's owner
+  from redirecting another record. PowerShell calls the same reader; its
+  missing at-base measurement adapter is now explicit and cannot silently
+  quarantine an arbitrary slug. This closes an unsafe caller behavior, not
+  the remaining full attribution/baseline-red advancement requirement.
+- Focused Bash caller/confirmation/reader checks: 13 passed in 0.80s. Actual
+  portable PowerShell reader and recovery/confirmation adapters: 9 passed in
+  1.57s. New CLI-mode tests initially failed because the mode was not built;
+  the separate actual Bash negative establishes the production defect.
+- Candidate only; installed source/current remains 95be4d75. Next: record
+  rolling flaky history across green as well as mixed runs, then complete
+  actual-base policy and remaining ownership/platform adapters.

@@ -637,6 +637,18 @@ function Confirm-LocalCheckAttempts {
   } finally { Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
+function Get-MeasuredStrikeTargets {
+  param([object[]]$Records)
+  $path = [IO.Path]::GetTempFileName()
+  try {
+    $rows = @($Records | ForEach-Object { ConvertTo-Json -InputObject $_ -Depth 40 -Compress })
+    [IO.File]::WriteAllLines($path, [string[]]$rows)
+    $targets = @(& python (Join-Path $SkillRoot 'ilk-loop/scripts/blocking_checks.py') $path --strike-targets)
+    if ($LASTEXITCODE -ne 0) { throw 'measured strike targets unavailable' }
+    return $targets
+  } finally { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+}
+
 function Invoke-LocalChecks {
   <#
     Run run_local_checks.py for every target. Each invocation has the
@@ -2573,11 +2585,17 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
           # stopping the whole loop (L4: bypass, don't wedge).
           $quarantineScript = Join-Path $SkillRoot "ilk-loop\scripts\quarantine_subplan.py"
           $quarantined = $false
-          if (Test-Path $quarantineScript) {
+          # This adapter does not yet measure at-base ownership. Until that
+          # evidence exists, retain the red and stop without inventing strikes.
+          $strikeTargets = @(Get-MeasuredStrikeTargets -Records $localChecksRun)
+          if ($strikeTargets.Count -eq 0) {
+            Write-Host '[red-owner] red remains blocking; no measured commit owner grants a strike' -ForegroundColor Yellow
+          }
+          if ($strikeTargets.Count -gt 0 -and (Test-Path $quarantineScript)) {
             $qPlansDir = Get-PlansDir -Project $ProjectPath
             if ($qPlansDir) {
-              foreach ($b in $blocking) {
-                $qArgs = @($quarantineScript, "--plans-dir", $qPlansDir, "--slug", $b.slug, "--failing-check", ($blocking | ForEach-Object { "$($_.slug)#$($_.step)" }) -join ", ")
+              foreach ($qSlug in $strikeTargets) {
+                $qArgs = @($quarantineScript, "--plans-dir", $qPlansDir, "--slug", $qSlug, "--failing-check", ($blocking | ForEach-Object { "$($_.slug)#$($_.step)" }) -join ", ")
                 $qTmp = [IO.Path]::GetTempFileName()
                 try {
                   $qProc = Start-Process -FilePath "python" -ArgumentList $qArgs `
@@ -2589,7 +2607,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
                   try { if ($qOut) { $qResult = $qOut | ConvertFrom-Json -ErrorAction Stop } } catch { $qResult = $null }
                   if ($qResult -and $qResult.blocked) {
                     $quarantined = $true
-                    Write-Host ("  [quarantine] sub-plan {0} auto-quarantined after {1} failures (threshold: {2})" -f $b.slug, $qResult.fails, $qResult.threshold) -ForegroundColor DarkYellow
+                    Write-Host ("  [quarantine] sub-plan {0} auto-quarantined after {1} failures (threshold: {2})" -f $qSlug, $qResult.fails, $qResult.threshold) -ForegroundColor DarkYellow
                   }
                 } finally {
                   Remove-Item $qTmp -ErrorAction SilentlyContinue

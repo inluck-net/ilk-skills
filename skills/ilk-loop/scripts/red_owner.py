@@ -8,7 +8,7 @@ where the nodes fail.
 Also provides ``attribute_red`` for at-base attribution: measures whether
 a red gate was caused by the running iteration (owned), an earlier commit
 in the batch (inherited), was already red before the batch (pre-existing),
-or could not be measured (unmeasured — fail closed, treated as owned).
+or could not be measured (unmeasured — blocks acceptance but grants no strike).
 
 Stdlib only.  Reads/writes with ``encoding='utf-8-sig'`` where needed.
 
@@ -305,7 +305,7 @@ def attribute_red(
         commit in this batch broke it.
       - pre-existing: red at both bases (or batch base unresolved).
       - unmeasured: budget ran out, worktree failed, or base unknown.
-        Behaves like owned (fail closed).
+        Blocks acceptance, but does not identify an owner or authorize a strike.
     """
     start = time.monotonic()
 
@@ -456,7 +456,7 @@ def attribute_red(
         # Can't measure at batch base — unmeasured (no evidence to decide).
         # A "pre-existing" verdict would excuse the red, but without a batch
         # base we have no evidence either way.  Unmeasured is fail-closed:
-        # it behaves like owned, but consumers that check for unmeasured
+        # it stays blocking without granting a strike; consumers checking unmeasured
         # (e.g. ship_integrity) can refuse to revert instead of blaming
         # the wrong sub-plan.
         nodes = []

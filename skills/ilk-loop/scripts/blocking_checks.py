@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -89,6 +90,26 @@ def attributable_records(path: Path) -> list[dict[str, Any]]:
 def unattributable_count(path: Path) -> int:
     """Blocking records with no slug: not verdicts, reported not enforced."""
     return len(blocking_records(path)) - len(attributable_records(path))
+
+
+def strike_targets(path: Path) -> list[str]:
+    """Only a confirmed red with a measured commit owner may add a strike.
+
+    Missing measurement remains blocking without inventing blame. Each row
+    carries its own owner; a different row's owner never redirects this one.
+    """
+    targets=set()
+    for row in attributable_records(path):
+        attribution=row.get('attribution')
+        if row.get('verdict')!='red' or not isinstance(attribution,dict):continue
+        if attribution.get('verdict') not in {'owned','inherited'}:continue
+        if not all(isinstance(attribution.get(key),str) and
+                   re.fullmatch(r'[0-9a-f]{40,64}',attribution[key])
+                   for key in ('owner_sha','iteration_base','batch_base')):continue
+        owner=attribution.get('owner_slug')
+        if isinstance(owner,str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*',owner):
+            targets.add(owner)
+    return sorted(targets)
 
 
 def confirm_rerun(first_path: Path, rerun_path: Path) -> dict[str, Any]:
@@ -210,6 +231,8 @@ def main(argv: list[str] | None = None) -> int:
                            "(B2 re-run input; anonymous records are never emitted)")
     mode.add_argument("--slugs", action="store_true",
                       help="unique attributable blocking slugs, sorted (auto-quarantine input)")
+    mode.add_argument('--strike-targets', action='store_true',
+                      help='only confirmed red rows with a measured batch commit owner')
     mode.add_argument("--describe", action="store_true",
                       help="'slug#step, slug#step' for the human-readable line, plus an "
                            "'N unattributable (no slug)' segment when anonymous records exist")
@@ -230,6 +253,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.any:
         return 0 if attributable_records(args.results_file) else 1
+    if args.strike_targets:
+        for owner in strike_targets(args.results_file):print(owner)
+        return 0
     if args.inconclusive:
         return 0 if any(r.get('slug') and r.get('outcome') in ('inconclusive', 'unknown', None)
                         for r in read_records(args.results_file)) else 1
