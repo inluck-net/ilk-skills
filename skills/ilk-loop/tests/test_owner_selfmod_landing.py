@@ -91,3 +91,48 @@ def test_selfmod_state_lock_obeys_existing_deadline_and_keeps_prior_bytes(tmp_pa
     finally:
         driver_step._deadline.reset(token);release.set();thread.join(2)
     assert not thread.is_alive()
+
+
+@pytest.mark.parametrize('mutation',[None,'master','git-indirection','store','missing-binding'])
+def test_pending_declared_worktree_acceptance_closes_without_moving_clone(tmp_path,monkeypatch,mutation):
+    from iteration_context import resolve_context
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    context,root,old_plan=driver_fixture(tmp_path)
+    plan=old_plan.with_name('2026-10-11-counter.md');old_plan.rename(plan)
+    master=plan.parent/'MASTER-worktree.md'
+    master.write_text('---\nstatus: active\nwork_tree: '+str(root)+'\n---\n# Work\n## Sub-plan registry\n| Plan |\n|---|\n| '+plan.name+' |\n')
+    selected=dict(context['dispatch'],subplan_path=str(plan),master_path=str(master))
+    context=resolve_context(**{key:context[key] for key in ('clone','exec_tree','observe_tree','code_root','plans_dir','runtime_dir','data_root','run_id','iteration')},dispatch=selected,mode='work_tree')
+    context['worker_sandbox_adapter']='macos-brokered-shell'
+    frozen=tmp_path/'declared-context.json';write_context(frozen,context)
+    source_head=driver_step.git(Path(context['clone']),'rev-parse','HEAD')
+    monkeypatch.setenv('ILK_ITER_CONTEXT',str(frozen))
+    (root/'counter.py').write_text('def f(value): return value + 2\n')
+    accepted=driver_step.accept_step(context,default_timeout=10,deadline=monotonic()+10)
+    monkeypatch.delenv('ILK_ITER_CONTEXT')
+    def forbidden(*args,**kwargs):raise AssertionError('no gate on already accepted worktree')
+    monkeypatch.setattr(driver_step,'gate',forbidden)
+    log=tmp_path/'summary.jsonl'
+    if mutation:
+        if mutation=='master':master.write_text(master.read_text().replace(str(root),str(tmp_path/'another')))
+        elif mutation=='git-indirection':
+            marker=root/'.git';saved=marker.read_bytes();marker.unlink();marker.write_bytes(saved)
+        else:
+            context['work_tree_contract']=None if mutation=='missing-binding' else dict(context['work_tree_contract'],common_dir=str(tmp_path/'foreign'))
+            frozen.unlink();write_context(frozen,context) # deliberately replace immutable descriptor
+            # Exercise validation directly; persisted receipt identity separately
+            # refuses descriptor tampering before recovery can project anything.
+            from iteration_context import validate_work_tree_binding
+            with pytest.raises(ContextError):validate_work_tree_binding(context)
+        with pytest.raises(ContextError):
+            recover_pending(runtime=Path(context['runtime_dir']),project=Path(context['clone']),log=log,deadline=monotonic()+10)
+        assert 'status: shipped' not in plan.read_text()
+        assert driver_step.git(Path(context['clone']),'rev-parse','HEAD')==source_head
+        return
+    result=recover_pending(runtime=Path(context['runtime_dir']),project=Path(context['clone']),log=log,deadline=monotonic()+10)
+    assert len(result)==1 and 'status: shipped' in plan.read_text()
+    assert driver_step.git(Path(context['clone']),'rev-parse','HEAD')==source_head
+    close=json.loads(log.read_text());assert close['merge_outcome']=='not-applicable'
+    assert close['execution']['head_commit']==driver_step.git(root,'rev-parse','HEAD')
+    assert close['driver_acceptance']['tree']==accepted['tree']
+    assert close['driver_integrity_passed'] and close['state_audit']['explained']

@@ -13,7 +13,7 @@ pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='Mac production entr
 ROOT=Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize('case',['normal','selfmod','native-tools','native-tools-batch-optin','hold','pending-advance','pending-selfmod','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain'])
+@pytest.mark.parametrize('case',['normal','selfmod','work-tree','native-tools','native-tools-batch-optin','hold','pending-advance','pending-selfmod','pending-work-tree','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain'])
 def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,monkeypatch,case):
     human_hold_during_gate=case=='hold'
     upgrading=case=='upgrade-drain'
@@ -30,6 +30,12 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
     plan=world['plans']/(fixtures.STEM+'.md')
     plan.write_text('---\nplan: '+fixtures.SLUG+'\nstatus: pending\ncurrent_step: 0\nestimated_steps: 1\nverification_tier: loop-verified\n---\n# Counter\n## Steps\n### Step 0: fix counter\n```yaml\nlocal_checks:\n  - command: python3 -I -c "from pathlib import Path;exec(Path(\'counter.py\').read_text());assert f(4)==6"\n```\n')
     master=world['plans']/'MASTER-2026-08-29-execution-plan.md'
+    declared_root=None
+    if case in {'work-tree','pending-work-tree'}:
+        declared_root=tmp_path/'declared-execution'
+        git('worktree','add','--detach',str(declared_root))
+        master.write_text(master.read_text().replace('status: active','status: active\nwork_tree: '+str(declared_root)))
+    source_head=git('rev-parse','HEAD').stdout.strip()
     if case.startswith('gate-first-'):
         plan.write_text(plan.read_text().replace('local_checks:','gate_first: true\nlocal_checks:'))
         if case=='gate-first-green':
@@ -100,14 +106,14 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         from iteration_context import resolve_context,write_context
         from iteration_clock import monotonic
         import driver_step
-        prior_root=work
+        prior_root=declared_root or work
         if case=='pending-selfmod':
             prior_root=world['data_home']/'projects'/world['key']/'runtime/launcher/worktrees/selfmod-batch'
             prior_root.parent.mkdir(parents=True,exist_ok=True)
             git('worktree','add','--detach',str(prior_root))
         context=resolve_context(clone=work,exec_tree=prior_root,observe_tree={str(work):str(prior_root)},
             code_root=code,plans_dir=world['plans'],runtime_dir=world['data_home']/'projects'/world['key']/'runtime',
-            data_root=world['data_home'],run_id='prior-interrupted',iteration=1,mode='selfmod' if case=='pending-selfmod' else 'none',
+            data_root=world['data_home'],run_id='prior-interrupted',iteration=1,mode='selfmod' if case=='pending-selfmod' else 'work_tree' if case=='pending-work-tree' else 'none',
             dispatch={'slug':fixtures.SLUG,'step':0,'subplan_path':str(plan),'master_path':str(master)})
         context.update(worker_sandbox_adapter='macos-brokered-shell',toolkit_sha=manifest['toolkit_sha'])
         frozen=tmp_path/'prior-ctx.json';write_context(frozen,context)
@@ -125,11 +131,11 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             return answer
         with monkeypatch.context() as patch:
             patch.setenv('ILK_ITER_CONTEXT',str(frozen))
-            if case in {'pending-advance','pending-selfmod'}:patch.setattr(driver_step,'transition',crash)
+            if case in {'pending-advance','pending-selfmod','pending-work-tree'}:patch.setattr(driver_step,'transition',crash)
             else:patch.setattr(driver_step,'git',crash_git)
             with pytest.raises(RuntimeError):
                 driver_step.accept_step(context,default_timeout=10,deadline=monotonic()+10)
-        assert ('current_step: 1' if case in {'pending-advance','pending-selfmod'} else 'current_step: 0') in plan.read_text()
+        assert ('current_step: 1' if case in {'pending-advance','pending-selfmod','pending-work-tree'} else 'current_step: 0') in plan.read_text()
         assert 'status: shipped' not in plan.read_text()
     env=dict(os.environ,HOME=str(tmp_path),ILK_DATA_HOME=str(world['data_home']),ILK_DATA_DIR=str(world['data_home']),
         ILK_SKILL_HOME=str(code/'skills'),ILK_CODE_ROOT=str(code),ILK_RUN_INPUTS=str(inputs),
@@ -254,6 +260,10 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             assert len(recovered)==1 and recovered[0]['run_id']=='prior-interrupted'
             assert recovered[0]['driver_integrity_passed'] and recovered[0]['state_audit']['explained']
             assert (home/'settings.json').read_bytes()==original and not project_status(runtime)['busy']
+            if case=='pending-work-tree':
+                assert git('rev-parse','HEAD').stdout.strip()==source_head
+                assert recovered[0]['context']['exec_tree']==str(declared_root.resolve())
+                assert recovered[0]['merge_outcome']=='not-applicable'
             if case=='pending-selfmod':
                 assert prior_root.exists() and recovered[0]['merge_outcome']=='merged'
                 assert git('rev-parse','HEAD').stdout.strip()==subprocess.check_output(['git','-C',str(prior_root),'rev-parse','HEAD'],text=True).strip()
@@ -292,6 +302,11 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         if case=='gate-first-red':
             assert len(closed['driver_acceptance']['attempts'])==2
             assert len(closed['driver_acceptance']['worker_turns'])==1
+        if case=='work-tree':
+            assert git('rev-parse','HEAD').stdout.strip()==source_head
+            assert closed['context']['exec_tree']==str(declared_root.resolve())
+            assert closed['context']['work_tree_contract']['common_dir']==str((work/'.git').resolve())
+            assert (declared_root/'counter.py').read_text()=='def f(value): return value + 2\n'
         if case=='two-plans':
             assert len([row for row in closes if row.get('record_phase')=='close'])==2
     finally:

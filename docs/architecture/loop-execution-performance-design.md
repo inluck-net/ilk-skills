@@ -609,12 +609,24 @@ gate must pass on its raw exit. Attempts record this policy and the declarations
 as diagnostics. This requires no full-suite baseline measurement. Baseline-red
 exception attribution remains unbuilt and cannot establish acceptance.
 
-`run_local_checks.build_mention_gate_inventory` adds an opt-in complete-inventory
-mode for this driver. It subtracts declared full-file coverage and refuses
-uncovered inventory beyond the existing 20-file cap, rather than dropping those
-gates and claiming green. Legacy callers retain their existing warning/skip
-behavior. The cap remains an existing scope judgment; valid focused coverage
-larger than it would falsify the threshold. Refusal does not trigger a suite or
-increase the cap. Regression evidence: 21 related files reproduced acceptance
-after an empty skipped inventory (negative check failed in 0.49s); corrected
-strict/legacy cap and baseline-policy checks passed 5 in 1.26s.
+New contexts freeze `mention_gate_policy=bounded-existing-cap` by default, retaining
+existing optional mention discovery: more than 20 related test files warns and
+skips that optional inventory. All authored subplan and step gates remain mandatory.
+Driver attempts record discovered files, omitted files, cap and selected policy;
+acceptance proves selected gates, not exhaustive related-test coverage. The
+existing cap is a scope judgment, not measured performance evidence.
+
+Explicit `mention_gate_policy: complete` opts into subtracting authored full-file
+coverage and refusing remaining uncovered inventory beyond the cap. Descriptors
+without a frozen policy conservatively require complete coverage on a fresh gate;
+already accepted same-tree recovery does not run another gate. No policy triggers
+a full suite, raises the cap or waives an authored command's raw failure.
+
+Measured correction: the installed 2c3b4039 native consumer experiment completed
+its worker repair and 12 diagnostic tests, then refused acceptance on 87 uncovered
+related files. Wall time was 226.468s; authoritative gate/commit/CAS counts were
+zero. Making complete coverage the default contradicted the existing bounded
+optional-gate design. The earlier 21-file synthetic negative established the
+stricter behavior, not a defect in the designed bounded policy. Complete coverage
+is now explicit opt-in. The failed experiment remains failed; its worker diff is
+preserved and cannot establish accepted-step or speed evidence.

@@ -92,3 +92,23 @@ per-sample summary, original stream/renderer, v4/v5 cost reports, native gate
 capture and resume-summary. The owner implementation tracker retains exact
 checkpoint/evidence distinctions. Representative alternating comparisons and
 production installation are still open; no batch speedup is claimed.
+
+## Installed controlled sample: coverage-policy refusal
+
+Both planned profiles were pinned to installed immutable `2c3b4039`, consumer
+fixture baseline `f4468f97b8420e5a2e3a1938ea622e127222ea88`, actual MiMo PRO,
+production hooks and explicit thinking disabled. Only the native profile ran;
+the shell comparison remains unmeasured. Native wall time: **226.468s**;
+CLI completed successfully in 218.2s, with worker diagnostic 12 tests passing
+in 1.32s. These diagnostic tests were not authoritative driver acceptance.
+
+The driver refused before its first gate because strict mention inventory found
+87 uncovered related files. Acceptance, authoritative commit and CAS were zero;
+the run failed. Its unaccepted worker diff remains under external evidence
+`controlled-installed-profile-20261011/native/unaccepted-worker.diff`.
+This falsified making complete optional-mention coverage the default: new
+contexts now preserve the existing bounded cap policy and record omitted coverage.
+Authored gates remain mandatory. Original frozen contracts/evidence stay unchanged.
+No repeated paid comparison is justified against the known refusal. No speed or
+quality claim follows from this unmatched sample. The 240s/300s fixture bounds
+remain experimental judgment calls, not production defaults.

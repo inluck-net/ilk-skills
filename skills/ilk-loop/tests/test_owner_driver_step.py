@@ -121,6 +121,7 @@ def test_declared_baseline_reds_never_waive_driver_gate(tmp_path,monkeypatch,gre
 def test_over_cap_mention_inventory_is_inconclusive_not_green(tmp_path,monkeypatch):
     monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
     context,root,plan=fixture(tmp_path)
+    context['mention_gate_policy']='complete' # Explicit stricter contract, not the routine bounded policy.
     from run_local_checks import _MENTION_GATE_CAP
     (root/'fixture_mentions.py').write_text('value = 1\n')
     for index in range(_MENTION_GATE_CAP+1):
@@ -139,3 +140,25 @@ def test_over_cap_mention_inventory_is_inconclusive_not_green(tmp_path,monkeypat
     # full-file coverage is complete without adding another mention gate.
     assert build_mention_gate_inventory(root,['fixture_mentions.py'],
         {'python -m pytest tests'},require_complete=True)==[]
+
+
+def test_bounded_mention_policy_keeps_declared_gate_and_records_omissions(tmp_path,monkeypatch):
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    context,root,plan=fixture(tmp_path)
+    from run_local_checks import _MENTION_GATE_CAP
+    (root/'fixture_mentions.py').write_text('value = 1\n')
+    for index in range(_MENTION_GATE_CAP+1):
+        target=root/'tests'/('test_related_'+str(index)+'.py');target.parent.mkdir(exist_ok=True)
+        target.write_text('# fixture_mentions.py:1\ndef test_related(): assert True\n')
+    git(root,'add','.');git(root,'commit','-qm','bounded mention fixture')
+    context.update(base_commit=git(root,'rev-parse','HEAD'),base_tree=git(root,'rev-parse','HEAD^{tree}'))
+    assert context['mention_gate_policy']=='bounded-existing-cap'
+    (root/'counter.py').write_text('def f(value): return value + 2\n')
+    (root/'fixture_mentions.py').write_text('value = 2\n')
+    result=accept_step(context,default_timeout=10)
+    assert result['accepted']
+    attempt=result['attempts'][0]
+    assert attempt['mention_gate_policy']=='bounded-existing-cap'
+    assert len(attempt['mention_inventory']['omitted_files'])==_MENTION_GATE_CAP+1
+    assert len(attempt['check_observations'])==1 and attempt['check_observations'][0]['passed']
+    assert 'current_step: 1' in plan.read_text()

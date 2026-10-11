@@ -9,8 +9,8 @@ Keep it updated after each checked increment and before any context handoff.
 1. Read this file and the linked designs. Do not reconstruct scope from chat.
 2. Work in `/Users/chad/Projects/github/inluck-net/ilk-skills-worktrees/owner-loop-performance-20261011`, branch `owner/loop-performance-20261011`.
 3. Inspect source and git status before changes. The shared main checkout has
-   an old runner idling at pause; back up and reconcile owner prose only at a
-   fresh verified quiescent integration boundary.
+   locally installed preview and a retained pause; integrate subsequent code only
+   at a freshly verified quiescent boundary.
    Do not stage, revert or overwrite unknown files.
 4. Finish the first unchecked item below. Record actual check output, affected
    paths, remaining limitations, and the next action here. Candidate-tested,
@@ -30,9 +30,9 @@ Windows/member/dirty-entry adapters remain open. Continue here per Chad:
 judgment against delivered/installed/measured scope, not a checkbox count.
 
 Old run `20261011-102057` timed out by itself. Old run `20261011-130246`
-was freshly observed at handoff with PID 1016, PGID 958, start Oct 11 13:02:46,
-and a sleep child; the pause flag remains. Watchdog PID 354 is no longer present;
-a detached scheduler PID 27687 exists. Re-check all identities before activation.
+and old scheduler exited at the verified first-preview installation boundary.
+The restored scheduler was PID 94747; the pause flag remains. Re-check current
+identities before any subsequent activation; old PIDs are historical evidence.
 Owner checkpoints preserve main `5081038b` WIP prose ancestry. First local preview installation is recorded below. No published release or
 global code-only enforcement has occurred; controlled consumer comparisons and
 remaining adapters are open.
@@ -159,6 +159,26 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- Declared-worktree adapter now freezes exact master/root, shared Git store and
+  Git-indirection identity. Acceptance/recovery revalidate the binding, retain
+  original transaction authority and close without landing into the source
+  checkout. Focused driver/context/selfmod checks: 38 passed in 12.54s. Additional
+  changed-binding negatives passed 13 checks in 6.90s: changed master, replaced
+  Git indirection, foreign store and missing binding refuse recovery. Archived
+  launcher checks are next. Two fixture mistakes (immutable descriptor writes
+  and an overbroad text replacement) were corrected before this passing result.
+- Installed 2c3b4039 actual native MiMo PRO comparison FAILED in 226.468s:
+  worker CLI success 218.2s, diagnostic 12 tests passed in 1.32s, then driver
+  refused 87 uncovered mention files before authoritative gate/commit/CAS.
+  Source home unchanged, registry clear; unaccepted diff preserved externally
+  in controlled-installed-profile-20261011/native/unaccepted-worker.diff.
+  Complete mention coverage as default was an owner-introduced design mismatch,
+  not an API stall. New contexts restore designed bounded optional discovery,
+  record omitted coverage, and retain mandatory authored raw-exit gates.
+  Complete coverage remains explicit opt-in; older frozen contracts are not
+  rewritten. No repeated paid shell comparison against this known refusal.
+
+
 - A3 delivered first increment: verified idle PGIDs 958 and 27687 had only
   their known shells/sleep children and no worker/phase/iteration stream.
   Scheduler was booted out; exact idle loop group received TERM and both
@@ -215,7 +235,7 @@ No completion/ship/proof markers are inferred from this human tracker.
   mention of the synthetic counter file, whose gate could not run in the
   protected fixture. The over-cap fixture now uses its own dedicated target
   file so it cannot add an unrelated citation to the entry task. Recheck pending.
-- Strict driver acceptance reproduced a skipped-mention false green: 21 related
+- Historical strict-coverage experiment (default policy corrected below): 21 related
   files exceeded the existing 20-file cap, inventory returned empty, and step
   accepted (negative regression failed in 0.49s). New complete-inventory mode
   subtracts already declared full-file coverage and refuses remaining over-cap

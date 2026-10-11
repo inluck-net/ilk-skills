@@ -108,11 +108,13 @@ def _recover_pending(*,runtime,project,log,deadline):
             if close.get('stop_reason') or close.get('driver_integrity_passed') is not True:
                 raise ContextError('prior accepted transaction closed unsuccessfully; recovery needs attribution')
             continue
-        if context.get('mode') not in {'none','selfmod'} or (context.get('mode')=='none' and Path(context['exec_tree']).resolve()!=project):
+        if context.get('mode') not in {'none','selfmod','work_tree'} or (context.get('mode')=='none' and Path(context['exec_tree']).resolve()!=project):
             raise ContextError('pending acceptance landing adapter unavailable')
         if context.get('mode')=='selfmod' and (context.get('clone_entry_dirty') is not False
                 or not context.get('clone_ref') or context.get('clone_base_commit')!=context.get('base_commit')):
             raise ContextError('pending acceptance lacks supported frozen selfmod landing base')
+        if context.get('mode')=='work_tree' and not isinstance(context.get('work_tree_contract'),dict):
+            raise ContextError('pending acceptance lacks frozen declared worktree binding')
         path=Path(row.get('context_path') or '')
         if not path.is_file() or read_context(path)!=context:
             raise ContextError('pending acceptance original frozen context unavailable')

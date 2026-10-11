@@ -67,6 +67,8 @@ def validate(context):
     require_driver(context)
     if context.get('worker_sandbox_adapter')!='macos-brokered-shell':
         raise ContextError('enforced worker adapter required')
+    from iteration_context import validate_work_tree_binding
+    validate_work_tree_binding(context)
     if context.get('entry_dirty') is not False:raise ContextError('clean frozen entry required')
     selected=read_dispatch(context);path=Path(selected['subplan_path']);root=root_for_plan(context,path)
     if root!=Path(context['exec_tree']):raise ContextError('member-repo acceptance adapter not built')
@@ -106,7 +108,11 @@ def gate(context,root,path,selected,*,default_timeout):
     tree=working_tree(root);sub,step=gate_contract(root,path,selected)
     changed=git(root,'diff','--name-only',context['base_commit'],tree).splitlines()
     commands={item.get('command','') for item in sub+step}
-    try:mention=build_mention_gate_inventory(root,changed,commands,require_complete=True)
+    policy=context.get('mention_gate_policy','complete') # Descriptors without an explicit policy require complete coverage on a fresh gate.
+    if policy not in {'bounded-existing-cap','complete'}:raise ContextError('unknown frozen mention policy')
+    mention_observation={}
+    try:mention=build_mention_gate_inventory(root,changed,commands,
+        require_complete=policy=='complete',observation=mention_observation)
     except ValueError as error:raise ContextError(str(error)) from error
     identifier=uuid.uuid4().hex
     directory=Path(context['runtime_dir'])/'launcher/driver-step'/identifier
@@ -131,6 +137,7 @@ def gate(context,root,path,selected,*,default_timeout):
     record=dict(attempt_id=identifier,run_id=context['run_id'],iteration=context['iteration'],
         slug=selected.get('slug'),step=selected['step'],base_commit=context['base_commit'],
         working_tree=tree,started_monotonic=started,ended_monotonic=monotonic(),
+        mention_gate_policy=policy,mention_inventory=mention_observation,
         baseline_red_policy='strict-raw-exit-no-waivers',
         diagnostic_baseline_red_declarations=_read_declared_reds(root),
         declared_contract_commands=[check['command'] for check in sub+step],
@@ -202,6 +209,8 @@ def _recover_acceptance(context):
     if os.environ.get('ILK_WORKER_SESSION','').strip():raise ContextError('worker cannot recover acceptance')
     from run_registry import require_driver
     require_driver(context)
+    from iteration_context import validate_work_tree_binding
+    validate_work_tree_binding(context)
     target=_acceptance_receipt(context)
     if not target.exists():return None
     row=json.loads(target.read_text())

@@ -1377,7 +1377,7 @@ def build_mention_gate_inventory(
     changed_files: list[str],
     existing_commands: set[str],
     baseline_red: list[dict] | None = None,
-    *, require_complete: bool = False,
+    *, require_complete: bool = False, observation: dict | None = None,
 ) -> list[dict]:
     """Canonical mention-gate inventory (AC-3).
 
@@ -1455,9 +1455,10 @@ def build_mention_gate_inventory(
             f"{changed_files[0]}:<line> — over cap, not gated",
             file=sys.stderr,
         )
-        return []
+        if observation is None:return []
 
     if not test_files:
+        if observation is not None:observation.update(total_files=0,uncovered_files=[],omitted_files=[],over_cap=False)
         return []
 
     # AC-2: drop files the declared gate already runs IN FULL.  Coverage is
@@ -1468,6 +1469,14 @@ def build_mention_gate_inventory(
         if parseable:
             covered |= whole
     new_test_files = [tf for tf in test_files if not _covered_by(tf, covered)]
+
+    over_cap=len(test_files)>_MENTION_GATE_CAP
+    if observation is not None:
+        observation.update(policy='complete' if require_complete else 'bounded-existing-cap',
+            cap=_MENTION_GATE_CAP,total_files=len(test_files),uncovered_files=new_test_files,
+            omitted_files=new_test_files if over_cap and not require_complete else [],
+            over_cap=over_cap,declared_full_file_coverage=sorted(covered))
+    if over_cap and not require_complete:return []
 
     if require_complete and len(new_test_files)>_MENTION_GATE_CAP:
         # Existing 20-file cap remains a scope judgment, not permission to

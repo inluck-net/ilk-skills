@@ -61,6 +61,28 @@ def root_for_plan(context: dict, subplan: Path) -> Path:
     return Path(context['exec_tree'])
 
 
+def validate_work_tree_binding(context):
+    if context.get('mode')!='work_tree':return
+    contract=context.get('work_tree_contract')
+    if not isinstance(contract,dict):raise ContextError('declared worktree binding unavailable')
+    master=(context.get('dispatch') or {}).get('master_path')
+    if master!=contract.get('master_path') or context['exec_tree']!=contract.get('exec_tree'):
+        raise ContextError('declared worktree identity changed')
+    from plan_status import parse_frontmatter
+    declared=parse_frontmatter(Path(master).read_text()).get('work_tree','')
+    if not declared or not Path(declared).is_absolute() or str(Path(declared).resolve())!=context['exec_tree']:
+        raise ContextError('declared worktree master changed')
+    marker=Path(context['exec_tree'])/'.git';metadata=marker.stat()
+    if [metadata.st_dev,metadata.st_ino,metadata.st_ctime_ns]!=contract.get('git_indirection_identity'):
+        raise ContextError('declared worktree was replaced')
+    from driver_step import git
+    for root in (Path(context['clone']),Path(context['exec_tree'])):
+        raw=Path(git(root,'rev-parse','--git-common-dir'))
+        common=raw.resolve() if raw.is_absolute() else (root/raw).resolve()
+        if str(common)!=contract.get('common_dir'):
+            raise ContextError('declared worktree Git store changed')
+
+
 def git_value(root: Path, name: str) -> str | None:
     try:
         return subprocess.check_output(['git','-C',str(root),'rev-parse',name],text=True,stderr=subprocess.DEVNULL).strip()
@@ -134,10 +156,15 @@ def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
         raise ValueError('clone observation differs from execution tree')
     if mode=='selfmod' and clone==exec_tree:
         raise ValueError('selfmod worker would run in live clone')
+    mention_gate_policy='bounded-existing-cap'
     if dispatch:
         selected=Path(dispatch['subplan_path']).resolve(strict=True)
         if selected.parent!=Path(plans_dir):
             raise ValueError('dispatch belongs to another plans root')
+        from plan_status import parse_frontmatter
+        mention_gate_policy=parse_frontmatter(selected.read_text()).get('mention_gate_policy','bounded-existing-cap')
+        if mention_gate_policy not in {'bounded-existing-cap','complete'}:
+            raise ValueError('unknown mention_gate_policy')
         from safety_kernel import check_plan_admission
         violations = check_plan_admission(selected.read_text(encoding='utf-8-sig'), Path(exec_tree))
         if violations:
@@ -145,6 +172,21 @@ def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
         master=dispatch.get('master_path')
         if master and Path(master).resolve(strict=True).parent!=Path(plans_dir):
             raise ValueError('master belongs to another plans root')
+    work_tree_contract=None
+    if mode=='work_tree':
+        master=(dispatch or {}).get('master_path')
+        if not master:raise ValueError('exact master required for declared worktree')
+        from plan_status import parse_frontmatter
+        declared=parse_frontmatter(Path(master).read_text()).get('work_tree','')
+        if not declared or not Path(declared).is_absolute() or str(Path(declared).resolve())!=exec_tree:
+            raise ValueError('execution root differs from exact master work_tree')
+        from work_tree import _git_common_dir
+        common=_git_common_dir(Path(clone))
+        if not common or common!=_git_common_dir(Path(exec_tree)):
+            raise ValueError('declared worktree belongs to another Git store')
+        metadata=(Path(exec_tree)/'.git').stat()
+        work_tree_contract=dict(master_path=master,exec_tree=exec_tree,common_dir=common,
+            git_indirection_identity=[metadata.st_dev,metadata.st_ino,metadata.st_ctime_ns])
     from plan_state import _lock,journal_cursor,_recover
     with _lock(Path(plans_dir)/'.state-transitions.lock'):
         snapshots={}
@@ -191,7 +233,7 @@ def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
                 base_tree=git_value(Path(exec_tree),'HEAD^{tree}'),
                 entry_dirty=bool(subprocess.check_output(['git','-C',exec_tree,'status','--porcelain'],text=True)) if git_value(Path(exec_tree),'HEAD') else None,
                 dispatch=dispatch or None, plans=snapshots, master_snapshot=master_snapshot,
-                kernel_list=kernel_list,state_journal_cursor=state_journal_cursor)
+                mention_gate_policy=mention_gate_policy,kernel_list=kernel_list,work_tree_contract=work_tree_contract,state_journal_cursor=state_journal_cursor)
 
 
 def write_context(path: Path, context: dict):

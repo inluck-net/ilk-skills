@@ -204,3 +204,20 @@ def test_empty_control_root_refuses_before_creating_state_lock(tmp_path,monkeypa
         resolve_context(**args)
     assert not (tmp_path/'.state-transitions.lock').exists()
     assert not (Path(args['plans_dir'])/'.state-transitions.lock').exists()
+
+
+@pytest.mark.parametrize('bad',['missing-master','wrong-root','relative-root','foreign-store'])
+def test_declared_worktree_requires_exact_master_and_shared_store(tmp_path,monkeypatch,bad):
+    args=fixture(tmp_path);args['mode']='work_tree'
+    master=Path(args['plans_dir'])/'MASTER-declared.md'
+    declared=str(args['exec_tree'])
+    if bad=='wrong-root':declared=str(args['clone'])
+    elif bad=='relative-root':declared='work'
+    elif bad=='foreign-store':
+        subprocess.run(['git','init','-q',str(tmp_path/'foreign')],check=True)
+        args['exec_tree']=tmp_path/'foreign';args['observe_tree']={str(args['clone']):str(args['exec_tree'])}
+        declared=str(args['exec_tree'])
+    master.write_text('---\nstatus: active\nwork_tree: '+declared+'\n---\n')
+    if bad!='missing-master':args['dispatch']['master_path']=str(master)
+    with pytest.raises(ValueError):resolve_context(**args)
+    assert not (Path(args['plans_dir'])/'.state-transitions.lock').exists()
