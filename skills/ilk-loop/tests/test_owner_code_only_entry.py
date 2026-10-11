@@ -142,6 +142,10 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         closed=[row for row in closes if row.get('record_phase')=='close'][0]
         assert closed['driver_acceptance']['accepted'] is True
         assert closed['driver_integrity_passed'] is True and closed['state_audit']['explained'] is True
+        phases={row['name']:row for row in closed['driver_phase_observation']['intervals']}
+        for name in ('driver_gate','driver_commit_and_hooks','integrity_and_state_audit','owned_group_cleanup'):
+            assert phases[name]['duration_sec']>=0 and phases[name]['observation_complete']
+        assert phases['landing']['duration_sec'] is None # ordinary consumer has no merge
         assert len(closed['driver_acceptance']['attempts'])==(2 if case=='gate-first-red' else 1)
         if case=='gate-first-green':
             assert closed['driver_acceptance']['gate_first'] and closed['driver_acceptance']['worker_turns']==[]

@@ -153,6 +153,17 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- 2026-10-11 B4 phase observation candidate: additive close fields separate
+  authoritative gate, commit/hooks, integrity/state audit, selfmod landing and
+  verified owned-group cleanup intervals. Shared host clock; intervals may
+  overlap and missing data is unknown. Same-command/tree repeat candidates
+  are counted, but unobserved environment/state prevents claiming identity or
+  reusing outcomes. Four clock/observation checks passed in 0.07s; four phase/
+  held-queue report checks passed in 0.04s. Reports label observed worker model
+  context separately from driver execution. Archive entry check is next.
+  Verified cleanup dispatch/native checks: 4 passed in 3.53s. Archived normal
+  and two-subplan entries at `5309b04e`: 2 passed in 16.91s.
+
 - 2026-10-11 D1 post-change growth observation: thirty completed commands
   retained zero live-registry child rows, with thirty private registration and
   thirty closure events. Command elapsed 1.143s; registry scan 0.00209s versus

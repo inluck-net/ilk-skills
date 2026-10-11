@@ -6878,6 +6878,7 @@ print(json.dumps(d))
     fi
 
     local _driver_acceptance_file="" _driver_accepted=0 _driver_stop_reason="" _driver_gate_results=""
+    local _cleanup_started="" _cleanup_ended=""
     if [[ "${ILK_WORKER_MODE:-}" == "code-only" ]]; then
       _driver_acceptance_file="${RUN_LOG_DIR}/ctx-${i}-acceptance.json"
       if [[ -f "$_driver_acceptance_file" ]]; then
@@ -6890,7 +6891,9 @@ print(json.dumps(d))
       else
         _driver_stop_reason="code_only_acceptance_failed"
       fi
+      _cleanup_started=$(python3 "${_ILK_SCRIPT_DIR}/iteration_clock.py") || _cleanup_started=""
       python3 "${_ILK_SCRIPT_DIR}/worker_dispatch.py" close --context "$ILK_ITER_CONTEXT" || _driver_stop_reason="code_only_acceptance_failed"
+      _cleanup_ended=$(python3 "${_ILK_SCRIPT_DIR}/iteration_clock.py") || _cleanup_ended=""
     fi
 
     if [[ -n "$_master_snap_file" ]]; then
@@ -7865,6 +7868,8 @@ append_revert_row(
     # (sub-plan an-unrunnable-derived-check-stops-once, AC-2)
     local _si_stderr=""
     local _ship_integrity_passed=0
+    local _integrity_started="" _integrity_ended="" _landing_started="" _landing_ended=""
+    _integrity_started=$(python3 "${_ILK_SCRIPT_DIR}/iteration_clock.py") || _integrity_started=""
     if [[ "$iter_stop_reason" == "local_checks_environment_fault" ]]; then
       echo "  [ship-integrity] skipped — environment fault (derived check could not run)" >&2
     else
@@ -7942,6 +7947,7 @@ append_revert_row(
       stop_reason="ship_integrity_violation"
       iter_stop_reason="ship_integrity_violation"
     fi
+    _integrity_ended=$(python3 "${_ILK_SCRIPT_DIR}/iteration_clock.py") || _integrity_ended=""
 
     # Capture once in the execution tree before merge may remove it.
     local _execution_capture_json
@@ -7965,6 +7971,7 @@ print(json.dumps(capture_execution(json.loads(Path(sys.argv[2]).read_text()))))
     # live clone.  The next run reuses the worktree ("Reusing existing
     # worktree" path).
     if [[ "${SELFMOD_ISOLATED:-0}" -eq 1 ]]; then
+      _landing_started=$(python3 "${_ILK_SCRIPT_DIR}/iteration_clock.py") || _landing_started=""
       # Gate check: was any local_checks outcome fail or error?
       local _merge_blocked_reason=""
       if [[ "$iter_stop_reason" == "local_checks_failed" || "$iter_stop_reason" == "local_checks_failed_no_commits" ]]; then
@@ -8023,6 +8030,7 @@ print(json.dumps(capture_execution(json.loads(Path(sys.argv[2]).read_text()))))
       if [[ "${merge_was_deferred:-0}" -ne 1 ]]; then
         SELFMOD_ISOLATED=0
       fi
+      _landing_ended=$(python3 "${_ILK_SCRIPT_DIR}/iteration_clock.py") || _landing_ended=""
     fi
 
     # Waste bounding: if the merge was deferred and this iteration
@@ -8119,6 +8127,10 @@ if last:
     _STATE_AUDIT_JSON="$_state_audit_json" \
     _DRIVER_ACCEPTANCE_FILE="$_driver_acceptance_file" \
     _SHIP_INTEGRITY_PASSED="$_ship_integrity_passed" \
+    _PHASE_SCRIPT_DIR="${_ILK_SCRIPT_DIR}" \
+    _PHASE_INTEGRITY_START="$_integrity_started" _PHASE_INTEGRITY_END="$_integrity_ended" \
+    _PHASE_LANDING_START="$_landing_started" _PHASE_LANDING_END="$_landing_ended" \
+    _PHASE_CLEANUP_START="$_cleanup_started" _PHASE_CLEANUP_END="$_cleanup_ended" \
     _DISPATCH_IDENTITY_JSON="${_dispatch_identity_json:-}" \
     _DISPATCH_STEP="${PRE_ITER_TARGET#* }" \
     RUN_ID="$RUN_ID" \
@@ -8174,6 +8186,14 @@ if d['context'].get('worker_sandbox_adapter') == 'macos-brokered-shell':
       d['driver_acceptance'] = json.load(acceptance_file)
   except (OSError, ValueError):
     d['driver_acceptance'] = {'accepted': False}
+import sys
+sys.path.insert(0, os.environ['_PHASE_SCRIPT_DIR'])
+from phase_observation import observe
+d['driver_phase_observation'] = observe(d.get('driver_acceptance'),{
+  'integrity_and_state_audit': [os.environ.get('_PHASE_INTEGRITY_START'), os.environ.get('_PHASE_INTEGRITY_END')],
+  'landing': [os.environ.get('_PHASE_LANDING_START'), os.environ.get('_PHASE_LANDING_END')],
+  'owned_group_cleanup': [os.environ.get('_PHASE_CLEANUP_START'), os.environ.get('_PHASE_CLEANUP_END')],
+}, cwd=d['context']['exec_tree'])
 try:
   identity = json.loads(os.environ.get('_DISPATCH_IDENTITY_JSON', '') or '{}')
   if identity:

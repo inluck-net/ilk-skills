@@ -14,3 +14,6 @@ def monotonic():
     if not hasattr(time,'CLOCK_MONOTONIC') or not hasattr(time,'clock_gettime'):
         raise RuntimeError('shared monotonic clock adapter unavailable')
     return time.clock_gettime(time.CLOCK_MONOTONIC)
+
+
+if __name__=='__main__':print(monotonic())

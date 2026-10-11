@@ -3,6 +3,11 @@
   "loop_kernel_policy": "owner-only",
   "rules": [
     {
+      "path": "skills/ilk-loop/scripts/phase_observation.py",
+      "guard": "owner",
+      "why": "truthful additive phase and gate-repeat observations in driver close records"
+    },
+    {
       "path": "skills/ilk-loop/scripts/owned_command.py",
       "guard": "owner",
       "why": "registers owned groups before exec for native runner-death cleanup"

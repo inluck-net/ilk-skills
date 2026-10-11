@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import os
 import re
 import subprocess
@@ -2919,6 +2920,22 @@ def render_report(
             f"| {r.get('exit_code', '?')} "
             f"| {r.get('stop_reason') or '-'} |"
         )
+
+    observed_rows=[row for row in _real_iters if row.get('driver_phase_observation')]
+    if observed_rows:
+        body_lines.append('\n## Observed driver intervals\n')
+        body_lines.append('Worker models below are observed init context, not the executor of driver checks. '
+            'Intervals can overlap; do not sum them or subtract thinking/API time. Missing durations remain unknown.\n')
+        body_lines.append('| Iteration | Phase | Seconds | Worker model context | Clock basis |')
+        body_lines.append('|---|---|---|---|---|')
+        for row in observed_rows:
+            models=(row.get('worker_cost_observation') or {}).get('models_actual_init') or []
+            context=', '.join(models) if models else 'not observed'
+            if (row.get('driver_acceptance') or {}).get('worker_turns')==[]:context='no worker dispatch'
+            for span in row['driver_phase_observation'].get('intervals',[]):
+                seconds=span.get('duration_sec')
+                duration=f'{seconds:.3f}' if isinstance(seconds,(int,float)) and not isinstance(seconds,bool) and math.isfinite(seconds) and seconds>=0 else 'unknown'
+                body_lines.append(f"| {row.get('iteration','?')} | {span.get('name','unknown')} | {duration} | {context} | {span.get('clock_basis','unknown')} |")
 
     return fm_yaml + "\n" + "\n".join(body_lines) + "\n"
 
