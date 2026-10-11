@@ -56,7 +56,7 @@ def measured_progress_contract(context):
         'green proof remains absent. These field semantics are pinned with this toolkit. '
         'For a consumer reader task, use this contract and its named implementation/tests first; '
         'inspect toolkit emitters only for a concrete unresolved contract detail. '
-        'Never treat loop provenance, completed steps, old green rows or these progress flags as permission to publish. '
+        'Never treat loop provenance, completed steps, old green rows or these progress flags as permission to publish measured-red work. '
         'Worker writes remain limited to the selected step; the driver measures/attributes failures. '
         'Final verification remains opt-in.'
     )
