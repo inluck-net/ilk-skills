@@ -36,6 +36,7 @@ from typing import Any
 class ShipVerdict:
     ok: bool
     reason: str
+    unmeasured: bool = False
 
 
 def evaluate_ship(
@@ -76,6 +77,11 @@ def evaluate_ship(
             nodes=attribution.get('nodes',[])
             measured_nodes=(isinstance(nodes,list) and all(isinstance(node,dict)
                 and node.get('verdict') in ('inherited','pre-existing') for node in nodes))
+            unknown=(verdict=='unmeasured' or (verdict=='owned' and not attribution.get('owner_slug'))
+                     or (verdict in ('inherited','pre-existing') and not measured_nodes))
+            if unknown and subplan_status=='shipped' and declared_checks and not last_gate_result.get('all_passed',False):
+                return ShipVerdict(ok=False,unmeasured=True,
+                    reason='gate attribution unmeasured — no green proof or ownership-based rollback')
             if verdict in ("inherited", "pre-existing") and measured_nodes:
                 owner_info = ""
                 if verdict == "inherited":
@@ -1092,6 +1098,13 @@ def _cli(argv: list[str]) -> int:
     # While warn-only (ENFORCE_RECORD_REQUIRED is False), report loudly but do
     # not block the ship.
     rec_reason = _missing_record_reason(args.subplan, repo=args.repo) if args.subplan else None
+
+    if verdict.unmeasured and (step_reason is None or step_reason is _UNRESOLVABLE):
+        print(f'GATE: unmeasured ({verdict.reason})',file=sys.stderr)
+        if rec_reason and not ENFORCE_RECORD_REQUIRED:
+            print(f'WARN RECORD ABSENT: {rec_reason}',file=sys.stderr)
+        if not rec_reason or not ENFORCE_RECORD_REQUIRED:
+            return 3  # Existing unavailable/unmeasured adapter; never revert.
 
     # Unresolvable root: the step-commit half is unmeasured, but a red
     # gate is still a violation.  Evaluate the gate verdict before

@@ -2703,3 +2703,30 @@ anchors at the time of inspection and can move as integration changes code.
 - The owned unproven-progress transaction adapter is still not implemented;
   this strengthens its necessary measurement primitive first. Candidate only
   until the next independently checked idle activation.
+
+
+### Correct unknown integrity to tri-state, preserving no-rollback behavior
+
+- Adjacent test_a_red_without_an_owner_reverts_nothing documents a required
+  no-rollback boundary. Removing the old ok=True shortcut alone in 18454a64
+  lost that distinction. Corrected before further adapter work: ShipVerdict
+  now has additive unmeasured; unknown attribution is not ok/green proof,
+  but CLI uses existing exit 3 when no independent missing-step/record
+  violation is established. Bash/PS do not interpret 3 as rollback authority.
+- Actual Bash fixtures with real three-step Git trailers retain unknown and
+  ownerless plans byte-for-byte. Bash now reports the validator's real reason
+  instead of always saying no project root. Initial fixture asserted lowercase
+  text against uppercase UNMEASURED; corrected the assertion and strengthened
+  it with real Git provenance rather than relying on unresolved-root behavior.
+- Actual portable PS negative reproduced dropping attribution and emitting a
+  violation (1 failed in 0.58s). Test-ShipIntegrity now passes complete rows
+  through a temporary JSONL file, exact slug, and legacy project root; frozen
+  callers retain canonical Python context resolution. No JSON argv transport.
+- Full selected unknown/green/non-owned integrity, step commits, no-owner and
+  actual portable PS checks: 49 passed in 10.00s. Final PS adapter rerun:
+  1 passed/10 deselected in 0.57s. Bash and actual pwsh syntax passed. Earlier
+  no-owner/unavailable actual Bash checks: 17 passed in 6.02s. No model or
+  routine suite; native Windows runtime/ownership still not established.
+- This correction supersedes 18454a64's binary interpretation, not the ban
+  on unknown final-gate proof. Base-node classification f4d42baa is also
+  checked and ready for the next safe local activation.

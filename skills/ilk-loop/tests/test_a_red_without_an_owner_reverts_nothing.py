@@ -210,10 +210,8 @@ class TestOwnedWithNoOwnerIsUnmeasured:
         )
 
         # The fix: owned with no owner should be treated as unmeasured,
-        # so the ship should be ok (not reverted).
-        assert verdict.ok, (
-            f"Expected ok=True (unmeasured), got ok=False: {verdict.reason}"
-        )
+        # Unmeasured is neither green proof nor a rollback instruction.
+        assert verdict.unmeasured and not verdict.ok, verdict.reason
 
 
 # ── AC-3 (13c): owner slug from body, not subject ────────────────────────────

@@ -4412,11 +4412,9 @@ print('ok')
       fi
     fi
     if [[ $si_exit -eq 3 ]]; then
-      # Exit 3 = UNMEASURED: the project root could not be resolved, so
-      # step-commit enforcement is impossible.  This is NOT a violation —
-      # log and skip.  A red gate (exit 1) is still caught by the normal
-      # violation path because ship_integrity.py evaluates the gate before
-      # returning 3.
+      # Exit 3 = UNMEASURED: unresolved root or unknown attribution supplies
+      # no green proof and no rollback authority. Measured violations remain
+      # exit 1; preserve the validator's actual reason in the diagnostic.
       local _uslug
       _uslug=$(python3 -c "
 import re, sys
@@ -4428,7 +4426,7 @@ if m:
         if line.strip().startswith('plan:'):
             print(line.split(':', 1)[1].strip()); break
 " "$f" 2>/dev/null) || true
-      echo "  [ship-integrity] ${_uslug:-$(basename "$f")}: step commits UNMEASURED (no project root) — not reverted" >&2
+      echo "  [ship-integrity] ${_uslug:-$(basename "$f")}: UNMEASURED — not reverted: $si_out" >&2
       continue
     fi
     if [[ $si_exit -ne 0 ]]; then

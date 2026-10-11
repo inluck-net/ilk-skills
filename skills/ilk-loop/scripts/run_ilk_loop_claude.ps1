@@ -1000,7 +1000,10 @@ function Test-ShipIntegrity {
 
   $shipIntegrityScript = Join-Path $SkillRoot "ilk-loop\scripts\ship_integrity.py"
   $violations = [System.Collections.ArrayList]::new()
-
+  $integrityRecords = [IO.Path]::GetTempFileName()
+  try {
+  $rows = @($LocalChecksRun | ForEach-Object { ConvertTo-Json -InputObject $_ -Depth 40 -Compress })
+  [IO.File]::WriteAllLines($integrityRecords, [string[]]$rows)
   Get-ChildItem $plansDir -Filter "*.md" -File | Where-Object { $_.Name -notlike "MASTER*" } | ForEach-Object {
     $lines = Get-Content $_.FullName -TotalCount 20 -ErrorAction SilentlyContinue
     # NOTE: `$lines -notmatch X` on an ARRAY returns the non-matching elements
@@ -1038,7 +1041,12 @@ function Test-ShipIntegrity {
     # as a violation. Only exit 1 == real violation; exit >=2 == tool error.
     if (Test-Path $shipIntegrityScript) {
       $gatePassedArg = if ($gateResult.all_passed) { 'true' } else { 'false' }
-      $siOut = & python $shipIntegrityScript --subplan $_.FullName --gate-passed $gatePassedArg 2>&1
+      $siArgs = @($shipIntegrityScript, '--subplan', $_.FullName, '--gate-passed', $gatePassedArg,
+        '--gate-results-file', $integrityRecords, '--slug', $slug)
+      # Frozen callers resolve their exact plan root in Python. Legacy callers
+      # supply the historical project root rather than the process cwd.
+      if (-not $env:ILK_ITER_CONTEXT) { $siArgs += @('--repo', $ProjectPath) }
+      $siOut = & python @siArgs 2>&1
       $siExit = $LASTEXITCODE
       if ($siExit -eq 1) {
         $reason = ($siOut | Where-Object { $_ -match "VIOLATION" }) -join "; "
@@ -1055,6 +1063,7 @@ function Test-ShipIntegrity {
       }
     }
   }
+  } finally { Remove-Item -LiteralPath $integrityRecords -Force -ErrorAction SilentlyContinue }
   # Return the array WITHOUT a leading comma: `,$x.ToArray()` wraps an EMPTY
   # result as a 1-element array (phantom Count=1). Caller wraps with @() instead.
   return $violations.ToArray()
