@@ -157,3 +157,32 @@ def test_rollback_refuses_corrupt_history_and_stale_bytes(tmp_path,monkeypatch):
     with pytest.raises(TransitionError,match='bytes changed'):
         append_findings(path,'diagnostic',reason='test race')
     assert 'diagnostic' not in path.read_text()
+
+
+def test_context_audit_requires_explained_owned_state(tmp_path,monkeypatch):
+    from plan_state import audit_context,journal_cursor
+    from iteration_context import plan_snapshot
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    path=plan(tmp_path)
+    context={'plans_dir':str(tmp_path),'plans':{path.name:plan_snapshot(path)},'state_journal_cursor':journal_cursor(tmp_path)}
+    transition(path,{'current_step':0},{'current_step':1},actor='driver',reason='green')
+    assert audit_context(context)['explained']
+    path.write_text(path.read_text().replace('current_step: 1','current_step: 3'))
+    assert not audit_context(context)['explained']
+    transition(path,{'current_step':3},{'current_step':4},actor='driver',reason='cannot launder worker bump')
+    result=audit_context(context)
+    assert not result['explained']
+    assert any('starts from unexplained' in row['reason'] for row in result['violations'])
+
+
+def test_audit_refuses_rewritten_prefix_and_pending_intent(tmp_path,monkeypatch):
+    from plan_state import audit_context,journal_cursor
+    from iteration_context import plan_snapshot
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    path=plan(tmp_path);log=tmp_path/'state-transitions.jsonl'
+    context={'plans_dir':str(tmp_path),'plans':{path.name:plan_snapshot(path)},'state_journal_cursor':journal_cursor(tmp_path)}
+    log.write_text(json.dumps({'id':'pending','path':str(path),'phase':'intent'})+'\n')
+    with pytest.raises(TransitionError,match='unclosed'):audit_context(context)
+    context['state_journal_cursor']=journal_cursor(tmp_path)
+    log.write_text('')
+    with pytest.raises(TransitionError,match='prefix'):audit_context(context)

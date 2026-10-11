@@ -17,15 +17,14 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: E2 mention-gate attribution gap: verify and replace
-failure-ID parsing from the displayed stdout tail with complete captured output;
-unknown capture coverage must not excuse failures. Add a focused regression with
-an undeclared failure before the retained tail. This change was announced but
-NOT implemented. Then continue C3/C4 caller migrations and the full checklist.
-C3 acceptance, journaled registry projection and real-provider continuation
-have candidate evidence, but are not production-wired. Latest code checkpoint
-is `0a7b7549`; see work log for actual results. Continuing in the same session after compression, per Chad; no more handover.
-Overall delivery estimate is 35% (judgment: candidates ahead of integration).
+Current next action: wire and verify D1 registry lifecycle/readers, then C3
+code-only runner acceptance/recovery and the remaining checklist. E2 display-tail
+false green is fixed; actual-base provenance still open. C4 now audits frozen
+owned state against the journal; legacy worker writes are observed, code-only
+writes enforced. Candidate APIs remain unactivated. Continue here per Chad:
+“no more handover, until the whole thing done”. Overall estimate 35% is a
+judgment against delivered/installed/measured scope, not a checkbox count.
+
 Old run `20261011-102057` timed out by itself. Old run `20261011-130246`
 was freshly observed at handoff with PID 1016, PGID 958, start Oct 11 13:02:46,
 and a sleep child; the pause flag remains. Watchdog PID 354 is no longer present;
@@ -592,3 +591,14 @@ No completion/ship/proof markers are inferred from this human tracker.
   existing _master_tampered flag. Relevant state/findings/gates-off checks:
   31 passed in 3.97s. No live plans changed. Foreign-plan inline production
   seam, remaining PS writer and explained state mutation audit still open.
+
+- C4 explained mutation audit: snapshots freeze all owned fields and a journal
+  cursor under the shared lock. Audit folds completed intent pairs, refuses
+  rewritten prefixes, pending/corrupt records and detects both unlogged state
+  and a driver transition starting from an unexplained worker change. Bash
+  close records the audit additively; code-only mode enforces, legacy worker
+  writes remain observations until migration. PowerShell's remaining direct
+  ship rollback now calls shared API. POSIX atomic plan/journal replacement
+  fsyncs directory; Windows directory durability remains an explicit adapter
+  limitation. State/context/snapshot checks: 32 passed in 5.08s; Bash and
+  portable PowerShell syntax PASS. No production activation or I3 completion.

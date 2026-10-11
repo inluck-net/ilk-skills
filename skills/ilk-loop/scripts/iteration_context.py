@@ -80,7 +80,7 @@ def plan_snapshot(path: Path) -> dict:
     immutable=surface(text,master=path.name.startswith('MASTER-'))
     return dict(path=str(path),slug=strip_date_prefix(path.stem),
                 status=fm.get('status'),step=fm.get('current_step'),repo=fm.get('repo'),estimated_steps=fm.get('estimated_steps'),
-                owned_state={key:fm.get(key) for key in ('status','hold','yield','parked_at','parked_reason')},
+                owned_state={key:fm.get(key) for key in ('status','current_step','last_updated','auto_block_fails','pre_park_status','hold','yield','parked_at','parked_reason')},
                 fingerprint=hashlib.sha256(immutable.encode()).hexdigest())
 
 
@@ -139,20 +139,26 @@ def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
         master=dispatch.get('master_path')
         if master and Path(master).resolve(strict=True).parent!=Path(plans_dir):
             raise ValueError('master belongs to another plans root')
-    snapshots={}
-    master_snapshot=None
-    if dispatch:
-        from plan_status import extract_subplan_files
-        master_path=dispatch.get('master_path')
-        if master_path:
-            mp=Path(master_path)
-            master_snapshot=plan_snapshot(mp)
-            for name in extract_subplan_files(mp.read_text(encoding='utf-8-sig')):
-                path=(Path(plans_dir)/name).resolve()
-                if path.parent!=Path(plans_dir): raise ValueError('registered path escapes plans root')
-                snapshots[name]=plan_snapshot(path)
-        else:
-            snapshots[selected.name]=plan_snapshot(selected)
+    from plan_state import _lock,journal_cursor,_recover
+    with _lock(Path(plans_dir)/'.state-transitions.lock'):
+        snapshots={}
+        master_snapshot=None
+        if dispatch:
+            from plan_status import extract_subplan_files
+            master_path=dispatch.get('master_path')
+            if master_path:
+                mp=Path(master_path)
+                master_snapshot=plan_snapshot(mp)
+                for name in extract_subplan_files(mp.read_text(encoding='utf-8-sig')):
+                    path=(Path(plans_dir)/name).resolve()
+                    if path.parent!=Path(plans_dir): raise ValueError('registered path escapes plans root')
+                    snapshots[name]=plan_snapshot(path)
+            else:
+                snapshots[selected.name]=plan_snapshot(selected)
+        for snapshot in list(snapshots.values())+([master_snapshot] if master_snapshot else []):
+            snapshot_path=Path(snapshot['path'])
+            if snapshot_path.exists():_recover(Path(plans_dir)/'state-transitions.jsonl',snapshot_path,snapshot_path.read_bytes())
+        state_journal_cursor=journal_cursor(plans_dir)
     runtime=Path(runtime_dir).resolve()
     recovery_identity={'master':(dispatch or {}).get('master_path'),
                        'base':(dispatch or {}).get('batch_base_sha'),
@@ -175,7 +181,7 @@ def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
                 base_tree=git_value(Path(exec_tree),'HEAD^{tree}'),
                 entry_dirty=bool(subprocess.check_output(['git','-C',exec_tree,'status','--porcelain'],text=True)) if git_value(Path(exec_tree),'HEAD') else None,
                 dispatch=dispatch or None, plans=snapshots, master_snapshot=master_snapshot,
-                kernel_list=kernel_list)
+                kernel_list=kernel_list,state_journal_cursor=state_journal_cursor)
 
 
 def write_context(path: Path, context: dict):

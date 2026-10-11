@@ -42,10 +42,67 @@ def _digest(content):
     return hashlib.sha256(content).hexdigest()
 
 
+def journal_cursor(plans):
+    log=Path(plans)/'state-transitions.jsonl'
+    raw=log.read_bytes() if log.exists() else b''
+    return {'bytes':len(raw),'sha256':_digest(raw)}
+
+
+def audit_context(context):
+    """Explain owned state from the frozen snapshot plus completed transitions."""
+    plans=Path(context['plans_dir']);cursor=context.get('state_journal_cursor')
+    if not isinstance(cursor,dict):raise TransitionError('state journal cursor absent')
+    snapshots=list(context.get('plans',{}).values())
+    if context.get('master_snapshot'):snapshots.append(context['master_snapshot'])
+    with _lock(plans/'.state-transitions.lock'):
+        log=plans/'state-transitions.jsonl';raw=log.read_bytes() if log.exists() else b''
+        length=cursor.get('bytes')
+        if isinstance(length,bool) or not isinstance(length,int) or length<0 or length>len(raw) or _digest(raw[:length])!=cursor.get('sha256'):
+            raise TransitionError('state journal prefix changed')
+        expected={row['path']:dict(row['owned_state']) for row in snapshots}
+        issues=[];pending={}
+        for line in raw[length:].splitlines():
+            try:row=json.loads(line)
+            except ValueError:raise TransitionError('state journal is corrupt')
+            if not isinstance(row,dict) or row.get('phase') not in {'intent','applied','recovered-applied','recovered-not-applied'}:
+                raise TransitionError('state journal record invalid')
+            ident=row.get('id');path=row.get('path')
+            if row['phase']=='intent':
+                if ident in pending:raise TransitionError('duplicate state intent')
+                pending[ident]=row;continue
+            original=pending.pop(ident,None)
+            if original is None or any(row.get(key)!=original.get(key) for key in ('path','before_sha256','after_sha256','from_','to')):
+                raise TransitionError('state completion has no matching intent')
+            if row['phase']=='recovered-not-applied' or path not in expected:continue
+            state=expected[path]
+            for key,value in row.get('from_',{}).items():
+                want=None if value is None else str(value)
+                if key in state and state[key]!=want:
+                    issues.append({'path':path,'field':key,'reason':'transition starts from unexplained state'})
+            for key,value in row.get('to',{}).items():
+                if key in state:
+                    state[key]=None if value is None else parse_frontmatter('---\n'+key+': '+str(value)+'\n---\n').get(key)
+        if pending:raise TransitionError('state journal contains an unclosed transition')
+        for path,state in expected.items():
+            observed=parse_frontmatter(Path(path).read_text(encoding='utf-8-sig'))
+            for key,want in state.items():
+                if observed.get(key)!=want:issues.append({'path':path,'field':key,'reason':'state change not explained by journal'})
+        return {'explained':not issues,'violations':issues,'observed_plans':len(expected)}
+
+
 def _append(log,row):
+    existed=log.exists()
     with log.open('a',encoding='utf-8') as stream:
         stream.write(json.dumps(row,separators=(',',':'))+'\n')
         stream.flush();os.fsync(stream.fileno())
+    if not existed:_sync_parent(log)
+
+
+def _sync_parent(path):
+    if os.name=='nt':return # Windows has no portable directory fsync adapter.
+    descriptor=os.open(str(path.parent),os.O_RDONLY)
+    try:os.fsync(descriptor)
+    finally:os.close(descriptor)
 
 
 def _recover(log,path,content):
@@ -153,7 +210,7 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
         with tempfile.NamedTemporaryFile(mode='wb',dir=path.parent,delete=False) as stream:
             temporary=Path(stream.name);stream.write(new);stream.flush();os.fsync(stream.fileno())
         try:
-            temporary.chmod(path.stat().st_mode & 0o777);os.replace(temporary,path)
+            temporary.chmod(path.stat().st_mode & 0o777);os.replace(temporary,path);_sync_parent(path)
         finally: temporary.unlink(missing_ok=True)
         _append(log,dict(row,phase='applied'))
         return True
@@ -215,7 +272,9 @@ def resolve_plan(plans, slug):
 def main():
     import argparse
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=['finding','rollback','status','resolve'])
+    parser.add_argument('action',choices=['finding','rollback','status','resolve','audit'])
+    parser.add_argument('--context',type=Path)
+    parser.add_argument('--enforce',action='store_true')
     parser.add_argument('--path',type=Path)
     parser.add_argument('--plans',type=Path)
     parser.add_argument('--slug')
@@ -225,6 +284,10 @@ def main():
     parser.add_argument('--history',type=Path)
     args=parser.parse_args()
     try:
+        if args.action=='audit':
+            from iteration_context import read_context
+            result=audit_context(read_context(args.context));print(json.dumps(result))
+            return 3 if args.enforce and not result['explained'] else 0
         path=args.path or resolve_plan(args.plans,args.slug)
         if args.action=='resolve':print(path)
         elif args.action=='status':print(parse_frontmatter(path.read_text(encoding='utf-8-sig')).get('status',''))
@@ -270,7 +333,7 @@ def reconcile_registry(path: Path, *, expected_digest: str) -> bool:
         _append(log,row)
         with tempfile.NamedTemporaryFile(mode='wb',dir=path.parent,delete=False) as stream:
             temporary=Path(stream.name);stream.write(new);stream.flush();os.fsync(stream.fileno())
-        try:temporary.chmod(path.stat().st_mode & 0o777);os.replace(temporary,path)
+        try:temporary.chmod(path.stat().st_mode & 0o777);os.replace(temporary,path);_sync_parent(path)
         finally:temporary.unlink(missing_ok=True)
         _append(log,dict(row,phase='applied'))
         return True

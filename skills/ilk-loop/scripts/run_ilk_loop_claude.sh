@@ -7767,6 +7767,14 @@ append_revert_row(
     if [[ -n "$_si_stderr" ]]; then
       echo "$_si_stderr" >&2
     fi
+    local _state_audit_json="" _state_audit_rc=0
+    local _state_audit_args=(audit --context "$ILK_ITER_CONTEXT")
+    [[ "${ILK_WORKER_MODE:-}" == "code-only" ]] && _state_audit_args+=(--enforce)
+    _state_audit_json=$(python3 "${_ILK_SCRIPT_DIR}/plan_state.py" "${_state_audit_args[@]}") || _state_audit_rc=$?
+    if [[ "$_state_audit_rc" -ne 0 ]]; then
+      _master_tampered=1
+      echo "  ! [state-audit] unexplained or unverifiable state; refusing integrity proof" >&2
+    fi
     # A worker edit to master state or to gate declarations (restored right
     # after the agent returned) is the same class of violation.  No park:
     # the restore already put the fields back as they were.
@@ -7948,6 +7956,7 @@ if last:
     _RESOLVED_MODEL="${RESOLVED_MODEL:-}" \
     MAX_BUDGET_USD="$MAX_BUDGET_USD" \
     _WORKER_COST_JSON="$_worker_cost_json" \
+    _STATE_AUDIT_JSON="$_state_audit_json" \
     _DISPATCH_IDENTITY_JSON="${_dispatch_identity_json:-}" \
     _DISPATCH_STEP="${PRE_ITER_TARGET#* }" \
     RUN_ID="$RUN_ID" \
@@ -7983,6 +7992,7 @@ d = {
   'record_phase': 'close',
   'merge_outcome': os.environ['_MERGE_OUTCOME'],
   'execution': json.loads(os.environ.get('_EXECUTION_CAPTURE_JSON') or '{}'),
+  'state_audit': json.loads(os.environ.get('_STATE_AUDIT_JSON') or '{}'),
   'exit_code': int(os.environ['_EXIT']),
   'new_commits_total': int(os.environ['_NEW_TOTAL']),
 }

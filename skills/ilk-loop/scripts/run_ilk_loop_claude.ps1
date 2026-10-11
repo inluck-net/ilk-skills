@@ -2613,11 +2613,11 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
   if ($shipViolations.Count -gt 0) {
     foreach ($v in $shipViolations) {
       Write-Host "  [ship-integrity VIOLATION] $($v.Slug): $($v.Reason)" -ForegroundColor Red
-      # Revert the sub-plan status to in-progress.
-      $content = Get-Content $v.Path -Raw -Encoding utf8 -ErrorAction SilentlyContinue
-      if ($content) {
-        $content = $content -replace '(?m)^status:\s*shipped', 'status: in-progress'
-        Set-Content -Path $v.Path -Value $content -Encoding utf8
+      $stateScript = Join-Path (Split-Path $PSCommandPath -Parent) "plan_state.py"
+      & python $stateScript rollback --path $v.Path --reason "PowerShell ship integrity refusal"
+      if ($LASTEXITCODE -ne 0) {
+        Write-Host "  [ship-integrity] journaled rollback refused; state remains unverified" -ForegroundColor Red
+      } else {
         Write-Host "  [ship-integrity] reverted $($v.Slug) to in-progress" -ForegroundColor Yellow
       }
     }
