@@ -71,7 +71,7 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str) ->
     Human holds cannot be lifted or progressed by driver calls. The worker
     session flag refuses mutation regardless of the actor it supplies.
     """
-    if os.environ.get('ILK_WORKER_SESSION')=='1' or actor=='worker':
+    if os.environ.get('ILK_WORKER_SESSION','').strip() or actor=='worker':
         raise TransitionError('workers cannot mutate plan state')
     if not actor or not reason or not from_ or not to:
         raise TransitionError('expected state, requested state, actor and reason required')
@@ -95,7 +95,7 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str) ->
         text=content.decode('utf-8-sig');state=parse_frontmatter(text)
         if any(state.get(key)!=str(value) if value is not None else key in state for key,value in from_.items()):
             raise TransitionError('state changed since dispatch; compare-and-set refused')
-        if state.get('status') in {'draft','parked','blocked'} and actor!='human':
+        if (state.get('status') in {'draft','parked','blocked'} or state.get('hold')=='human') and actor!='human':
             raise TransitionError('human hold cannot be changed by driver')
         if not text.startswith('---') or (end:=text.find('\n---',3))<0:
             raise TransitionError('frontmatter missing')

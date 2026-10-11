@@ -251,18 +251,17 @@ def find_subplan(plans_dir: Path, slug: str) -> Path:
 
 def _write_status_shipped(path: Path) -> bool:
     """Rewrite only the front-matter ``status:`` line. Idempotent."""
-    text, fm = _read_subplan(path)
+    from plan_state import transition, TransitionError
+    _, fm = _read_subplan(path)
     if fm.get("status", "").strip().lower() == "shipped":
         return False
-    m = _FM_RE.match(text.lstrip("﻿"))
-    if not m:
-        raise ShipTransitionError(f"{path.name} has no front-matter block")
-    head, body = text[: m.end()], text[m.end():]
-    new_head, n = _STATUS_LINE_RE.subn(r"\1 shipped", head, count=1)
-    if n == 0:
+    if "status" not in fm:
         raise ShipTransitionError(f"{path.name} front-matter has no status: line")
-    path.write_text(new_head + body, encoding="utf-8")
-    return True
+    try:
+        return transition(path, {"status":fm["status"]}, {"status":"shipped"},
+                          actor="driver",reason="durable ship marker commit")
+    except TransitionError as exc:
+        raise ShipTransitionError(str(exc)) from exc
 
 
 # ── the intent marker ────────────────────────────────────────────────────────
@@ -531,6 +530,9 @@ def ship(
     _check_iteration_subplan(slug)  # refuses before anything is written
     _check_batch_verification(plans_dir, slug)  # refuses before anything is written
     subplan = find_subplan(plans_dir, slug)  # refuses before anything is written
+    _, state = _read_subplan(subplan)
+    if state.get("status") in {"draft","blocked","parked"} or state.get("hold")=="human":
+        raise ShipTransitionError("human hold prevents ship before marker commit")
     writer = _write_status or _write_status_shipped
 
     write_intent(plans_dir, slug, repo)

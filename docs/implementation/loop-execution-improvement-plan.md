@@ -369,3 +369,13 @@ No completion/ship/proof markers are inferred from this human tracker.
   retraction/hold/promotion/red-pointer/API callers: 42 passed in 0.94s.
   Parking stamps, ship transitions, integrity restoration, quarantine and
   PowerShell writers remain open; API existence is not whole I3 enforcement.
+
+- Ship state migration: durable ship-marker projection now writes status via
+  CAS, wrapping errors in the existing ShipTransitionError contract. Held plans
+  refuse before intent/marker creation; explicit hold=human is respected even
+  on runnable status. Ship/driver/API callers: 47 passed in 4.60s, two existing
+  integration placeholders skipped (not evidence). Real detached entry: seven
+  caller cases passed within the combined follow-up (18 total passes before
+  correcting a new held-ship fixture's positional arguments). Corrected API/
+  held-ship check: 12 passed in 0.20s; HEAD and ship intent unchanged on hold.
+  No ownership-completion or activated-driver-only-gates claim.

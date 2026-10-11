@@ -86,3 +86,24 @@ def test_concurrent_driver_calls_cannot_both_advance(tmp_path,monkeypatch):
         results=list(pool.map(lambda _:attempt(),range(2)))
     assert sorted(results)==[False,True]
     assert 'current_step: 1' in path.read_text()
+
+
+def test_human_hold_field_survives_runnable_status(tmp_path,monkeypatch):
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    path=plan(tmp_path,'active');path.write_text(path.read_text().replace('status: active','status: active\nhold: human'))
+    with pytest.raises(TransitionError,match='human hold'):
+        transition(path,{'current_step':0},{'current_step':1},actor='driver',reason='pass')
+
+
+def test_held_ship_refuses_before_creating_marker(tmp_path,monkeypatch):
+    import test_ship_transition as fixtures
+    from ship_transition import ship,ShipTransitionError
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    monkeypatch.delenv('ILK_ITERATION_SUBPLAN',raising=False)
+    repo=fixtures._make_repo(tmp_path)
+    plans=fixtures._make_plans_dir(tmp_path,status='blocked')
+    before=fixtures._git(repo,'rev-parse','HEAD')
+    with pytest.raises(ShipTransitionError,match='human hold'):
+        ship(plans_dir=plans,slug='conflict-batch-verify',repo=repo)
+    assert fixtures._git(repo,'rev-parse','HEAD')==before
+    assert not (plans/'.ship-intent.json').exists()
