@@ -637,6 +637,22 @@ function Confirm-LocalCheckAttempts {
   } finally { Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
+function Update-LocalCheckHistory {
+  param([object[]]$Records)
+  $path = [IO.Path]::GetTempFileName()
+  try {
+    $rows = @($Records | ForEach-Object { ConvertTo-Json -InputObject $_ -Depth 40 -Compress })
+    [IO.File]::WriteAllLines($path, [string[]]$rows)
+    $payload = & python (Join-Path $SkillRoot 'ilk-loop/scripts/check_verdict_history.py') $path | Out-String
+    if ($LASTEXITCODE -ne 0) { throw 'check history unavailable' }
+    $decision = $payload | ConvertFrom-Json -ErrorAction Stop
+    $updated = @(Get-Content -LiteralPath $path | ForEach-Object { $_ | ConvertFrom-Json })
+    return [PSCustomObject]@{ Decision=$decision; Records=$updated }
+  } catch {
+    return [PSCustomObject]@{ Decision=[PSCustomObject]@{blocked=$true;inconclusive=$true}; Records=$Records }
+  } finally { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+}
+
 function Get-MeasuredStrikeTargets {
   param([object[]]$Records)
   $path = [IO.Path]::GetTempFileName()
@@ -2568,6 +2584,11 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
         $confirmedChecks = Confirm-LocalCheckAttempts -First $localChecksRun -Rerun $rerunResults
         $confirmResult = $confirmedChecks.Decision
         $localChecksRun = $confirmedChecks.Records
+        if ($env:ILK_ITER_CONTEXT) {
+          $historyResult = Update-LocalCheckHistory -Records $localChecksRun
+          $localChecksRun = $historyResult.Records
+          if ($historyResult.Decision.blocked) { $confirmResult = $historyResult.Decision }
+        }
 
         if ($confirmResult -and -not $confirmResult.blocked) {
           # Transient cleared on re-run — NOT a stop
@@ -2631,6 +2652,18 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
           }
         }
       }
+    }
+  }
+
+  # Record green runs too so the last-10 window ages previous flaky results.
+  if ($env:ILK_ITER_CONTEXT -and $localChecksRun.Count -gt 0) {
+    $historyResult = Update-LocalCheckHistory -Records $localChecksRun
+    $localChecksRun = $historyResult.Records
+    if ($historyResult.Decision.blocked) {
+      $stopReason = 'local_checks_inconclusive'
+      $iterStopReason = $stopReason
+      $localChecksBlocked = $true
+      Write-Host '[local_checks] flaky escalation or unavailable check history; no passing proof' -ForegroundColor Yellow
     }
   }
 

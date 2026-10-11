@@ -2007,3 +2007,31 @@ anchors at the time of inspection and can move as integration changes code.
 - Candidate only; installed source/current remains 95be4d75. Next: record
   rolling flaky history across green as well as mixed runs, then complete
   actual-base policy and remaining ownership/platform adapters.
+
+### Rolling flaky history on both caller adapters
+
+- Added a private rolling diagnostic index at runtime/launcher/
+  local-check-verdict-history.json. It stores each check's last ten execution
+  verdicts by scoped command/files/partition and plan identity. Each current
+  gate still runs; no cached result authorizes acceptance. Full attempts/output
+  remain in existing records. Malformed history refuses instead of resetting.
+- Implemented Chad's existing 2026-09-28 policy: second flaky in ten blocks
+  legacy acceptance without converting flaky to red or granting a strike.
+  Judgment basis is tolerance for an isolated transient but refusal on
+  recurrence; repeated healthy noise or defects escaping the window falsify
+  its suitability. Owned acceptance remains stricter and refuses any same-
+  input mixed result. Green executions age the rolling window.
+- Both Bash and PowerShell call the shared helper after confirmation and
+  before mutation/acceptance; they also record green executions. Duplicate
+  invocation is idempotent, including an already escalated row. A changed
+  same-run/iteration observation refuses. Unavailable history blocks positive
+  proof. Original deadline bounds lock/writes; legacy adapters without that
+  deadline try the lock once, refusing contention rather than waiting forever.
+- Six policy/caller checks passed in 1.96s within a 15-check focused selection
+  including attribution and portable PS recovery. Added a real lock contention
+  check; policy/caller selection now 9 passed in 1.04s. Two earlier Bash fixture
+  failures were an extraction boundary retaining the new block's final fi;
+  the actual runner parsed, and fixture now extracts the original complete
+  enclosing control block. No test count is a full suite claim.
+- Pending: archived production callers against committed candidate, safe
+  activation and remaining actual-base/reader/platform/re-entry requirements.

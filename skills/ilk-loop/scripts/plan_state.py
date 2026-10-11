@@ -22,10 +22,10 @@ class TransitionError(RuntimeError):
 
 
 @contextmanager
-def _lock(path, *, deadline=None, guard=None):
+def _lock(path, *, deadline=None, guard=None, non_blocking=False):
     if guard:guard()
     with path.open('a+b') as stream:
-        if deadline is not None or guard is not None:
+        if deadline is not None or guard is not None or non_blocking:
             import threading
             from iteration_clock import monotonic
             while True:
@@ -44,6 +44,7 @@ def _lock(path, *, deadline=None, guard=None):
                 except OSError as error:
                     import errno
                     if error.errno not in (errno.EACCES,errno.EAGAIN):raise
+                    if non_blocking:raise TransitionError('state lock busy; observation unavailable') from error
                     # 20ms readiness judgment matches owned child cleanup;
                     # sustained CPU or slow valid release falsifies it.
                     threading.Event().wait(.02 if deadline is None else min(.02,max(deadline-monotonic(),0)))

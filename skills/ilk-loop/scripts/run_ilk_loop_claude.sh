@@ -7362,6 +7362,13 @@ print(json.dumps(d))
           # Parse confirm result
           local confirmed_blocked="true"
           local confirm_inconclusive="false"
+          if [[ -n "${ILK_ITER_CONTEXT:-}" ]]; then
+            local _check_history_out=""
+            _check_history_out=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/check_verdict_history.py" "$local_checks_results" 2>/dev/null) || _check_history_out=""
+            if ! python3 -c 'import json,sys;sys.exit(1 if json.loads(sys.argv[1]).get("blocked",True) else 0)' "$_check_history_out" 2>/dev/null; then
+              confirm_out='{"blocked":true,"inconclusive":true}'
+            fi
+          fi
           if [[ -n "$confirm_out" ]]; then
             confirm_inconclusive=$(python3 -c 'import json,sys;print("true" if json.loads(sys.argv[1]).get("inconclusive") else "false")' "$confirm_out" 2>/dev/null || echo "true")
             confirmed_blocked=$(python3 -c "
@@ -7736,6 +7743,17 @@ for line in sys.stdin:
             echo "  ! [local_checks] ${unattr_count} gate result(s) carried no sub-plan identity — harness defect, those gates verified nothing. See Contract 2b invariant 6." >&2
           fi
         fi
+      fi
+    fi
+
+    # Include green executions in the diagnostic 10-run window. A repeated
+    # call for a confirmed gate is idempotent; old green never supplies proof.
+    if [[ -n "${ILK_ITER_CONTEXT:-}" && -n "$local_checks_results" && -s "$local_checks_results" ]]; then
+      local _rolling_check_result=""
+      _rolling_check_result=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/check_verdict_history.py" "$local_checks_results" 2>/dev/null) || _rolling_check_result=""
+      if ! python3 -c 'import json,sys;sys.exit(1 if json.loads(sys.argv[1]).get("blocked",True) else 0)' "$_rolling_check_result" 2>/dev/null; then
+        iter_stop_reason="local_checks_inconclusive"
+        echo "Loop stopped: flaky escalation or unavailable check history; no strike or passing proof" >&2
       fi
     fi
 

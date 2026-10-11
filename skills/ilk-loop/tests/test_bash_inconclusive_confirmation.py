@@ -13,7 +13,7 @@ def test_unmeasured_gate_never_enters_red_actions_or_green_ship(tmp_path, initia
     root = Path(__file__).resolve().parents[3]
     source = (root/'skills/ilk-loop/scripts/run_ilk_loop_claude.sh').read_text()
     start = source.index('      local blocking_checks_script=')
-    end = source.index('    # Evaluate gate_outcome NOW', start)
+    end = source.index('    # Include green executions', start)
     # The last fi belongs to the enclosing RUN_LOCAL_CHECKS conditional.
     control = source[start:end].rsplit('    fi', 1)[0]
     shipping = re.search(r'^post_iteration_ship\(\) \{.*?^\}', source, re.M | re.S).group()
