@@ -1,5 +1,14 @@
 # Loop state and ownership: design
 
+**Performance extension (2026-10-11):**
+[Loop execution performance](loop-execution-performance-design.md) specifies
+model-specific thinking/turn measurements, additive JSONL fields, and compact
+worker dispatch. I1's canonical context and I2's unified record are not built
+yet; the first increment does not create another context or proof record.
+Gate-outcome reuse is removed, stall handling is observation-only, and later
+gate ownership/drain activation have explicit dependencies. Existing ownership
+and verdict invariants still apply; these are targets, not shipped behavior.
+
 **Status:** accepted 2026-09-28 (Chad). This is the target design, and the
 code does not meet it yet. Section 7 lists every current divergence, and
 section 8 gives the order in which to remove them. When this document and
@@ -136,10 +145,14 @@ artifact, so the record is written there first, additively.
   loop on the host.
 - This relaxes gh-resolve's "no merge while any loop runs the clone" rule.
   **It is built only after gh-resolve agrees** (standing agreement).
-- Workers keep reading skills from the clone when a session starts. A change
-  between iterations is intended (it is the deploy). A change during an
-  iteration is caught by the fingerprints in the open record, which end the
-  iteration.
+- **Revised target, 2026-10-11:** workers read toolkit skills and commands from
+  the same pinned release root as their driver, with hooks, settings and
+  plan-invoked scripts included in the pinned inputs. Mutable worker-home
+  links/settings must not introduce version skew. A drain-after-step exit and
+  scheduler relaunch is the activation candidate; it is unbuilt and requires
+  consumer mappings before adoption. Otherwise use normal exit and a new
+  launch. Fingerprints remain a backstop for plan changes, not a mechanism
+  for hot-upgrading toolkit code.
 
 **gh-resolve's conditions** (gh-resolve-59, 2026-09-28; agreed, and binding on
 the implementation):
@@ -260,8 +273,11 @@ the implementation):
      relaunches an operator stop; the scheduler's data-home paths; the
      per-dispatch master.
 
-   Each item gets a targeted test that fails without it, and one full suite
-   runs before the commit.
+   Each item gets a targeted test that fails without it. The original
+   2026-09-28 order also required a full suite before commit; the current
+   2026-10-11 operator preference supersedes that default. Use focused
+   component/caller/invariant and wiring checks; explain a concrete need for
+   broader evidence before changing that approach.
 2. **Confirm smooth looping** on a consumer batch, then on a small
    ilk-skills batch.
 3. **The remaining design, as small masters, in dependency order:**

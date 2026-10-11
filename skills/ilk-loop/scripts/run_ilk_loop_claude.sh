@@ -5624,6 +5624,42 @@ Rules:
     "- Do not start the next step in this turn. Never write the sub-plan's status: field."
 }
 
+# Compact observations from the already selected target; no new state owner.
+build_worker_dispatch_brief() {
+  local subplan="$1" step="$2" plans_dir="$3"
+  python3 - "$subplan" "$step" "$plans_dir" "$PROJECT_PATH" "$_SKILL_ROOT" "${ILK_MASTER:-}" <<'PYBRIEF'
+import re, sys
+from pathlib import Path
+subplan, step, plans, project, skills, master_name = sys.argv[1:]
+path = Path(subplan)
+text = path.read_text(encoding='utf-8-sig')
+# Prefer the launcher's explicit master pin. Otherwise the selected subplan's
+# exact MASTER link is descriptive context, never scheduler/gate authority.
+if not master_name:
+    links = set(re.findall(r'\]\(\./(MASTER-[^/)]+\.md)\)', text))
+    master_name = next(iter(links)) if len(links) == 1 else ''
+master = Path(plans) / master_name if master_name else None
+base = 'unknown'
+if master and master.is_file():
+    fm = master.read_text(encoding='utf-8-sig').split('---', 2)
+    match = re.search(r'^base_sha:\s*(\S+)', fm[1] if len(fm) > 2 else '', re.M)
+    if match:
+        base = match[1]
+else:
+    master = None
+print('DISPATCH CONTEXT (driver-selected work; keep required instruction reads):')
+print(f'Project: {project}\nPlans: {plans}')
+print(f'Pinned loop instructions: {skills}/ilk-loop/SKILL.md')
+print(f'Master: {master if master else "unknown; use the selected subplan link"}')
+print(f'Subplan: {path}\nSelected step: {step}')
+print(f'Frozen batch base (not iteration HEAD): {base}')
+print(f'Gate entry point: {skills}/ilk-loop/scripts/run_local_checks.py --print-step-gate "{path}" {step}')
+print('Read the exact instructions/master/subplan above; use existing fixtures and repository guidance.')
+print('Start at this step. Do not scan all plans or rediscover the skill root; group independent reads when supported.')
+print('These paths are context, not gate success or permission to change driver-owned proof/state.')
+PYBRIEF
+}
+
 # ----- Main ------------------------------------------------------------------
 
 main() {
@@ -6265,7 +6301,7 @@ ${iter_prompt}"
       iter_prompt="OPERATOR INTERJECTIONS (honor before continuing the plan):
 ${STEER_INTERJECTION_TEXT}
 
-${PROMPT}"
+${iter_prompt}"
       echo "[steer] interjection injected (${#STEER_INTERJECTION_TEXT} chars)"
     fi
 
@@ -6340,8 +6376,15 @@ ${iter_prompt}"
       _wgn_plans_dir=$(get_plans_dir 2>/dev/null) || _wgn_plans_dir=""
       if [[ -n "$_wgn_plans_dir" ]]; then
         local _wgn_subplan
-        _wgn_subplan=$(find "$_wgn_plans_dir" -maxdepth 1 -name "*-${_wgn_slug}.md" 2>/dev/null | head -1)
+        _wgn_subplan=$(find_subplan_file_by_slug "$_wgn_plans_dir" "$_wgn_slug") || _wgn_subplan=""
         if [[ -n "$_wgn_subplan" ]]; then
+          local _dispatch_brief=""
+          _dispatch_brief=$(build_worker_dispatch_brief "$_wgn_subplan" "$_wgn_step" "$_wgn_plans_dir" 2>/dev/null) || true
+          if [[ -n "$_dispatch_brief" ]]; then
+            iter_prompt="${_dispatch_brief}
+
+${iter_prompt}"
+          fi
           local _wgn_gate_cmds
           _wgn_gate_cmds=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_local_checks.py" \
             --print-step-gate "$_wgn_subplan" "$_wgn_step" 2>/dev/null) || true
@@ -7258,10 +7301,15 @@ for line in sys.stdin:
     except json.JSONDecodeError:
         continue
     cmd = rec.get('command', '')
-    tail = rec.get('stderr_tail', '')
     print(f'Command: {cmd}')
-    if tail:
-        print(f'Tail: {tail}')
+    for channel in ('stdout', 'stderr'):
+        tail = rec.get(channel + '_tail', '')
+        if tail:
+            print(f'{channel}: {tail}')
+    for channel in ('stdout', 'stderr'):
+        output_path = rec.get(channel + '_path', '')
+        if output_path:
+            print(f'{channel} complete output: {output_path}')
     print()
 " < "$local_checks_results" > "$_gate_red_file" 2>/dev/null || true
                 fi
@@ -7371,10 +7419,16 @@ print(json.dumps({'slug': slug, 'violation': f'gate_isolation_restore_failed: {e
     local ts
     ts=$(date +%Y-%m-%dT%H:%M:%S%z)
 
+    local _worker_cost_json=""
+    local _worker_cost_report="${_SKILL_ROOT}/../tools/loop-performance/report.py"
+    if [[ -f "${iter_log}.jsonl" && -f "$_worker_cost_report" ]]; then
+      _worker_cost_json=$(python3 "$_worker_cost_report" "${iter_log}.jsonl" 2>/dev/null) || _worker_cost_json=""
+    fi
     PROJECT_PATH="$PROJECT_PATH" \
     MODEL="$MODEL" \
     _RESOLVED_MODEL="${RESOLVED_MODEL:-}" \
     MAX_BUDGET_USD="$MAX_BUDGET_USD" \
+    _WORKER_COST_JSON="$_worker_cost_json" \
     RUN_ID="$RUN_ID" \
     _ITER="$i" \
     _TS="$ts" \
@@ -7404,6 +7458,12 @@ d = {
   'exit_code': int(os.environ['_EXIT']),
   'new_commits_total': int(os.environ['_NEW_TOTAL']),
 }
+try:
+  observed = json.loads(os.environ.get('_WORKER_COST_JSON', '') or '[]')
+  if observed:
+    d['worker_cost_observation'] = observed[0]
+except (ValueError, TypeError, IndexError):
+  pass
 nc = os.environ.get('_NEW_COMMITS_JSON', '')
 if nc and nc != '{}':
   d['new_commits'] = json.loads(nc)

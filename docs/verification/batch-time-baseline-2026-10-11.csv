@@ -1,0 +1,9 @@
+repository,batch_id,batch_name,completed_launches,total_elapsed_minutes,final_verifier_minutes
+ilk-skills,2026-10-10a,Pipeline waits,1,75.4,27.3
+ilk-skills,2026-10-10b,Missing baseline,3,206.7,150.0
+ilk-skills,2026-10-10c,Verify fits its gate,1,420.2,83.9
+ilk-skills,2026-10-10d,Resolver issue planning,1,173.7,20.9
+gh-resolve,2026-10-09d,Green base,8,318.1,81.3
+gh-resolve,2026-10-10a,Pin correction,4,162.5,32.8
+gh-resolve,2026-10-10c,Timeline / parallel runs,2,445.9,0.0
+gh-resolve,2026-10-10b,Production contracts,7,418.9,83.9

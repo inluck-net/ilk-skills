@@ -1,5 +1,16 @@
 # Batch verification: smooth, fast, and unexcusable
 
+**Current operator preference (2026-10-11):** final verification is opt-in;
+omit its subplan by default while retaining focused step/caller checks.
+Historical mandatory-verifier assumptions below do not override that choice.
+The [execution performance design](../architecture/loop-execution-performance-design.md)
+addresses slow workers, duplicate checks, and recovery independently of batch
+plan contents. Its revised priority is model-specific thinking/turn
+measurement and a compact brief, not gate-outcome reuse or stall termination.
+Its [measured baseline](../verification/batch-time-baseline-2026-10-11.md)
+includes substantial cost in runs with no final verifier; mixed-model batch
+totals are descriptive and cannot substitute for paired per-step comparisons.
+
 **Standing goal (operator, 2026-09-24).** The batch-verification sub-plan that
 ends every master must be **smooth and fast on every project**: it does not get
 stuck. It must also be **unexcusable**: the batch it judges cannot talk its way

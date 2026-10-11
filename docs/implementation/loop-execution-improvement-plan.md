@@ -245,3 +245,29 @@ No completion/ship/proof markers are inferred from this human tracker.
   existing ledger. Preserve internal driver gate/ship evaluation; provisional
   rows must not count as external ship proof. Reader and production-entry
   checks are required before enabling the contract.
+
+- B2 close projection: provisional ledger rows are hidden from external
+  readers; only the current driver-check scope sees them. Closed rows are
+  projected idempotently from existing JSONL after integrity/landing, and
+  unlanded/integrity-red/non-pass rows cannot prove a ship. 24 focused
+  projection/entry/ledger/no-op checks passed in 15.20s; 17 real-entry and
+  interrupted-record checks passed in 34.20s. Worker entry receives no
+  driver-check authority. PowerShell parser/function probe still passes.
+- B3 diagnostic continuity: canonical recovery paths preserve existing retry
+  count/IDs and prior red-output links across launches of the same frozen
+  batch/plan; no green proof is carried. Also fixed the retry-count reader's
+  confirmed unconditional return. Corrupt persistent counts stop recovery
+  rather than resetting its allowance. Interrupted transcript salvage stores
+  observed session/model, completed assistant text, tool-result metadata and
+  pending tool IDs without replaying tools or storing their raw command/input.
+  52 focused recovery/cap/entry/salvage checks passed in 10.50s; cross-launch
+  context/counter checks previously had 24 passes in 10.87s. Numeric retry
+  thresholds are unchanged. Full Windows recovery and runtime replay of a
+  killed runner's unprojected close remain pending.
+- SAFE BOUNDARY: old run 20261011-102057 ended on its own with timeout at
+  12:53:22, iteration 4. PID 3156 and PGID 77151 are gone; phase.json is gone,
+  and no loop/watchdog process was observed. No signal was sent by this owner.
+  Main is now 5081038b. Its WIP commit preserves ONLY owner-written tracker
+  and ownership prose, not worker implementation; do not credit it to plan 2.
+  Reconcile these prose changes and owner checkpoints before integration.
+  Keep the pending batch intact and do not restart it into overlapping code.
