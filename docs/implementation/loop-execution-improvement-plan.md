@@ -26,7 +26,7 @@ drain/relaunch has archived native caller evidence; production activation is sti
 inputs now have production-entry candidate evidence. C3 preparation/acceptance/
 repair is wired but remains disabled by default. Actual-base provenance and
 Windows/member/dirty-entry adapters remain open. Continue here per Chad:
-“no more handover, until the whole thing done”. Overall estimate 48% is a
+“no more handover, until the whole thing done”. Overall estimate 52% is a
 judgment against delivered/installed/measured scope, not a checkbox count.
 
 Old run `20261011-102057` timed out by itself. Old run `20261011-130246`
@@ -155,6 +155,19 @@ output/context work; verify current state at the actual landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- `55abfb59` archived normal selfmod entry after early-root refusal passed
+  1 in 12.37s. First-increment integration prepared: all six shared main WIP
+  files copied with hashes into external integration-preservation-20261011.
+  Four substantive docs match exact historical owner snapshots; original
+  AGENTS text is preserved with the accepted kernel policy added, and the CSV
+  is semantically identical (line-ending change only). Main 5081038b is an
+  ancestor of the owner branch. Preserve originals with a scoped stash too.
+  Fresh idle ownership: paused toolkit chain 958/975/1016, PGID 958, started
+  13:02:46; only a sleep child. Scheduler 27687, PGID 27687, started 01:04:56,
+  only a sleep child. Both source FDs point to release v0.9.193. Installation
+  requires these idle controllers to exit first; preserve pause and pending
+  batch, do not start a worker into overlapping kernel plans. Activation pending.
 
 - `e9b36cc5` archived normal selfmod, pending selfmod, pending committed
   acceptance and strict over-cap regression checks: 4 passed in 21.68s.
