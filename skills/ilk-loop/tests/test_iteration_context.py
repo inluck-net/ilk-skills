@@ -23,7 +23,10 @@ def test_frozen_context_keeps_worktree_and_data_identity(tmp_path):
     assert ctx['exec_tree']==str(args['exec_tree'])
     assert ctx['base_commit']==ctx['toolkit_sha']
     assert ctx['runtime_dir']!=ctx['code_root']
-    assert ctx['registry_path'] is None
+    assert ctx['registry_path']==str(Path(args['runtime_dir']).resolve()/'launcher')
+    assert ctx['clone_base_commit']==ctx['base_commit']
+    assert ctx['clone_ref'].startswith('refs/heads/')
+    assert ctx['clone_entry_dirty'] is False
     path=tmp_path/'ctx.json';write_context(path,ctx)
     assert json.loads(path.read_text())==ctx
     with pytest.raises(FileExistsError):write_context(path,dict(ctx,iteration=2))

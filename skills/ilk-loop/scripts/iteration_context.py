@@ -169,11 +169,15 @@ def resolve_context(*, clone, exec_tree, observe_tree, code_root, plans_dir,
     if (Path(exec_tree)/'skills/ilk-loop/safety-kernel.json').exists():
         from safety_kernel import load
         kernel_list=load(Path(exec_tree))
+    clone_ref=subprocess.run(['git','-C',clone,'symbolic-ref','-q','HEAD'],capture_output=True,text=True)
     return dict(schema_version=1,run_id=run_id,iteration=int(iteration),
+                clone_base_commit=git_value(Path(clone),'HEAD'),
+                clone_ref=clone_ref.stdout.strip() if clone_ref.returncode==0 else None,
+                clone_entry_dirty=bool(subprocess.check_output(['git','-C',clone,'status','--porcelain'],text=True)) if git_value(Path(clone),'HEAD') else None,
                 clone=clone,exec_tree=exec_tree,observe_tree=observed,mode=mode,
                 plans_dir=plans_dir,runtime_dir=str(runtime),
                 ledger_path=str(runtime/'launcher/ship-proof.jsonl'),
-                registry_path=None, # D4 has no canonical registry yet.
+                registry_path=str(runtime/'launcher'), # Owning roles are attached before dispatch freeze.
                 recovery_dir=str(runtime/'launcher/recovery'/recovery_key),
                 data_root=str(Path(data_root).resolve()),code_root=code_root,
                 toolkit_sha=git_value(Path(code_root),'HEAD') or os.environ.get('ILK_TOOLKIT_SHA'),

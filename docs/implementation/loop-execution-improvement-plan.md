@@ -155,6 +155,22 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- Fresh-base selfmod landing/recovery candidate: exact accepted receipt and
+  transaction, clean frozen source branch/base, registered Git children and
+  existing deadline; worktree retained through close. Dirty/moved/changed
+  branch, historical unmerged base, forged receipt and changed execution tree
+  refuse. Recovery uses no new model call or gate for an already accepted tree.
+  Retained MERGED state uses Git-indirection identity; a recreated same-path
+  worktree is new isolation. Initial focused run caught that distinction
+  (1 failed, 26 passed in 6.61s); corrected run 27 passed in 6.01s.
+  Normal Bash entry is wired; archived selfmod caller pending this checkpoint.
+  Historical unmerged bases and member/dirty-entry adapters remain unsupported.
+- `274668ea` archived ordinary entry passed 1 in 6.72s. Consumer task profiles
+  and report-v5 execution-root normalization are recorded in
+  docs/verification/consumer-step-profile-baseline-2026-10-11.md and CSV.
+  One actual native-tool accepted consumer step plus zero-model resume is
+  feasibility evidence, not a controlled general speed improvement.
+
 - `bec678df` optional automatic final gate: harmless marker reproduced old
   default invocation (1 failed in 6.79s; no full suite). Four archived normal,
   native, explicit-opt-in-marker and drain/activation checks passed in 44.21s.

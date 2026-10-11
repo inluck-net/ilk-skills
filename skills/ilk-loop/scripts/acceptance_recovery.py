@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Close interrupted accepted transactions before selecting another worker.
 
-Only the clean single-repo non-selfmod adapter is available here. No provider
+Clean ordinary and fresh-base selfmod adapters are available here. No provider
 is called and no gate is run/reused for a different transaction. Unexplained
 state or unsupported landing remains an explicit refusal, never inferred proof.
 """
@@ -104,8 +104,11 @@ def _recover_pending(*,runtime,project,log,deadline):
             if close.get('stop_reason') or close.get('driver_integrity_passed') is not True:
                 raise ContextError('prior accepted transaction closed unsuccessfully; recovery needs attribution')
             continue
-        if context.get('mode')!='none' or Path(context['exec_tree']).resolve()!=project:
+        if context.get('mode') not in {'none','selfmod'} or (context.get('mode')=='none' and Path(context['exec_tree']).resolve()!=project):
             raise ContextError('pending acceptance landing adapter unavailable')
+        if context.get('mode')=='selfmod' and (context.get('clone_entry_dirty') is not False
+                or not context.get('clone_ref') or context.get('clone_base_commit')!=context.get('base_commit')):
+            raise ContextError('pending acceptance lacks supported frozen selfmod landing base')
         path=Path(row.get('context_path') or '')
         if not path.is_file() or read_context(path)!=context:
             raise ContextError('pending acceptance original frozen context unavailable')
@@ -126,6 +129,10 @@ def _recover_pending(*,runtime,project,log,deadline):
             if steps and selected['step']==max(steps):
                 from ship_transition import ship
                 ship(Path(context['plans_dir']),root,selected['slug'])
+            landing=None
+            if context['mode']=='selfmod':
+                from selfmod_landing import land
+                landing=land(context,accepted,deadline=deadline)
             if monotonic()>=deadline:raise ContextError('acceptance close recovery reached supplied deadline')
             if working_tree(root)!=accepted['tree'] or git(root,'rev-parse','HEAD^{tree}')!=accepted['tree']:
                 raise ContextError('acceptance tree changed during recovered ship')
@@ -143,7 +150,8 @@ def _recover_pending(*,runtime,project,log,deadline):
             if not audit['explained']:raise ContextError('recovered acceptance state is unexplained')
             close=dict(record_phase='close',run_id=context['run_id'],iteration=context['iteration'],
                 context=context,execution=capture_execution(context),driver_acceptance=accepted,
-                driver_integrity_passed=True,state_audit=audit,merge_outcome='not-applicable',
+                driver_integrity_passed=True,state_audit=audit,merge_outcome='merged' if landing else 'not-applicable',
+                selfmod_landing=landing,
                 stop_reason=None,local_checks=projected,acceptance_recovered_by_driver=True,
                 recovery_scope='finish original accepted transaction; no worker dispatch or new gate')
             from run_registry import require_driver

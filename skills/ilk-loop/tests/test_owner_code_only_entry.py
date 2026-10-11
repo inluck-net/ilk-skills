@@ -13,13 +13,17 @@ pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='Mac production entr
 ROOT=Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize('case',['normal','native-tools','native-tools-batch-optin','hold','pending-advance','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain'])
+@pytest.mark.parametrize('case',['normal','selfmod','native-tools','native-tools-batch-optin','hold','pending-advance','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain'])
 def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,monkeypatch,case):
     human_hold_during_gate=case=='hold'
     upgrading=case=='upgrade-drain'
     spec=importlib.util.spec_from_file_location('entry_fixture',Path(__file__).with_name('test_pre_loop_exit_sentinel.py'))
     fixtures=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixtures)
     world=fixtures._build_world_shipped(tmp_path,with_steps=True);work=world['project']
+    if case=='selfmod':
+        import shutil
+        shutil.rmtree(work) # disposable fixture only
+        subprocess.run(['git','clone','-q','--shared',str(ROOT),str(work)],check=True,capture_output=True)
     def git(*args):return subprocess.run(['git','-C',str(work),*args],check=True,capture_output=True,text=True)
     git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid')
     (work/'counter.py').write_text('def f(value): return value + 1\n');git('add','.');git('commit','-qm','fixture counter')
@@ -81,7 +85,7 @@ else:
 print(json.dumps({'type':'system','subtype':'init','session_id':'fixture-session','model':'fixture-model'}))
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'fixture-session'}))
 ''');cli.chmod(0o700)
-    inputs=tmp_path/'inputs';manifest=prepare(ROOT,home,inputs,worker_tools='native' if case.startswith('native-tools') else 'shell')
+    inputs=tmp_path/'inputs';manifest=prepare(work if case=='selfmod' else ROOT,home,inputs,worker_tools='native' if case.startswith('native-tools') else 'shell')
     pin_launch_resources(inputs,project=work,executables={'python':sys.executable,'claude':str(cli)})
     if upgrading:
         target_inputs=tmp_path/'upgrade-target-inputs'
@@ -263,7 +267,16 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         phases={row['name']:row for row in closed['driver_phase_observation']['intervals']}
         for name in ('driver_gate','driver_commit_and_hooks','integrity_and_state_audit','owned_group_cleanup'):
             assert phases[name]['duration_sec']>=0 and phases[name]['observation_complete']
-        assert phases['landing']['duration_sec'] is None # ordinary consumer has no merge
+        if case=='selfmod':
+            assert phases['landing']['duration_sec']>=0 and closed['merge_outcome']=='merged'
+            isolated=world['data_home']/'projects'/world['key']/'runtime/worktrees/selfmod-batch'
+            assert isolated.exists() # keep readable through close and recovery
+            assert git('rev-parse','HEAD').stdout.strip()==subprocess.check_output(['git','-C',str(isolated),'rev-parse','HEAD'],text=True).strip()
+            state=json.loads((runtime/'selfmod-state.json').read_text())
+            assert state['state']=='MERGED'
+            assert not (work/'.ilk-merge-deferred').exists()
+        else:
+            assert phases['landing']['duration_sec'] is None # ordinary consumer has no merge
         assert len(closed['driver_acceptance']['attempts'])==(2 if case=='gate-first-red' else 1)
         if case=='gate-first-green':
             assert closed['driver_acceptance']['gate_first'] and closed['driver_acceptance']['worker_turns']==[]

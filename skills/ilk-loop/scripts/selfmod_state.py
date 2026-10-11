@@ -14,17 +14,17 @@ def common_dir(root: Path) -> Path:
     return (root/value).resolve()
 
 
-def reconcile(clone: Path, worktree: Path, state_file: Path) -> dict:
+def reconcile(clone: Path, worktree: Path, state_file: Path, *, landed_head=None) -> dict:
     from iteration_context import read_context
     from run_registry import require_driver
     from plan_state import _lock
     require_driver(read_context())
     state_file.parent.mkdir(parents=True,exist_ok=True)
     with _lock(state_file.with_name(state_file.name+'.lock')):
-        return _reconcile(clone,worktree,state_file)
+        return _reconcile(clone,worktree,state_file,landed_head=landed_head)
 
 
-def _reconcile(clone: Path, worktree: Path, state_file: Path) -> dict:
+def _reconcile(clone: Path, worktree: Path, state_file: Path, *, landed_head=None) -> dict:
     from iteration_context import read_context
     from run_registry import require_driver
     from plan_state import _sync_parent
@@ -40,11 +40,27 @@ def _reconcile(clone: Path, worktree: Path, state_file: Path) -> dict:
         raise ValueError('persisted selfmod state belongs to another clone')
     if previous.get('worktree') and previous['worktree']!=str(worktree):
         raise ValueError('persisted selfmod state belongs to another worktree')
+    worktree_identity=None
     if worktree.exists():
+        # A recreated worktree at the same path/commit is new isolation.
+        # Retain MERGED only for the actual retained Git indirection inode.
+        metadata=(worktree/'.git').stat()
+        worktree_identity=[metadata.st_dev,metadata.st_ino,metadata.st_ctime_ns]
         if worktree==clone or common_dir(worktree)!=common_dir(clone):
             raise ValueError('selfmod worktree does not belong to the clone')
         state='MERGE_DEFERRED' if (worktree/'.ilk-merge-deferred').exists() else 'ISOLATED'
         worktree_head=subprocess.check_output(['git','-C',str(worktree),'rev-parse','HEAD'],text=True).strip()
+        if landed_head is not None:
+            clone_head=subprocess.check_output(['git','-C',str(clone),'rev-parse','HEAD'],text=True).strip()
+            if landed_head!=worktree_head or landed_head!=clone_head:
+                raise ValueError('landed state differs from exact clone/worktree commit')
+            state='MERGED'
+        elif (previous['state']=='MERGED' and previous.get('worktree_head')==worktree_head
+              and previous.get('worktree_identity')==worktree_identity):
+            proof=subprocess.run(['git','-C',str(clone),'merge-base','--is-ancestor',worktree_head,'HEAD'],capture_output=True)
+            if proof.returncode==0:state='MERGED'
+            elif proof.returncode!=1:raise ValueError('cannot verify retained landed worktree state')
+
     else:
         worktree_head=previous.get('worktree_head')
         state='NONE'
@@ -56,7 +72,8 @@ def _reconcile(clone: Path, worktree: Path, state_file: Path) -> dict:
                 raise ValueError('isolated worktree disappeared before its commits landed')
             state='MERGED'
     current=dict(schema_version=1,clone=str(clone),worktree=str(worktree),state=state,
-                 previous_state=previous['state'],worktree_head=worktree_head)
+                 previous_state=previous['state'],worktree_head=worktree_head,
+                 worktree_identity=worktree_identity)
     state_file.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.NamedTemporaryFile(mode='w',dir=state_file.parent,delete=False) as f:
         tmp=Path(f.name);json.dump(current,f);f.write('\n');f.flush();os.fsync(f.fileno())

@@ -8050,7 +8050,20 @@ print(json.dumps(capture_execution(json.loads(Path(sys.argv[2]).read_text()))))
 
       if [[ -z "$_merge_blocked_reason" ]]; then
         merge_rc=0
-        merge_selfmod_worktree || merge_rc=$?
+        if [[ "${ILK_WORKER_MODE:-}" == code-only ]]; then
+          # Keep the original worktree readable through integrity/close; no
+          # legacy create/refresh/remove or daemon bounce on this exact path.
+          local _owned_landing_output
+          _owned_landing_output=$(python3 "${_ILK_SCRIPT_DIR}/selfmod_landing.py" \
+            --context "$ILK_ITER_CONTEXT" --accepted "$_driver_acceptance_file" 2>&1) || merge_rc=$?
+          if [[ "$merge_rc" -eq 0 ]]; then
+            echo "[selfmod] exact accepted landing: $_owned_landing_output"
+          else
+            echo "[selfmod] owned landing refused: $_owned_landing_output" >&2
+          fi
+        else
+          merge_selfmod_worktree || merge_rc=$?
+        fi
         record_selfmod_merge_outcome "$merge_rc"
         if ! record_selfmod_state; then
           iter_stop_reason="selfmod_state_invalid"

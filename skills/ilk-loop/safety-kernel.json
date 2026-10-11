@@ -3,6 +3,11 @@
   "loop_kernel_policy": "owner-only",
   "rules": [
     {
+      "path": "skills/ilk-loop/scripts/selfmod_landing.py",
+      "guard": "owner",
+      "why": "exact accepted selfmod landing and original deadline/identity guards"
+    },
+    {
       "path": "skills/ilk-loop/scripts/upgrade_drain.py",
       "guard": "owner",
       "why": "driver-owned upgrade request and positive accepted-close boundary"
