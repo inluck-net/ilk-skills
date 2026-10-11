@@ -21,6 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 # Will be implemented in step 1 — until then, every test here is RED.
 from run_local_checks import confirm_b2_block  # noqa: E402
+from blocking_checks import confirm_rerun, read_records
+import json
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -28,6 +30,26 @@ from run_local_checks import confirm_b2_block  # noqa: E402
 def _r(command: str, outcome: str) -> dict:
     """Build a minimal check-result dict (the shape run_one produces)."""
     return {"command": command, "outcome": outcome}
+
+
+@pytest.mark.parametrize('outcome', ['skipped', 'inconclusive', 'unknown', None])
+def test_nonmeasurement_rerun_cannot_clear_a_red(outcome, tmp_path):
+    first = dict(slug='work', step=0, command='check', outcome='fail', stdout_path='first-output')
+    rerun = dict(slug='work', step=0, command='check', outcome=outcome, stdout_path='retry-output')
+    decision = confirm_b2_block([first], [rerun])
+    assert decision['blocked'] is True
+    assert decision['inconclusive'] is True
+    assert decision['transient_cleared'] == []
+    source = tmp_path/'first.jsonl'; source.write_text(json.dumps(first)+'\n')
+    retry = tmp_path/'retry.jsonl'; retry.write_text(json.dumps(rerun)+'\n')
+    decision = confirm_rerun(source, retry)
+    assert decision['blocked'] is True
+    assert decision['inconclusive'] is True
+    assert decision['confirmed'] == []
+    record = read_records(source)[0]
+    assert record['outcome'] == 'inconclusive'
+    assert record['attempt_records'][0]['stdout_path'] == 'first-output'
+    assert record['attempt_records'][1]['stdout_path'] == 'retry-output'
 
 
 # ── AC-1: error → pass on re-run means NOT blocked ─────────────────────────

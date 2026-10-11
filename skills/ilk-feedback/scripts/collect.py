@@ -756,6 +756,7 @@ CLASSIFICATION_LABELS: tuple[str, ...] = (
     "merge-deferred",
     "yielded",
     "local-checks-unchanged",
+    "local-checks-inconclusive",
     "blocked-no-runnable",
 )
 
@@ -1245,6 +1246,11 @@ def _classify_core(
     # Prefer it over the last iteration's (possibly empty) stop_reason.
     terminal = next((r for r in iters if r.get("record_type") == "run_exit"), None)
     last_stop = (terminal or last).get("stop_reason")
+    if last_stop == 'local_checks_inconclusive':
+        return 'local-checks-inconclusive', {
+            'iter_at_stop': last.get('iteration'), 'stop_reason': last_stop,
+            'reason': 'run_exit terminal state; gate evidence unmeasured or mixed',
+        }
     error_count = sum(1 for r in _real_iters if r.get("exit_code") not in (0, None))
     err_rate = error_count / len(_real_iters) if _real_iters else 0.0
     new_commits_total = sum((r.get("new_commits_total") or 0) for r in _real_iters)
@@ -1677,6 +1683,7 @@ def classify(
         "code_only_resume_unavailable": "self-hosting-drift",
         "code_only_budget_unknown": "self-hosting-drift",
         "code_only_commit_hook_red": "local-checks-stuck",
+        "local_checks_inconclusive": "local-checks-inconclusive",
         "dispatch_identity_invalid": "self-hosting-drift",
         "iteration_record_projection_failed": "self-hosting-drift",
         "recovery_history_invalid": "self-hosting-drift",
@@ -2266,6 +2273,12 @@ def recommend_params(
             "Params unchanged; resume when ready."
         )
 
+    if label == "local-checks-inconclusive":
+        return cur_max, cur_to, (
+            "A gate or retry was unmeasured or mixed; no green proof, strike "
+            "or automatic rollback follows. Preserve diagnostics and inputs "
+            "before choosing a fresh measurement. Params unchanged."
+        )
     if label == "local-checks-unchanged":
         return cur_max, cur_to, (
             "Do not auto-relaunch — the gate was red on code this iteration "
@@ -3199,6 +3212,8 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
         )
     if label == "interrupted":
         return facts.get("note") or "Loop did not reach a natural stop."
+    if label == "local-checks-inconclusive":
+        return "Gate evidence is inconclusive; attempts are retained. No automatic restart, promotion, strike or parking is authorized by this result."
     if label == "local-checks-unchanged":
         iter_clause = (
             f" at iter {facts['iter_at_stop']}"

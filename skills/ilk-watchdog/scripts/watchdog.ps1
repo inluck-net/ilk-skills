@@ -811,6 +811,11 @@ Watchdog exiting cleanly. Job done.
       Write-Log "label '$klass' => action '$action'"
 
       if ($action -eq 'stop-clean') {
+        if ($klass -eq 'local-checks-inconclusive' -or $klass -eq 'local_checks_inconclusive') {
+          Write-Log 'gate evidence inconclusive: preserving work; no restart, promotion or park'
+          Write-Banner -Title 'GATE EVIDENCE INCONCLUSIVE — WORK PRESERVED' -Body "Project: $ProjName`nDiagnostic attempts retained. Watchdog exits without changing batch state." -Color Yellow
+          return
+        }
         if ($klass -eq 'upgrade-drained') {
           Write-Log 'upgrade drain: pending work preserved; no old-pin restart or promotion'
           Write-Banner -Title 'UPGRADE DRAIN — PENDING WORK PRESERVED' -Body 'Scheduler must validate and activate the prepared new pin.' -Color Green
@@ -946,6 +951,8 @@ function Resolve-WatchdogAction {
     # Job done; no relaunch, no red banner; scheduler promotes next cycle
     'clean-success'       { return 'stop-clean' }
     'upgrade-drained'     { return 'stop-clean' }
+    'local-checks-inconclusive' { return 'stop-clean' }
+    'local_checks_inconclusive' { return 'stop-clean' }
     # All sub-plans shipped but some need manual verification
     'shipped-unverified'  { return 'needs-human' }
     # Toolkit self-edit drift; human review required

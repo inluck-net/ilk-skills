@@ -317,8 +317,14 @@ except Exception:
 normalize_classification() {
   local label="$1"
   case "$label" in
-    upgrade_request_invalid)
+    local_checks_inconclusive)
+      echo "local-checks-inconclusive"
+      ;;
+    upgrade_request_invalid|run_inputs_changed|code_only_acceptance_failed|code_only_resume_unavailable|code_only_budget_unknown|dispatch_identity_invalid|iteration_record_projection_failed|recovery_history_invalid|iteration_context_invalid|iteration_record_recovery_failed|selfmod_state_invalid)
       echo "self-hosting-drift"
+      ;;
+    code_only_worker_incomplete)
+      echo "interrupted"
       ;;
     max-iterations)
       # Hit the iteration cap with work still pending: recoverable.
@@ -334,7 +340,7 @@ normalize_classification() {
     selfmod_merge_failed)
       echo "merge-conflict"
       ;;
-    local_checks_failed)
+    local_checks_failed|code_only_commit_hook_red)
       # collect.py splits this into local-checks-stuck / local-checks-broken on
       # evidence the fallback path does not have.  Both are blacklist labels,
       # so the ACTION is the same either way; the stuck form is the safe
@@ -431,7 +437,7 @@ classify_action() {
       # the gates.
       echo "stop-clean"
       ;;
-    clean-success|upgrade-drained)
+    clean-success|upgrade-drained|local-checks-inconclusive)
       # Job done — no relaunch, no red banner; scheduler promotes next cycle.
       echo "stop-clean"
       ;;
@@ -1332,6 +1338,13 @@ except Exception:
     fi
 
     if [[ "$action" == "stop-clean" ]]; then
+      if [[ "$(normalize_classification "$classification")" == local-checks-inconclusive ]]; then
+        write_log "gate evidence inconclusive: preserving work; no restart, promotion or park"
+        write_banner "GATE EVIDENCE INCONCLUSIVE — WORK PRESERVED" "Project: $proj_name
+Classification: $classification_display
+Diagnostic attempts retained. Watchdog exits without changing batch state." 33
+        return
+      fi
       if [[ "$(normalize_classification "$classification")" == upgrade-drained ]]; then
         write_log "upgrade drain: pending work preserved; no old-pin restart or promotion"
         write_banner "UPGRADE DRAIN — PENDING WORK PRESERVED" \

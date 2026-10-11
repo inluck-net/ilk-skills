@@ -1804,3 +1804,39 @@ anchors at the time of inspection and can move as integration changes code.
   37.01s. All gates still execute; history cannot supply green proof.
 - Next: reconcile legacy all-attempt confirmation and its caller handling, then
   close remaining reader/ownership migration. Preserve the active batch.
+
+### Legacy retry verdict and terminal-reader correction
+
+- Four negative cases reproduced the defect: an earlier fail followed by
+  skipped/inconclusive/unknown/null retry was cleared (or lacked an explicit
+  unknown verdict). Confirmation now clears only an explicit measured pass.
+  Missing nondeterministic retries are inconclusive; deterministic first reds
+  keep their historical no-retry policy. Both full raw attempt records and
+  outcomes survive in the result consumed by ship integrity and JSONL.
+- PowerShell now uses the same slug/step confirmation helper as Bash, rather
+  than a command-only lookup and quoted inline JSON. Same-command gates from
+  different plans cannot erase each other's results. Retry pass is explicitly
+  labeled flaky under the existing legacy policy; the full rolling-window
+  escalation/at-base strike policy remains open.
+- Bash/PowerShell unmeasured gates stop before red attribution or quarantine;
+  Bash also bypasses green ship/proof and interrupted-ship convergence. Native
+  owned dispatch continues its stricter diagnostic-history admission policy.
+- Inconclusive has a distinct postmortem label, including run_exit-only
+  classification before error-rate heuristics. Both watchdogs exit preserving
+  work, without restart/promotion/park or a success notification. Release-train
+  admission refuses the terminal state. Eleven previously unmapped owned stop
+  states now normalize consistently in Bash when postmortem collection fails.
+- Confirmation/portable PowerShell: 34 passed in 1.21s. Reader mapping initially
+  exposed 12 failures (one new run_exit classification plus eleven missing
+  raw-state aliases); corrections produced 134 passed in 1.55s. Added worker
+  exit 0/1/124 priority and release-train refusal: ten selected tests passed
+  in 0.56s. Actual Bash caller control flow with private records, red-action
+  and ship/proof refusal seams: two passed in 0.34s. Bash syntax, both complete
+  PowerShell parsers and whitespace checks passed. No full suite was run.
+- Read-only live registry still showed toolkit run 20261011-234448 pinned at
+  4de1eb06 with no registered worker children; consumer registry idle. No live
+  controller, worker, pause, plans or installed pin was changed in this increment.
+- Remaining: scheduler/Windows legacy reader migration, rolling flaky history,
+  actual-base ownership across supported adapters, delivery documentation and
+  safe final activation. Overall estimate remains about 70% until these broad
+  requirements are closed; several candidate fixes are not installed yet.

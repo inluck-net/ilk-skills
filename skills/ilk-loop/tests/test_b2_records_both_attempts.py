@@ -75,7 +75,7 @@ def test_red_on_both_attempts_stays_red(tmp_path: Path) -> None:
     assert _any_blocking(first)
 
 
-def test_a_check_missing_from_the_rerun_is_confirmed_not_cleared(tmp_path: Path) -> None:
+def test_a_check_missing_from_the_rerun_is_inconclusive_not_cleared(tmp_path: Path) -> None:
     first = _write(tmp_path / "first.jsonl", [
         {"slug": "a", "step": 1, "outcome": "fail", "command": "c1"},
     ])
@@ -83,7 +83,9 @@ def test_a_check_missing_from_the_rerun_is_confirmed_not_cleared(tmp_path: Path)
     result = _confirm(first, rerun)
     assert result["blocked"] is True, "a measurement that did not happen cannot clear a red"
     (rec,) = _read(first)
-    assert rec["outcome"] == "fail"
+    assert rec["outcome"] == "inconclusive"
+    assert result['inconclusive'] is True
+    assert result['confirmed'] == []
     assert rec["attempts"] == ["fail", "not-rerun"]
 
 

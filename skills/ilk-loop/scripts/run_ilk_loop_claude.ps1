@@ -616,6 +616,27 @@ function Get-StepDeclaredTimeout {
   return 0
 }
 
+function Confirm-LocalCheckAttempts {
+  param([object[]]$First, [object[]]$Rerun)
+  # Share Bash's slug/step identity and retained raw attempts. JSON travels in
+  # files, not Start-Process argument quoting or a command-only lookup.
+  $directory = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
+  New-Item -ItemType Directory -Path $directory | Out-Null
+  $firstPath = Join-Path $directory 'first.jsonl'
+  $retryPath = Join-Path $directory 'retry.jsonl'
+  try {
+    $firstRows = @($First | ForEach-Object { ConvertTo-Json -InputObject $_ -Depth 40 -Compress })
+    $retryRows = @($Rerun | ForEach-Object { ConvertTo-Json -InputObject $_ -Depth 40 -Compress })
+    [IO.File]::WriteAllLines($firstPath, [string[]]$firstRows)
+    [IO.File]::WriteAllLines($retryPath, [string[]]$retryRows)
+    $payload = & python (Join-Path $SkillRoot 'ilk-loop/scripts/blocking_checks.py') $firstPath --confirm $retryPath | Out-String
+    if ($LASTEXITCODE -ne 0) { throw 'gate attempt confirmation unavailable' }
+    $decision = $payload | ConvertFrom-Json
+    $records = @(Get-Content -LiteralPath $firstPath | ForEach-Object { $_ | ConvertFrom-Json })
+    return [PSCustomObject]@{ Decision = $decision; Records = $records }
+  } finally { Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
 function Invoke-LocalChecks {
   <#
     Run run_local_checks.py for every target. Each invocation has the
@@ -2513,21 +2534,14 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
       # checks once before committing to local_checks_failed. A check that
       # errors then passes is NOT a stop.
       $blocking = $localChecksRun | Where-Object { $_.outcome -eq "error" -or $_.outcome -eq "fail" }
-      if ($blocking) {
-        # Build first-pass JSON for the confirm helper (command + outcome)
-        $firstPassJson = @()
-        foreach ($b in $blocking) {
-          $cmd = ""
-          if ($b.raw -and $b.raw.results) {
-            foreach ($cr in $b.raw.results) {
-              if ($cr.command) { $cmd = $cr.command; break }
-            }
-          }
-          $firstPassJson += @{ command = $cmd; outcome = $b.outcome }
-        }
-        $firstJson = ($firstPassJson | ConvertTo-Json -Compress)
-        if ($firstPassJson.Count -eq 1) { $firstJson = "[" + $firstJson + "]" }
-
+      $unmeasured = $localChecksRun | Where-Object { $_.slug -and ($_.outcome -eq 'inconclusive' -or $_.outcome -eq 'unknown' -or -not $_.outcome) }
+      if ($unmeasured) {
+        $stopReason = 'local_checks_inconclusive'
+        $iterStopReason = $stopReason
+        $localChecksBlocked = $true
+        Write-Host '[local_checks] gate unmeasured; no attribution, rollback or quarantine' -ForegroundColor Yellow
+      }
+      if ($blocking -and -not $localChecksBlocked) {
         # Re-run the blocking checks once
         $rerunTargets = @()
         foreach ($b in $blocking) {
@@ -2539,40 +2553,19 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
           -HelperScript $LocalChecksScript `
           -OuterTimeoutSec $LocalChecksTimeoutSec
 
-        # Build rerun JSON (command + outcome)
-        $rerunJsonArr = @()
-        foreach ($rr in $rerunResults) {
-          $cmd = ""
-          if ($rr.raw -and $rr.raw.results) {
-            foreach ($cr in $rr.raw.results) {
-              if ($cr.command) { $cmd = $cr.command; break }
-            }
-          }
-          $rerunJsonArr += @{ command = $cmd; outcome = $rr.outcome }
-        }
-        $rerunJson = ($rerunJsonArr | ConvertTo-Json -Compress)
-        if ($rerunJsonArr.Count -eq 1) { $rerunJson = "[" + $rerunJson + "]" }
-
-        # Call the confirm helper
-        $confirmArgs = @($LocalChecksScript, "--confirm-b2", "--first", $firstJson, "--rerun", $rerunJson)
-        $confirmTmp = [IO.Path]::GetTempFileName()
-        try {
-          $confirmProc = Start-Process -FilePath "python" -ArgumentList $confirmArgs `
-            -NoNewWindow -PassThru -RedirectStandardOutput $confirmTmp -RedirectStandardError "$confirmTmp.err"
-          $confirmProc.WaitForExit(30000) | Out-Null
-          $confirmOut = ""
-          if (Test-Path $confirmTmp) { $confirmOut = Get-Content $confirmTmp -Raw -Encoding utf8 -ErrorAction SilentlyContinue }
-          $confirmResult = $null
-          try { if ($confirmOut) { $confirmResult = $confirmOut | ConvertFrom-Json -ErrorAction Stop } } catch { $confirmResult = $null }
-        } finally {
-          Remove-Item $confirmTmp -ErrorAction SilentlyContinue
-          Remove-Item "$confirmTmp.err" -ErrorAction SilentlyContinue
-        }
+        $confirmedChecks = Confirm-LocalCheckAttempts -First $localChecksRun -Rerun $rerunResults
+        $confirmResult = $confirmedChecks.Decision
+        $localChecksRun = $confirmedChecks.Records
 
         if ($confirmResult -and -not $confirmResult.blocked) {
           # Transient cleared on re-run — NOT a stop
           $cleared = ($confirmResult.transient_cleared -join ", ")
           Write-Host "B2 transient cleared on re-run: $cleared" -ForegroundColor Green
+        } elseif ($confirmResult -and $confirmResult.inconclusive) {
+          $stopReason = 'local_checks_inconclusive'
+          $iterStopReason = $stopReason
+          $localChecksBlocked = $true
+          Write-Host '[local_checks] retry unmeasured; no attribution, rollback or quarantine' -ForegroundColor Yellow
         } else {
           # Confirmed blocking — try auto-quarantine before stopping.
           # After N consecutive failures on the same sub-plan, mark it

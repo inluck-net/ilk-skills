@@ -129,6 +129,7 @@ def sentinel_is_failure(sentinel_file: Path) -> bool:
         return False
     state = data.get("state", "")
     return state in (
+        "local_checks_inconclusive",
         "local_checks_failed",
         "local_checks_failed_no_commits",
         "error",

@@ -185,6 +185,11 @@ def classify_action(label: str) -> str:
     return _call_watchdog_fn("classify_action", label)
 
 
+def test_inconclusive_gate_neither_restarts_nor_parks():
+    assert classify_action('local_checks_inconclusive') == 'stop-clean'
+    assert classify_action('local-checks-inconclusive') == 'stop-clean'
+
+
 def describe_classification(value: str, source: str) -> str:
     """Call the real `describe_classification` out of `watchdog.sh`."""
     return _call_watchdog_fn("describe_classification", value, source)

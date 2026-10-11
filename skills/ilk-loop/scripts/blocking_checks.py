@@ -94,7 +94,7 @@ def unattributable_count(path: Path) -> int:
 def confirm_rerun(first_path: Path, rerun_path: Path) -> dict[str, Any]:
     """B2 confirm-before-block, recorded in the first-pass file itself.
 
-    A blocking check whose re-run is NOT fail/error was transient.  Its
+    A blocking check whose re-run is explicitly pass was transient. Its
     record is rewritten with the re-run's outcome plus ``attempts`` (both
     outcomes) and ``flaky: true``, so every reader of the results file --
     ship_integrity (``outcome == "pass"``), quarantine, the JSONL record --
@@ -104,8 +104,8 @@ def confirm_rerun(first_path: Path, rerun_path: Path) -> dict[str, Any]:
     (ilk-skills run 20260928-202541; design D5,
     docs/architecture/loop-state-and-ownership-design.md section 6).
 
-    A blocking check with NO re-run record is confirmed, not cleared: a
-    measurement that did not happen cannot clear a red.
+    A blocking check with an unmeasured retry is inconclusive, not cleared.
+    An explicitly deterministic check retains its first measured red.
 
     Returns ``{"blocked": bool, "transient_cleared": [...]}`` -- the shape the
     runner parsed from its old inline block.
@@ -114,6 +114,7 @@ def confirm_rerun(first_path: Path, rerun_path: Path) -> dict[str, Any]:
     rerun = {(r.get("slug"), _step_of(r)): r for r in read_records(rerun_path)
              if r.get("slug")}
     confirmed: list[str] = []
+    inconclusive: list[str] = []
     transient: list[str] = []
     rewritten: list[dict[str, Any]] = []
     for rec in first:
@@ -121,22 +122,29 @@ def confirm_rerun(first_path: Path, rerun_path: Path) -> dict[str, Any]:
             key = (rec["slug"], _step_of(rec))
             again = rerun.get(key)
             first_outcome = rec.get("outcome")
-            if again is None:
+            history = list(rec.get('attempt_records') or [dict(rec)])
+            if again is not None:
+                history.append(dict(again))
+            outcomes = list(rec.get('attempts') or [first_outcome])
+            outcomes.append(again.get('outcome') if again is not None else 'not-rerun')
+            if not _needs_rerun(rec)[0] or (again is not None and again.get("outcome") in BLOCKING_OUTCOMES):
                 confirmed.append(f"{key[0]}#{key[1]}")
-                rec = {**rec, "attempts": [first_outcome, "not-rerun"]}
-            elif again.get("outcome") in BLOCKING_OUTCOMES:
-                confirmed.append(f"{key[0]}#{key[1]}")
-                rec = {**rec, "attempts": [first_outcome, again.get("outcome")]}
-            else:
+                rec = {**rec, "attempts": outcomes, "attempt_records": history, 'verdict': 'red'}
+            elif again is not None and again.get('outcome') == 'pass':
                 transient.append(str(key))
                 rec = {**rec, "outcome": again.get("outcome"),
-                       "attempts": [first_outcome, again.get("outcome")],
-                       "flaky": True}
+                       "attempts": outcomes, "attempt_records": history,
+                       "flaky": True, 'verdict': 'flaky'}
+            else:
+                inconclusive.append(f"{key[0]}#{key[1]}")
+                rec = {**rec, 'outcome': 'inconclusive', 'verdict': 'inconclusive',
+                       'attempts': outcomes, 'attempt_records': history}
         rewritten.append(rec)
     tmp = first_path.with_suffix(first_path.suffix + ".tmp")
     tmp.write_text("".join(json.dumps(r) + "\n" for r in rewritten), encoding="utf-8")
     tmp.replace(first_path)
-    return {"blocked": bool(confirmed), "transient_cleared": transient,
+    return {"blocked": bool(confirmed or inconclusive), "transient_cleared": transient,
+            "inconclusive": bool(inconclusive), "inconclusive_checks": inconclusive,
             "confirmed": confirmed}
 
 
@@ -179,6 +187,8 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--any", action="store_true",
                       help="exit 0 if any attributable record is fail/error, else 1 "
                            "(an anonymous record is not a verdict about any sub-plan)")
+    mode.add_argument('--inconclusive', action='store_true',
+                      help='exit 0 if an attributable gate was unmeasured; no strike is authorized')
     mode.add_argument("--targets", action="store_true",
                       help="'<slug> <step>' per attributable blocking record "
                            "(B2 re-run input; anonymous records are never emitted)")
@@ -204,6 +214,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.any:
         return 0 if attributable_records(args.results_file) else 1
+    if args.inconclusive:
+        return 0 if any(r.get('slug') and r.get('outcome') in ('inconclusive', 'unknown', None)
+                        for r in read_records(args.results_file)) else 1
 
     if args.confirm:
         print(json.dumps(confirm_rerun(args.results_file, args.confirm)))

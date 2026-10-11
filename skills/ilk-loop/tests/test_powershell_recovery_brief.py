@@ -61,3 +61,35 @@ def test_frozen_brief_retains_interrupted_diagnostics_without_queue_discovery(tm
     assert not plan.exists(), 'formatting must not reconstruct or mutate a plan'
     assert '$dispatchContext.Brief = Get-FrozenWorkerBrief' in runner
     assert 'Save-InterruptedWorkerDiagnostic -LogFile $iterLog -Context $iterationContext' in runner
+
+
+def test_powershell_confirmation_uses_plan_identity_and_retains_both_raw_results(tmp_path):
+    pwsh = os.environ.get('ILK_TEST_PWSH') or shutil.which('pwsh')
+    if not pwsh:
+        pytest.skip('PowerShell runtime unavailable')
+    skills = Path(__file__).resolve().parents[2]
+    runner = (skills/'ilk-loop/scripts/run_ilk_loop_claude.ps1').read_text()
+    definition = re.search(r'^function Confirm-LocalCheckAttempts \{.*?^\}', runner, re.M | re.S)
+    assert definition
+    first = [dict(slug=slug, step=0, outcome='fail', raw={'output': slug+'-first'})
+             for slug in ('a', 'b')]
+    retry = [dict(slug='a', step=0, outcome='pass', raw={'output': 'a-retry'}),
+             dict(slug='b', step=0, outcome='inconclusive', raw={'output': 'b-retry'})]
+    data = tmp_path/'data.json'; data.write_text(json.dumps(dict(first=first, retry=retry)))
+    probe = tmp_path/'confirm.ps1'
+    probe.write_text("$ErrorActionPreference='Stop'\n$SkillRoot=$args[0]\nSet-Alias python $args[1]\n"
+        + definition.group() + '\n$d=Get-Content -Raw $args[2] | ConvertFrom-Json\n'
+        + 'Confirm-LocalCheckAttempts -First $d.first -Rerun $d.retry | ConvertTo-Json -Depth 40 -Compress\n')
+    env = dict(os.environ, HOME=str(tmp_path), ILK_DATA_HOME=str(tmp_path/'private-data'),
+               ILK_DATA_DIR=str(tmp_path/'private-data'))
+    result = subprocess.run([pwsh, '-NoProfile', '-File', str(probe), str(skills),
+                             sys.executable, str(data)], env=env, capture_output=True,
+                            text=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr
+    observed = json.loads(result.stdout)
+    assert observed['Decision']['blocked'] and observed['Decision']['inconclusive']
+    records = {r['slug']: r for r in observed['Records']}
+    assert records['a']['outcome'] == 'pass' and records['a']['verdict'] == 'flaky'
+    assert records['b']['outcome'] == 'inconclusive'
+    for slug, record in records.items():
+        assert [a['raw']['output'] for a in record['attempt_records']] == [slug+'-first', slug+'-retry']

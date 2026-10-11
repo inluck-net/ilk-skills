@@ -3214,6 +3214,10 @@ _append_ungated_refusal_findings() {
 # declares NO local_checks keeps today's gates-off ship (nothing to prove).
 post_iteration_ship() {
   local slug="$1" gate_outcome="${2:-}" total_new="${3:-0}" iteration="${4:-0}"
+  if [[ "${iter_stop_reason:-}" == "local_checks_inconclusive" || "$gate_outcome" == "inconclusive" ]]; then
+    echo "[driver-ship] $slug: gate evidence inconclusive; no green proof or ship"
+    return 0
+  fi
 
   if [[ "$RUN_LOCAL_CHECKS" != true && -n "$slug" ]]; then
     local _pi_plans="" _pi_file=""
@@ -7298,7 +7302,10 @@ print(json.dumps(d))
       # references/detached-component-contracts.md.
       local blocking_checks_script="${_SKILL_ROOT}/ilk-loop/scripts/blocking_checks.py"
       if [[ -s "$local_checks_results" ]]; then
-        if python3 "$blocking_checks_script" "$local_checks_results" --any; then
+        if python3 "$blocking_checks_script" "$local_checks_results" --inconclusive; then
+          iter_stop_reason="local_checks_inconclusive"
+          echo "Loop stopped: gate unmeasured; no attribution, rollback or quarantine" >&2
+        elif python3 "$blocking_checks_script" "$local_checks_results" --any; then
           # Extract blocking slug/step pairs and re-run them.
           # --rerun-targets excludes deterministic checks (retry: false,
           # verify_attribution without --remeasure-if-stale) and environment
@@ -7323,16 +7330,16 @@ print(json.dumps(d))
           fi
           rm -f "$_skipped_targets"
 
-          local rerun_results=""
+          local rerun_results
+          rerun_results=$(mktemp)
           if [[ -s "$blocking_targets" ]]; then
-            rerun_results=$(mktemp)
             invoke_local_checks "$(selfmod_effective_repo "$PROJECT_PATH")" "$blocking_targets" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$rerun_results" "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
           fi
 
           # Call confirm_b2_block via run_local_checks.py --confirm-b2
           # Build first-pass and rerun JSON arrays (command-less, match by slug+step)
           local confirm_out=""
-          if [[ -n "$rerun_results" && -s "$rerun_results" ]]; then
+          if [[ -n "$rerun_results" && -f "$rerun_results" ]]; then
             # blocking_checks.py --confirm records BOTH attempts in the
             # first-pass file (cleared checks get the re-run outcome plus
             # attempts/flaky), so ship_integrity and quarantine read the same
@@ -7346,7 +7353,9 @@ print(json.dumps(d))
 
           # Parse confirm result
           local confirmed_blocked="true"
+          local confirm_inconclusive="false"
           if [[ -n "$confirm_out" ]]; then
+            confirm_inconclusive=$(python3 -c 'import json,sys;print("true" if json.loads(sys.argv[1]).get("inconclusive") else "false")' "$confirm_out" 2>/dev/null || echo "true")
             confirmed_blocked=$(python3 -c "
 import json, sys
 d = json.loads(sys.argv[1])
@@ -7356,6 +7365,9 @@ print('false' if not d.get('blocked', True) else 'true')
 
           if [[ "$confirmed_blocked" == "false" ]]; then
             echo "B2 transient cleared on re-run" >&2
+          elif [[ "$confirm_inconclusive" == "true" ]]; then
+            iter_stop_reason="local_checks_inconclusive"
+            echo "Loop stopped: retry did not establish a verdict; preserving attempts without attribution, rollback or quarantine" >&2
           else
             # Red-owner attribution: measure each blocking record at the
             # iteration base (and optionally the batch base) to determine
@@ -7733,7 +7745,9 @@ for line in sys.stdin:
     local _gate_outcome=""
     if [[ -n "$local_checks_results" && -s "$local_checks_results" ]]; then
       local _bc="${_SKILL_ROOT}/ilk-loop/scripts/blocking_checks.py"
-      if python3 "$_bc" "$local_checks_results" --any 2>/dev/null; then
+      if python3 "$_bc" "$local_checks_results" --inconclusive 2>/dev/null; then
+        _gate_outcome="inconclusive"
+      elif python3 "$_bc" "$local_checks_results" --any 2>/dev/null; then
         _gate_outcome="fail"
       else
         _gate_outcome="pass"
@@ -7916,7 +7930,9 @@ append_revert_row(
     # mistaken for a sub-plan that never shipped. Integrity still gets the last
     # word -- it runs after, and its revert is not re-applied (see the
     # --only-interrupted note in converge_ship_transition).
-    converge_ship_transition "$(get_plans_dir)"
+    if [[ "$iter_stop_reason" != "local_checks_inconclusive" ]]; then
+      converge_ship_transition "$(get_plans_dir)"
+    fi
 
     # Skip ship-integrity enforcement when the gate couldn't run (environment
     # fault).  A missing binary (exit 126/127) is not a test failure — the
@@ -7929,8 +7945,8 @@ append_revert_row(
     local _ship_integrity_passed=0
     local _integrity_started="" _integrity_ended="" _landing_started="" _landing_ended=""
     _integrity_started=$(python3 "${_ILK_SCRIPT_DIR}/iteration_clock.py") || _integrity_started=""
-    if [[ "$iter_stop_reason" == "local_checks_environment_fault" ]]; then
-      echo "  [ship-integrity] skipped — environment fault (derived check could not run)" >&2
+    if [[ "$iter_stop_reason" == "local_checks_environment_fault" || "$iter_stop_reason" == "local_checks_inconclusive" ]]; then
+      echo "  [ship-integrity] skipped — gate unmeasured; no red-based rollback" >&2
     else
     if _si_stderr=$(test_ship_integrity "$(get_plans_dir)" "$local_checks_results" "$heads_before_file" "$heads_after_file" 2>&1 1>/dev/null); then
       _ship_integrity_passed=1

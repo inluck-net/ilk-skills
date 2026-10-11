@@ -109,6 +109,18 @@ def _make_iters_with_run_exit(
     return iters
 
 
+@pytest.mark.parametrize('worker_exit', [0, 1, 124])
+def test_inconclusive_gate_is_not_success_or_attributable_red(tmp_path, worker_exit):
+    project = _setup_project(tmp_path)
+    iters = _make_iters_with_run_exit('20261011-000001', 'local_checks_inconclusive',
+        checks=[dict(slug='work', step=0, outcome='inconclusive', command='fixture')])
+    iters[0]['exit_code'] = worker_exit
+    label, facts = collect.classify(iters, None, project)
+    assert label == 'local-checks-inconclusive', facts
+    _write_sentinel(project, 'local_checks_inconclusive', '20261011-000001')
+    assert collect.classify(iters, None, project)[0] == label
+
+
 # ── AC-1: run_exit local_checks_failed (rc 1 assertion) → local-checks-stuck ──
 
 

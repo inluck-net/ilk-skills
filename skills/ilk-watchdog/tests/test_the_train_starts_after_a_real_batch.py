@@ -37,7 +37,14 @@ LOOP_SCRIPTS = Path(__file__).resolve().parent.parent.parent / "ilk-loop" / "scr
 sys.path.insert(0, str(WATCHDOG_SCRIPTS))
 sys.path.insert(0, str(LOOP_SCRIPTS))
 
-from release_train_dispatch import sentinel_all_shipped  # noqa: E402
+from release_train_dispatch import sentinel_all_shipped, sentinel_is_failure  # noqa: E402
+
+
+def test_inconclusive_gate_cannot_start_a_release_train(tmp_path):
+    sentinel = tmp_path/'sentinel.json'
+    sentinel.write_text(json.dumps({'state': 'local_checks_inconclusive', 'iterations': 1}))
+    assert sentinel_all_shipped(sentinel) is False
+    assert sentinel_is_failure(sentinel) is True
 
 
 # ── Isolation fixture ───────────────────────────────────────────────────────

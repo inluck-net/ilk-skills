@@ -2009,7 +2009,8 @@ def confirm_b2_block(
       - No blocking outcome on first pass → NOT blocked (no re-run needed).
       - A blocking check that passes on re-run → transient, NOT blocked.
       - A blocking check that still fails/errored on re-run → real, blocked.
-      - ``skipped`` is never blocking.
+      - An unmeasured/skipped retry cannot clear an earlier red; it stops as
+        inconclusive, without authorizing attribution or a strike.
 
     Parameters
     ----------
@@ -2042,6 +2043,7 @@ def confirm_b2_block(
     rerun_map: dict[str, str] = {r["command"]: r["outcome"] for r in rerun_results}
 
     confirmed: list[dict] = []
+    inconclusive: list[dict] = []
     transient_cleared: list[str] = []
 
     for r in blocking:
@@ -2064,13 +2066,13 @@ def confirm_b2_block(
 
         rerun_out = rerun_map.get(cmd)
 
-        if rerun_out is None:
+        if rerun_out not in ('pass', 'fail', 'error'):
             # This blocking check was NOT re-run — treat as still blocking.
             # The caller is responsible for re-running all blocking checks.
-            confirmed.append({
+            inconclusive.append({
                 "command": cmd,
                 "first_outcome": first_out,
-                "rerun_outcome": None,
+                "rerun_outcome": rerun_out,
             })
         elif rerun_out in _BLOCKING_OUTCOMES:
             confirmed.append({
@@ -2083,7 +2085,9 @@ def confirm_b2_block(
             transient_cleared.append(cmd)
 
     return {
-        "blocked": len(confirmed) > 0,
+        "blocked": bool(confirmed or inconclusive),
+        "inconclusive": bool(inconclusive),
+        "inconclusive_checks": inconclusive,
         "blocking_checks": confirmed,
         "transient_cleared": transient_cleared,
     }
