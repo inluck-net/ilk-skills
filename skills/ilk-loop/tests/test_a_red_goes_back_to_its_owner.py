@@ -713,6 +713,45 @@ def test_return_reds_preserves_human_hold_and_plan_bytes(tmp_path):
     assert path.read_bytes()==before
 
 
+@pytest.mark.parametrize('fault',['second-crash','second-held','changed-first','unbound-first'])
+def test_multi_owner_return_recovers_after_first_owner_is_durable(tmp_path,monkeypatch,fault):
+    import plan_state
+    repo=_make_repo(tmp_path);sha=_git(repo,'rev-parse','HEAD');tree=_git(repo,'rev-parse','HEAD^{tree}')
+    plans=_make_plans_dir(tmp_path,'ours-y');first=plans/'2026-10-03-ours-y.md'
+    second=plans/'2026-10-03-ours-z.md';second.write_text(first.read_text().replace('ours-y','ours-z'))
+    master=plans/'MASTER-2026-10-03-test-execution-plan.md'
+    master.write_text(master.read_text()+'| 2 | [2026-10-03-ours-z.md](./2026-10-03-ours-z.md) |\n')
+    ids=['test_foo.py::test_foo','test_bar.py::test_bar']
+    _write_verification_record(repo,tree,failing_nodes=ids,base_tree=tree,base_failing=[],
+        owners={nid:dict(slug=slug,sha=sha,how='point') for nid,slug in zip(ids,['ours-y','ours-z'])})
+    original=plan_state.replace_legacy_contract
+    if fault=='second-held':second.write_text(second.read_text().replace('status: shipped','status: shipped\nhold: human'))
+    before=first.read_bytes()
+    def interrupted(path,*args,**kwargs):
+        if Path(path)==second:raise OSError('fixture second owner crash')
+        return original(path,*args,**kwargs)
+    monkeypatch.setattr(plan_state,'replace_legacy_contract',interrupted)
+    assert suite_ledger.return_reds(repo,batch='test-batch',plans_dir=plans)==3
+    if fault=='second-held':
+        assert first.read_bytes()==before
+        return
+    committed=first.read_bytes()
+    monkeypatch.setattr(plan_state,'replace_legacy_contract',original)
+    if fault in {'changed-first','unbound-first'}:
+        if fault=='changed-first':first.write_bytes(committed+b'\nHuman edit\n')
+        else:
+            for intent in (suite_ledger.ledger_dir(repo)/'returned').glob('intent-*.json'):
+                if json.loads(intent.read_text())['slug']=='ours-y':intent.unlink()
+        unchanged={path:path.read_bytes() for path in (first,second)}
+        assert suite_ledger.return_reds(repo,batch='test-batch',plans_dir=plans)==3
+        assert all(path.read_bytes()==raw for path,raw in unchanged.items())
+        return
+    assert suite_ledger.return_reds(repo,batch='test-batch',plans_dir=plans)==0
+    assert first.read_bytes()==committed
+    assert all(path.read_text().count('# returned-red')==1 for path in (first,second))
+    assert suite_ledger.return_reds(repo,batch='test-batch',plans_dir=plans)==4
+
+
 @pytest.mark.parametrize('fault',['after-plan','before-plan','applied-row'])
 def test_return_reds_recovers_plan_commit_before_returned_id_bookkeeping(tmp_path,monkeypatch,fault):
     import plan_state

@@ -1463,13 +1463,18 @@ def _return_reds(project: Path, *, batch: str, plans_dir: Path, _locked=False) -
         # Exact identity refuses absent/duplicate owners instead of a suffix match.
         from plan_state import resolve_plan,TransitionError
         try:
-            resolve_plan(plans_dir,slug)
+            owner_path=resolve_plan(plans_dir,slug)
+            from plan_status import parse_frontmatter
+            state=parse_frontmatter(owner_path.read_text(encoding='utf-8-sig'))
+            if state.get('status') in {'draft','parked','blocked'} or state.get('hold')=='human':
+                raise TransitionError('human-held owner cannot receive returned reds')
         except (TransitionError,OSError,ValueError) as exc:
             print(f"return-reds: owner {slug} unresolved: {exc}",file=sys.stderr)
             return 3
 
     # Check for already-returned ids.
     returned_dir = ledger_dir(project) / "returned"
+    already_returned=set()
     for row in bad_rows:
         nid = row[0]
         info = owners.get(nid, {})
@@ -1478,12 +1483,15 @@ def _return_reds(project: Path, *, batch: str, plans_dir: Path, _locked=False) -
         if returned_path.is_file():
             try:
                 already = json.loads(returned_path.read_text(encoding="utf-8"))
+                if not isinstance(already,list) or any(not isinstance(item,str) for item in already):
+                    raise ValueError('returned-id inventory invalid')
                 if nid in already:
-                    print(f"return-reds: {nid} already returned to {slug}",
-                          file=sys.stderr)
-                    return 4
-            except (OSError, json.JSONDecodeError):
-                pass
+                    already_returned.add(nid)
+            except (OSError,ValueError) as exc:
+                print(f'return-reds: returned-id inventory unavailable: {exc}',file=sys.stderr);return 3
+    if len(already_returned)==len(bad_rows):
+        print('return-reds: all attributed ids already returned',file=sys.stderr)
+        return 4
 
     # Group attributed ids by owner slug.
     by_slug: dict[str, list[str]] = {}
@@ -1526,6 +1534,8 @@ def _return_reds(project: Path, *, batch: str, plans_dir: Path, _locked=False) -
         intent_path=returned_dir/('intent-'+hashlib.sha256((batch+'\0'+slug).encode()).hexdigest()+'.json')
         binding=dict(schema_version=1,batch=batch,slug=slug,plan_path=str(plan_path.resolve()),
             record_sha256=record_hash,node_ids=ids)
+        if already_returned.intersection(ids) and not intent_path.exists():
+            print('return-reds: partial return has no exact recovery intent',file=sys.stderr);return 3
         if intent_path.exists():
             from plan_state import recover_legacy_contract
             intent=json.loads(intent_path.read_text(encoding='utf-8'))

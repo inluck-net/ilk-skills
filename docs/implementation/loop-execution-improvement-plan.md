@@ -24,7 +24,7 @@ required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: wire candidate measured-red progress into opt-in Mac
 worker/loop, close/result and consumer readers, then finish remaining
-legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview 3bb6f710
+legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview 524fedca
 and consumer compatibility 3987a299 are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -3346,3 +3346,23 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
   and 1,891 protected file hashes. Only positively idle services were removed
   temporarily and restored. Public release and shared rezmac activation remain
   pending; no active worker was stopped.
+
+- D2 archived delivery: plain global instruction consumption passed through
+  actual archived shell and native entries, two checks in 17.00s. First archive
+  invocation caught the CLI overlap guard treating a declared private instruction
+  as a foreign protected root; corrected narrowly for declared instruction paths.
+  Immutable preview r / 524fedca installed locally after fresh idle-service
+  proof. Controller 94556, old input pin and 1,891 protected hashes preserved;
+  consumer remains 3987a299. All profile defaults stay off.
+
+- B3/C4 multi-owner return recovery: a two-owner crash reproduced exit 4 on
+  retry after the first owner's durable revision, leaving the second unfinished.
+  Partial retries now require exact per-owner return intent and matching journaled
+  revision; already-returned IDs do not block the remaining owner. Completed
+  returns still exit 4. Corrupt returned-ID inventories refuse. Preflight now
+  refuses any initially human-held owner before changing another owner.
+  Both crash and hold negatives failed before their fixes. Affected state/return
+  checks passed 39 in 1.33s; four multi-owner crash/hold/changed-first/missing-intent
+  checks passed in 0.37s. This is resumable per-owner CAS, not filesystem atomicity
+  across multiple plan files; concurrent late human edits still refuse rather
+  than roll them back. Aggregate atomicity remains an explicit open requirement.

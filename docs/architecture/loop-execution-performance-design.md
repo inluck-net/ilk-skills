@@ -654,8 +654,9 @@ its existing supplied driver deadline, without renewing a provider budget.
 `worker_sandbox.py` denies creation/mutation of these named files at any depth;
 native admission gives instruction writes their own denied scope. Existing
 root bootstrap remains brief; inventory is not a request to read every nested
-file. Referenced arbitrary imports, managed policy inputs and native
-Windows enforcement remain unbuilt; this is not exhaustive input pinning.
+file. The later protocol-2 correction below inventories manually followed imports.
+Managed policy inputs and native Windows enforcement remain unbuilt; this is
+not exhaustive input pinning.
 
 ### Focus worker diagnostics on implementation (new brief revision)
 
@@ -822,3 +823,28 @@ additional inventory/native checks passed 23 in 2.28s, run-input/OS checks passe
 35 in 31.11s, and new private-rule alias/cache checks passed four in 0.38s.
 These are local capability checks, not performance comparisons. No numeric
 production default or final verification requirement changes.
+
+### Prepared instruction consumption correction (local preview, 2026-10-12)
+
+Measured Claude Code 2.1.296 with a disposable localhost provider: requested
+sonnet / actual claude-sonnet-5-5. Owned `--setting-sources ''` loaded no automatic
+memory references (0.672s); normal sources loaded four automatic hops (0.677s).
+These observations establish CLI behavior, not a production speed comparison.
+The worker explicitly follows references, so instruction inventory protocol 2
+uses complete reference traversal with cycle detection and the original deadline,
+not the automatic four-hop limit. Absent protocol preserves historical inventory.
+
+`instruction_inputs.import_paths` ignores fenced and inline code and accepts
+escaped spaces; inventory records aliases, resolved targets, hashes and missing
+referenced inputs. Changes refuse before acceptance. `worker_dispatch.prepare`
+adds prepared plain global files and root CLAUDE.local.md to required bootstrap
+reads. `worker_sandbox.profile` grants shell read access only to verified global
+instruction literals in the otherwise unreadable private home; settings remain
+unreadable and instruction writes denied. Global references are refused by
+`run_inputs.prepare` until a source-home rebasing adapter exists. This limitation
+is explicit rather than silently dropping those instructions.
+
+The implementation is locally installed in immutable preview 524fedca. Fifty-four
+focused inventory/preparation/OS checks passed in 29.17s; archived shell/native
+entry checks passed two in 17.00s. Default profiles remain opt-in, final verification
+remains opt-in, and running workers retain their original pins.
