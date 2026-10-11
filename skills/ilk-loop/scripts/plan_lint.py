@@ -1495,6 +1495,112 @@ def lint_unverifiable_test_selector(text: str, slug: str) -> list[str]:
     return findings
 
 
+# ── Duplicate import-basename gate lint ──────────────────────────────────────
+#
+# pytest's default ``prepend`` import mode keys modules by basename.  Two
+# selected test files sharing a basename in ONE invocation are a collection
+# error (``import file mismatch``), so the gate is red for a structural reason
+# and not because of the code under test.  Measured 2026-10-11 on gh-resolve:
+# a synthesized mention gate joined ``tests/pins/test_43a_…py`` with
+# ``tests/test_43a_…py`` and died at collection — 112 collected / 1 error —
+# stopping the batch after the declared gate had already passed.
+#
+# The lint accepts a same-basename pair only when the effective import
+# strategy is proven compatible: the command itself sets
+# ``--import-mode=importlib``, or the project's pytest config does (this
+# toolkit is exactly that case — see pytest.ini), or the command is a vitest
+# invocation, which has no such import key.  An explicit
+# ``--import-mode=prepend`` on the command overrides a compatible project
+# config and is NOT a waiver.
+
+
+def _pytest_import_mode_of_command(cmd: str) -> str | None:
+    """Explicit ``--import-mode=`` value in *cmd*, or None when not set."""
+    m = re.search(r"--import-mode(?:=|\s+)(\S+)", cmd)
+    return m.group(1) if m else None
+
+
+def _project_allows_duplicate_basenames(project_root: Path | None) -> bool:
+    """True when the project's pytest config sets ``--import-mode=importlib``."""
+    root = project_root if project_root is not None else _resolve_project_root()
+    try:
+        ini = root / "pytest.ini"
+        if ini.exists() and "--import-mode=importlib" in ini.read_text(
+            encoding="utf-8-sig"
+        ):
+            return True
+        cfg = root / "setup.cfg"
+        if cfg.exists() and "--import-mode=importlib" in cfg.read_text(
+            encoding="utf-8-sig"
+        ):
+            return True
+        pyproject = root / "pyproject.toml"
+        if pyproject.exists() and "--import-mode=importlib" in pyproject.read_text(
+            encoding="utf-8-sig"
+        ):
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def lint_duplicate_import_basename(
+    text: str, slug: str, project_root: Path | None = None
+) -> list[str]:
+    """Flag a declared pytest invocation passing two same-basename test files.
+
+    Every selected file must still be gated — the fix is to split the pair into
+    separate bounded invocations (see run_local_checks.build_mention_gate_inventory),
+    not to drop one of them.  A command whose file arguments cannot be resolved
+    reports nothing: an unaskable oracle must not manufacture findings.
+    """
+    findings: list[str] = []
+    try:
+        from run_local_checks import _declared_command_coverage  # noqa: E402
+    except Exception:
+        return findings
+
+    allow_dupes = _project_allows_duplicate_basenames(project_root)
+
+    for cmd in _extract_all_local_checks_commands(text):
+        if not cmd:
+            continue
+        # vitest has no basename-keyed import mode; skip it entirely.
+        if re.search(r"(^|[\s/])vitest(\s|$)", cmd):
+            continue
+        mode = _pytest_import_mode_of_command(cmd)
+        if mode is not None:
+            if mode == "importlib":
+                continue
+            compatible = False
+        else:
+            compatible = allow_dupes
+        if compatible:
+            continue
+        if "pytest" not in cmd:
+            continue
+        whole, node_only, parseable = _declared_command_coverage(cmd)
+        if not parseable:
+            continue
+        paths = sorted(whole | node_only)
+        by_base: dict[str, list[str]] = {}
+        for p in paths:
+            base = p.replace("\\", "/").rsplit("/", 1)[-1]
+            by_base.setdefault(base, []).append(p)
+        for base, group in sorted(by_base.items()):
+            if len(group) > 1:
+                findings.append(
+                    f"{slug}: declared pytest gate passes {len(group)} files "
+                    f"named {base!r} in one invocation ({', '.join(group)}) -- "
+                    f"pytest's default prepend import mode cannot collect two "
+                    f"modules sharing a basename (import file mismatch). Split "
+                    f"them into separate bounded invocations, or prove a "
+                    f"compatible import strategy (--import-mode=importlib). "
+                    f"Do not drop a file to silence this."
+                )
+    return findings
+
+
 # ── Budget-vs-gate-timeout warning ───────────────────────────────────────────
 #
 # A sub-plan's per-step ``local_checks`` declare ``timeout:`` values that sum
@@ -4827,6 +4933,7 @@ ALL_CHECKS = (
     lint_ui_promise_wiring,
     lint_balance_regression_flag,
     lint_unverifiable_test_selector,
+    lint_duplicate_import_basename,
     lint_budget_vs_gate_timeout,
     lint_redundant_gate,
     lint_shared_module_gate,

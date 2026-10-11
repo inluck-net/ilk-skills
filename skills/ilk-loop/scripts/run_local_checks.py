@@ -1152,15 +1152,231 @@ def _read_declared_reds(project: Path) -> list[dict]:
     return []
 
 
-def _synthesize_mention_check(
+# ── Declared-coverage parsing (AC-2) ─────────────────────────────────────────
+#
+# A declared gate that already runs a test file lets the mention gate drop it.
+# That waiver is decided from the command's ACTUAL pytest file/directory
+# arguments — never from a substring of the command text.  A ``::node``
+# selector covers only that node, not its file; a comment, a look-alike
+# basename or a bare substring covers nothing; an unparseable command resolves
+# no coverage at all, so the tests it might run stay in the gate rather than
+# being omitted.
+
+# Options whose NEXT token is a value, never a path.
+_CLI_VALUE_OPTS = frozenset({
+    "-k", "-m", "-p", "-c", "-o", "-n",
+    "--deselect", "--ignore", "--ignore-glob", "--pyargs",
+    "--rootdir", "--confcutdir", "--basetemp", "--tb",
+    "--timeout", "--durations", "--durations-min",
+    "--junitxml", "--junit-prefix", "--maxfail", "--import-mode",
+    "--dist", "--override-ini", "--code-highlight", "--stepwise-skip",
+    "--log-level", "--log-format", "--log-date-format", "--log-cli-level",
+    "--log-file", "--log-file-level", "--log-file-mode",
+    "--log-file-format", "--log-file-date-format",
+})
+
+# A short-flag bundle (``-q``, ``-vx``) takes no value.  Anything else that
+# starts with ``-`` and is not a ``--opt=value`` pair is unrecognised, and an
+# unrecognised option may or may not swallow the next token — so the command
+# is treated as unparseable rather than guessed at.
+_SHORT_FLAGS_RE = re.compile(r"^-[A-Za-z]+$")
+_LONG_OPT_RE = re.compile(r"^--[A-Za-z0-9][A-Za-z0-9-]*$")
+
+
+def _norm_path(p: str) -> str:
+    """Repo-relative path form used for comparison (posix, no ``./``)."""
+    p = p.replace("\\", "/").strip()
+    while p.startswith("./"):
+        p = p[2:]
+    return p
+
+
+def _declared_command_coverage(command: str) -> tuple[set[str], set[str], bool]:
+    """Parse one declared command's test file/directory arguments.
+
+    Returns ``(whole_covered, node_only, parseable)``.
+
+    * ``whole_covered`` — normalized paths the command runs in full.  A bare
+      file argument covers that file; a directory argument covers its subtree.
+    * ``node_only`` — paths that appear only as ``path::node``.  A node
+      selector does **not** cover the whole file.
+    * ``parseable`` — False when the command is not split-able or carries an
+      unrecognised option.  Such a command resolves NO coverage: a caller must
+      leave the tests it might run gated rather than omit them.
+    """
+    raw = command.strip()
+    # A YAML double-quoted scalar may arrive still wrapped (plan_lint's
+    # extractor keeps the quotes; run_local_checks._coerce strips them).
+    # Both must resolve the same coverage, so unwrap a matched outer pair
+    # before splitting.
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+        raw = raw[1:-1]
+    try:
+        tokens = shlex.split(raw, comments=True, posix=True)
+    except ValueError:
+        return set(), set(), False
+    if not tokens:
+        return set(), set(), False
+    # A quoted whole command survives shlex as a single token; re-split it so
+    # the runner and its arguments are visible.
+    if len(tokens) == 1 and " " in tokens[0] and "pytest" in tokens[0]:
+        try:
+            tokens = shlex.split(tokens[0], comments=True, posix=True)
+        except ValueError:
+            return set(), set(), False
+
+    # Locate the test runner.  A non-test command (a shell check, a lint, a
+    # script) covers no tests — that is a fact about it, not a parse failure.
+    runner_at = None
+    for i, tok in enumerate(tokens):
+        base = os.path.basename(tok)
+        if base in ("pytest", "vitest") or base.startswith("pytest"):
+            runner_at = i
+            break
+        if tok == "-m" and i + 1 < len(tokens) and tokens[i + 1] in ("pytest", "unittest"):
+            runner_at = i + 1
+            break
+    if runner_at is None:
+        return set(), set(), True
+
+    whole: set[str] = set()
+    node_only: set[str] = set()
+    saw_path = False
+    i = runner_at + 1
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok == "--":
+            # Everything after is positional.
+            for rest in tokens[i + 1:]:
+                path, node, ok = _coverage_token(rest)
+                if not ok:
+                    return set(), set(), False
+                if path is None:
+                    continue
+                saw_path = True
+                (node_only if node else whole).add(path)
+            break
+        if tok.startswith("-"):
+            if "=" in tok:
+                i += 1
+                continue
+            if tok in _CLI_VALUE_OPTS:
+                i += 2
+                continue
+            if _SHORT_FLAGS_RE.match(tok) or tok in ("-h", "--help"):
+                i += 1
+                continue
+            if _LONG_OPT_RE.match(tok):
+                # Unrecognised long option: may take a value.  Refuse to
+                # guess — the whole command's coverage stays unresolved.
+                return set(), set(), False
+            return set(), set(), False
+        path, node, ok = _coverage_token(tok)
+        if not ok:
+            return set(), set(), False
+        if path is not None:
+            saw_path = True
+            if node:
+                node_only.add(path)
+            else:
+                whole.add(path)
+        i += 1
+
+    # A node selector never promotes its file to whole coverage.
+    whole -= node_only
+    return whole, node_only, True
+
+
+def _coverage_token(tok: str) -> tuple[str | None, bool, bool]:
+    """Classify one positional token: ``(path, has_node_selector, ok)``.
+
+    ``ok`` is False on a shape we refuse to interpret (a glob, a bare
+    ``::node`` with no path).  Every other positional is a pytest path
+    argument — file (``tests/test_a.py``) or directory (``tests``, ``tests/``).
+    """
+    if not tok:
+        return None, False, True
+    if _GLOB_RE.search(tok):
+        return None, False, False
+    path_part, sep, _node = tok.partition("::")
+    if sep and not path_part:
+        return None, False, False  # bare ::node — no file named
+    candidate = path_part if sep else tok
+    if candidate.startswith("-"):
+        return None, False, True
+    return _norm_path(candidate), bool(sep), True
+
+
+def _covered_by(path: str, whole: set[str]) -> bool:
+    """True when *path* is run in full by some entry of *whole*.
+
+    Exact file match, or a directory entry that is a path-prefix parent of it.
+    A look-alike basename or a substring is NOT a cover.
+    """
+    path = _norm_path(path)
+    for entry in whole:
+        if entry == path:
+            return True
+        if path.startswith(entry.rstrip("/") + "/"):
+            return True
+    return False
+
+
+_GLOB_RE = re.compile(r"[*?\[\]{}]")
+
+def _partition_by_basename(paths: list[str]) -> list[list[str]]:
+    """Split *paths* into the fewest groups with no repeated basename.
+
+    pytest's default ``prepend`` import mode keys modules by basename, so two
+    selected files sharing a basename in ONE invocation are a collection error
+    (``import file mismatch``) rather than a verdict on the code under test.
+    Each group becomes its own bounded invocation.  Group count equals the
+    largest collision multiplicity; every selected file appears exactly once.
+    """
+    if not paths:
+        return []
+    by_base: dict[str, list[str]] = {}
+    for p in sorted(_norm_path(p) for p in paths):
+        by_base.setdefault(os.path.basename(p), []).append(p)
+    n = max(len(v) for v in by_base.values())
+    groups: list[list[str]] = [[] for _ in range(n)]
+    for base in sorted(by_base):
+        for i, p in enumerate(by_base[base]):
+            groups[i].append(p)
+    return [sorted(g) for g in groups]
+
+
+def _tree_identity(project: Path) -> str:
+    """Committed-tree identity a gate inventory is valid for (HEAD sha)."""
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(project), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+        if r.returncode == 0:
+            return r.stdout.strip()
+    except Exception:
+        pass
+    return ""
+
+
+def build_mention_gate_inventory(
     project: Path,
     changed_files: list[str],
     existing_commands: set[str],
     baseline_red: list[dict] | None = None,
-) -> dict | None:
-    """Synthesize a mention gate check (AC-3).
+) -> list[dict]:
+    """Canonical mention-gate inventory (AC-3).
 
-    Returns a check dict to append, or None if nothing to gate.
+    One entry point for driver and worker: returns a list of bounded checks,
+    each carrying ``command`` / ``scope`` / ``timeout`` and the committed-tree
+    identity the inventory was built for.  Colliding pytest import basenames
+    are partitioned into separate invocations (AC-1) so every selected file
+    runs and a collection error cannot masquerade as a verdict.
+
+    Returns an empty list when there is nothing to gate.  This is the only
+    builder; ``_synthesize_mention_check`` is its compatibility alias.
     """
     # Find mentions
     mentions = _find_mentions(project, changed_files)
@@ -1217,30 +1433,34 @@ def _synthesize_mention_check(
         if file_level:
             test_files = [f for f in test_files if f not in file_level]
 
-    # AC-4: cap at 20 files
+    # AC-5: cap at 20 files.  The existing policy is kept exactly — over the
+    # cap the gate is skipped with an explicit warning.  Partitions are never
+    # dropped to squeeze a set under the cap: a larger reference set must not
+    # execute fewer tests.
     if len(test_files) > _MENTION_GATE_CAP:
-        # Log warning but don't gate
         print(
             f"WARN mention-gate: {len(test_files)} files cite "
             f"{changed_files[0]}:<line> — over cap, not gated",
             file=sys.stderr,
         )
-        return None
+        return []
 
     if not test_files:
-        return None
+        return []
 
-    # Filter out files already in the declared gate
-    new_test_files = []
-    for tf in test_files:
-        # Check if any existing command already runs this file
-        if not any(tf in cmd for cmd in existing_commands):
-            new_test_files.append(tf)
+    # AC-2: drop files the declared gate already runs IN FULL.  Coverage is
+    # parsed from the declared commands' real pytest file/directory arguments.
+    covered: set[str] = set()
+    for cmd in existing_commands:
+        whole, _node_only, parseable = _declared_command_coverage(cmd)
+        if parseable:
+            covered |= whole
+    new_test_files = [tf for tf in test_files if not _covered_by(tf, covered)]
 
     if not new_test_files:
-        return None
+        return []
 
-    # Build the check command
+    # Build one bounded invocation per basename partition (AC-1).
     suite = _resolve_suite_invocation(project)
     if not suite:
         # No suite configured — use pytest as default
@@ -1250,26 +1470,41 @@ def _synthesize_mention_check(
     if _is_vitest_project(project):
         resolved = _resolve_vitest_runner(project)
         if resolved is None:
-            return {
+            return [{
                 "command": "",
                 "timeout": 300,
                 "scope": "mention",
                 "harness_error": "vitest not resolvable",
-            }
+            }]
         suite = resolved
 
-    files_str = " ".join(new_test_files)
-    cmd = f"{suite} {files_str}"
-    # Append -rfE when declared reds exist, so pytest prints FAILED/ERROR
-    # summary lines that the verdict can parse.
-    if declared:
-        cmd = f"{cmd} -rfE"
+    tree = _tree_identity(project)
+    partitions = _partition_by_basename(new_test_files)
+    checks: list[dict] = []
+    for idx, group in enumerate(partitions):
+        cmd = f"{suite} {' '.join(group)}"
+        # Append -rfE when declared reds exist, so pytest prints FAILED/ERROR
+        # summary lines that the verdict can parse.
+        if declared:
+            cmd = f"{cmd} -rfE"
+        checks.append({
+            "command": cmd,
+            "timeout": 300,
+            "scope": "mention",
+            "files": list(group),
+            "partition_index": idx,
+            "partition_count": len(partitions),
+            "tree_sha": tree,
+        })
+    return checks
 
-    return {
-        "command": cmd,
-        "timeout": 300,
-        "scope": "mention",
-    }
+
+# Compatibility alias: earlier releases returned a single check dict from
+# ``_synthesize_mention_check``.  The inventory is now a list of bounded
+# checks — one per basename partition — and callers that joined every
+# remaining file into one command would re-introduce the collision this
+# refactor exists to remove.  Both names return the same list.
+_synthesize_mention_check = build_mention_gate_inventory
 
 
 def pin_gate_command(cmd: str, env: dict[str, str]) -> str:
@@ -2101,8 +2336,8 @@ def main(argv: list[str]) -> int:
         }))
         return 2
 
-    # AC-1 through AC-7: synthesize mention gate if applicable
-    mention_check = None
+    # AC-1 through AC-7: build the mention-gate inventory if applicable
+    mention_checks: list[dict] = []
     baseline_red: list[dict] = []
     if step is not None:
         # Get pre-iteration head from environment (set by runner)
@@ -2120,7 +2355,7 @@ def main(argv: list[str]) -> int:
                 c.get("command", "") for c in subplan_checks + step_checks
             }
             baseline_red = _read_declared_reds(project)
-            mention_check = _synthesize_mention_check(
+            mention_checks = build_mention_gate_inventory(
                 project, changed_files, existing_commands, baseline_red
             )
 
@@ -2170,12 +2405,13 @@ def main(argv: list[str]) -> int:
             results.append(run_one(c, "subplan", run_cwd))
         for c in step_checks:
             results.append(run_one(c, "step", run_cwd))
-        if mention_check is not None:
+        for mention_check in mention_checks:
             mr = run_one(mention_check, "mention", run_cwd)
             # Verdict: a mention check passes iff exit 0, OR exit 1 and all
             # failing ids are declared baseline_red nodes (by the batch gate's
             # exact rule).  Any other exit code (2, 3, 4, 5, timeout) is a
-            # hard failure — never excused.
+            # hard failure — never excused.  Applied per partition: a red in
+            # any partition blocks advancement.
             excused_ids: list[str] = []
             if mr.exit_code == 1 and baseline_red:
                 from batch_gate import _undeclared_failures  # noqa: E402
@@ -2201,6 +2437,14 @@ def main(argv: list[str]) -> int:
             # Stash excused ids on the result for JSON serialization
             if excused_ids:
                 mr._excused_declared_reds = excused_ids  # type: ignore[attr-defined]
+            # Carry the inventory identity (files / partition / tree) into the
+            # user-visible result: a partition that does not name its files
+            # cannot be checked for "every selected file preserved".
+            mr._inventory_meta = {  # type: ignore[attr-defined]
+                k: mention_check[k]
+                for k in ("files", "partition_index", "partition_count", "tree_sha")
+                if k in mention_check
+            }
 
     passed = all(r.passed for r in results)
 
@@ -2239,12 +2483,14 @@ def main(argv: list[str]) -> int:
         "run_cwd": str(run_cwd),
         "subplan_check_count": len(subplan_checks),
         "step_check_count": len(step_checks),
-        "mention_check_count": 1 if mention_check is not None else 0,
+        "mention_check_count": len(mention_checks),
         "all_passed": passed,
         "outcome": rollup,
         "results": [
-            {**asdict(r), **({"excused_declared_reds": r._excused_declared_reds}
-                             if hasattr(r, "_excused_declared_reds") else {})}
+            {**asdict(r),
+             **({"excused_declared_reds": r._excused_declared_reds}
+                if hasattr(r, "_excused_declared_reds") else {}),
+             **(getattr(r, "_inventory_meta", None) or {})}
             for r in results
         ],
         "head_sha": iso.head_sha,

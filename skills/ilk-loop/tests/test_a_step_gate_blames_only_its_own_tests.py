@@ -81,10 +81,16 @@ def _run_synthesize_mention_check(
     changed_files: list[str],
     baseline_red: list[dict] | None = None,
 ) -> dict | None:
-    """Run _synthesize_mention_check with the given files."""
+    """Run the mention-gate inventory and expose one command view.
+
+    The inventory is a list of bounded checks (one per basename partition).
+    These tests assert on which files the gate selects; a joined view of every
+    partition's command keeps those assertions exactly as strong — a selected
+    file appears in some partition, a dropped file in none.
+    """
     try:
         import run_local_checks as rlc
-        return rlc._synthesize_mention_check(
+        checks = rlc.build_mention_gate_inventory(
             project,
             changed_files,
             existing_commands=set(),
@@ -93,6 +99,9 @@ def _run_synthesize_mention_check(
     except ImportError:
         pytest.skip("run_local_checks not importable")
         return None
+    if not checks:
+        return None
+    return {"command": " ".join(c.get("command", "") for c in checks)}
 
 
 # ── AC-1: the step gate does NOT add importer tests ─────────────────────────
