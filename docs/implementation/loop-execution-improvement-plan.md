@@ -17,13 +17,13 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: exercise the new opt-in code-only path with an actual
-provider and copied production hooks; then consumer checks, remaining
+Current next action: finish acceptance crash recovery through cross-launch
+caller selection; then consumer checks, remaining
 state/lifecycle adapters and activation. D1 POSIX callers and D2 private launch
 inputs now have production-entry candidate evidence. C3 preparation/acceptance/
 repair is wired but remains disabled by default. Actual-base provenance and
 Windows/member/dirty-entry adapters remain open. Continue here per Chad:
-“no more handover, until the whole thing done”. Overall estimate 42% is a
+“no more handover, until the whole thing done”. Overall estimate 44% is a
 judgment against delivered/installed/measured scope, not a checkbox count.
 
 Old run `20261011-102057` timed out by itself. Old run `20261011-130246`
@@ -746,3 +746,20 @@ No completion/ship/proof markers are inferred from this human tracker.
   A durability failure on an otherwise green command remains failed/unknown.
   10 focused capture/driver-acceptance checks passed in 4.55s. This closes
   capture persistence only; commit/CAS/receipt crash recovery remains open.
+- Actual-provider full Bash entry at `4e50a9f7` passed: MiMo v2.6 PRO, eight
+  copied production hooks, 86.314s observed CLI and 91.848s fixture wall time,
+  one driver gate attempt, accepted commit/pointer advance, shipped marker,
+  positive integrity and journal explanation, closed proof, `all-shipped`,
+  registry clear and source home unchanged. This establishes the composed
+  provider/hook/caller capability, not representative speed or installed
+  delivery. Private evidence: external `full-entry-provider-quoted/`.
+- Driver writes a durable provisional acceptance receipt before CAS, then
+  records advancement. Same frozen-transaction recovery verifies exact
+  context/contracts, committed and working trees, full-capture hashes, holds
+  and journal explanation before completing or observing one advancement.
+  Worker helper checks this before another provider call. 15 focused checks
+  passed in 8.73s, including interruption before/after CAS and five refusal
+  cases. This is not batch proof or general gate reuse. Cross-launch selection
+  of that original transaction and earlier commit/receipt crash gaps remain
+  open; do not activate until caller recovery is complete. Overall 44% is a
+  judgment over delivered/installed/measured scope. Continue here by hand.

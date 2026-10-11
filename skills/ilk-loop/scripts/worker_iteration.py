@@ -23,7 +23,7 @@ from iteration_context import read_context,read_dispatch,ContextError
 from worker_dispatch import binding
 from worker_shell import canonical_command
 from run_registry import register_child
-from driver_step import accept_step
+from driver_step import accept_step,recover_acceptance
 from recovery import read_retry_state,update_retry_state,save_notice
 from gate_retry import decide_gate_retry
 
@@ -140,6 +140,10 @@ def run(context,path,prompt,*,claude,model,budget,mcp,gate_timeout,turn=worker_t
     # Validate both durable histories BEFORE any provider call. Corruption
     # cannot reset the retry budget or be ignored on a first green result.
     read_retry_state(counts,'count');read_retry_state(ids_path,'ids')
+    recovered=recover_acceptance(context,deadline=context['iteration_deadline_monotonic'])
+    if recovered:
+        recovered.update(worker_turns=[])
+        return recovered
     session=None;attempts=[];turns=[];remaining_budget=budget
     while monotonic()<context['iteration_deadline_monotonic']:
         phase(context,'agent')

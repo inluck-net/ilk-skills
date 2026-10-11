@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from contextvars import ContextVar
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -143,6 +144,84 @@ def accept_step(context,*,default_timeout,deadline):
     finally:_deadline.reset(token)
 
 
+def _acceptance_receipt(context):
+    identity=json.dumps([context['run_id'],context['iteration']],separators=(',',':'))
+    return Path(context['runtime_dir'])/'launcher/driver-step'/('acceptance-'+hashlib.sha256(identity.encode()).hexdigest()+'.json')
+
+
+def _save_acceptance(context,result,phase):
+    """Write ahead of pointer mutation; this is provisional, never ship proof."""
+    target=_acceptance_receipt(context);target.parent.mkdir(parents=True,exist_ok=True)
+    captures=[]
+    for attempt in result['attempts']:
+        for check in attempt['check_observations']:
+            for channel in ('stdout','stderr'):
+                path=Path(check[channel+'_path'])
+                captures.append(dict(path=str(path),sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+    row=dict(schema_version=1,phase=phase,context_sha256=hashlib.sha256(json.dumps(context,sort_keys=True).encode()).hexdigest(),
+             result=result,captures=captures)
+    with tempfile.NamedTemporaryFile(mode='w',dir=target.parent,delete=False) as stream:
+        temporary=Path(stream.name);json.dump(row,stream);stream.flush();os.fsync(stream.fileno())
+    try:
+        temporary.chmod(0o600);os.replace(temporary,target)
+        from plan_state import _sync_parent
+        _sync_parent(target)
+    finally:temporary.unlink(missing_ok=True)
+
+
+def recover_acceptance(context,*,deadline):
+    token=_deadline.set(deadline)
+    try:
+        remaining()
+        return _recover_acceptance(context)
+    finally:_deadline.reset(token)
+
+
+def _recover_acceptance(context):
+    """Finish only this frozen transaction's commit-to-CAS/receipt crash gap.
+
+    No provider dispatch, different tree, fresh context or general gate reuse.
+    The launcher still needs its cross-launch transaction selection adapter.
+    """
+    if os.environ.get('ILK_WORKER_SESSION','').strip():raise ContextError('worker cannot recover acceptance')
+    target=_acceptance_receipt(context)
+    if not target.exists():return None
+    row=json.loads(target.read_text())
+    fingerprint=hashlib.sha256(json.dumps(context,sort_keys=True).encode()).hexdigest()
+    if row.get('schema_version')!=1 or row.get('phase') not in {'prepared','advanced'} or row.get('context_sha256')!=fingerprint:
+        raise ContextError('acceptance recovery identity changed')
+    result=row['result'];selected=read_dispatch(context);path=Path(selected['subplan_path']);root=root_for_plan(context,path)
+    for snapshot in list(context['plans'].values())+([context['master_snapshot']] if context.get('master_snapshot') else []):
+        if plan_snapshot(Path(snapshot['path'])).get('fingerprint')!=snapshot.get('fingerprint'):
+            raise ContextError('acceptance recovery contract changed')
+    if context.get('master_snapshot'):
+        snapshot=context['master_snapshot'];observed=parse_frontmatter(Path(snapshot['path']).read_text())
+        if any(observed.get(key)!=value for key,value in snapshot['owned_state'].items()):
+            raise ContextError('acceptance recovery master state changed')
+    attempt=result['attempts'][-1]
+    if (result.get('accepted') is not True or not result.get('proof_provisional') or not attempt.get('all_passed')
+            or not attempt.get('gate_tree_unchanged') or result.get('tree')!=attempt.get('working_tree')):
+        raise ContextError('acceptance recovery has no exact green attempt')
+    if git(root,'rev-parse','HEAD')!=result['head_commit'] or git(root,'rev-parse','HEAD^{tree}')!=result['tree'] or working_tree(root)!=result['tree']:
+        raise ContextError('acceptance recovery tree changed')
+    for capture in row['captures']:
+        if hashlib.sha256(Path(capture['path']).read_bytes()).hexdigest()!=capture['sha256']:
+            raise ContextError('acceptance recovery capture changed')
+    state=parse_frontmatter(path.read_text())
+    if state.get('current_step')==str(selected['step']):
+        validate(context)
+        guards={Path(context['master_snapshot']['path']):context['master_snapshot']['owned_state']} if context.get('master_snapshot') else {}
+        transition(path,{'current_step':state['current_step'],'status':state.get('status')},
+            {'current_step':selected['step']+1,'status':'in-progress'},actor='driver',
+            reason='recover exact gated acceptance transaction',guards=guards)
+    elif state.get('current_step')!=str(selected['step']+1) or state.get('status')!='in-progress' or state.get('hold')=='human':
+        raise ContextError('acceptance recovery pointer or hold changed')
+    from plan_state import audit_context
+    if not audit_context(context)['explained']:raise ContextError('acceptance recovery state is unexplained')
+    _save_acceptance(context,result,'advanced')
+    return dict(result,recovered_acceptance=True)
+
+
 def _accept_step(context,*,default_timeout):
     selected,path,root,state=validate(context)
     if git(root,'rev-parse','HEAD')!=context['base_commit']:raise ContextError('worker changed HEAD')
@@ -180,11 +259,14 @@ def _accept_step(context,*,default_timeout):
     guards={}
     if context.get('master_snapshot'):
         row=context['master_snapshot'];guards[Path(row['path'])]=row['owned_state']
+    result=dict(accepted=True,commits=commits,attempts=attempts,head_commit=git(root,'rev-parse','HEAD'),
+                tree=committed_tree,commit_started_monotonic=commit_started,commit_ended_monotonic=commit_ended,
+                proof_provisional=True)
+    _save_acceptance(context,result,'prepared')
     transition(path,{'current_step':state['current_step'],'status':state.get('status')},
                {'current_step':selected['step']+1,'status':'in-progress'},actor='driver',reason='driver gated exact accepted tree',guards=guards)
-    return dict(accepted=True,commits=commits,attempts=attempts,head_commit=git(root,'rev-parse','HEAD'),
-                tree=committed_tree,commit_started_monotonic=commit_started,commit_ended_monotonic=commit_ended,
-                proof_provisional=True) # Integrity, landing and close-record projection remain caller-owned.
+    _save_acceptance(context,result,'advanced')
+    return result # Integrity, landing and close-record projection remain caller-owned.
 
 
 def project_result(result,context):
