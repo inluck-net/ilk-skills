@@ -885,7 +885,7 @@ def audit_execution_root(cwd,subplan_path,master_path):
     """Use the exact frozen tree, or a validated exact master's declared tree."""
     from iteration_context import read_context,root_for_plan,validate_work_tree_binding,ContextError
     context=read_context()
-    if context and subplan_path:
+    if context and subplan_path and Path(subplan_path).name in context.get("plans",{}):
         validate_work_tree_binding(context)
         return root_for_plan(context,Path(subplan_path))
     if not cwd or not master_path:return cwd

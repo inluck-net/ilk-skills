@@ -159,6 +159,24 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- Consumer compatibility locally installed: clean gh-resolve main fast-forwarded
+  d67f26b4 → 8472771f after 27 focused checks passed in 0.26s. Reap/GC/drain
+  launchd services were freshly idle (active count zero), briefly unloaded to
+  exclude activation races, then restored from unchanged original plists.
+  No worker interrupted, no release/publication, upgrade drain remains opt-in.
+  Evidence consumer-compat-install-20261011/installed.json. Installed reader
+  safety is now available for a controlled accepted-step upgrade experiment.
+- b6f95947 archived entry checks initially failed 2/4 in 21.66s: integrity
+  passed clone root despite worktree acceptance, and completed proof audited
+  clone history. e29c258a corrects integrity to frozen observation and proof
+  to frozen/exact validated master worktree. Archived normal/worktree/recovery/
+  gate-first callers: 4 passed in 21.96s. Additional prior-plan proof checks
+  initially exposed 7/12 failures from consulting a later context for a plan
+  outside its registry; exact-master fallback corrects that. 12 proof checks
+  now pass in 8.78s. Main installed toolkit still 2c3b4039; these corrections
+  need the next verified activation boundary.
+
+
 - Declared-worktree adapter now freezes exact master/root, shared Git store and
   Git-indirection identity. Acceptance/recovery revalidate the binding, retain
   original transaction authority and close without landing into the source
