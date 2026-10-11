@@ -202,7 +202,7 @@ def _recover_acceptance(context):
     if not target.exists():return None
     row=json.loads(target.read_text())
     fingerprint=hashlib.sha256(json.dumps(context,sort_keys=True).encode()).hexdigest()
-    if row.get('schema_version')!=1 or row.get('phase') not in {'prepared','advanced'} or row.get('context_sha256')!=fingerprint:
+    if row.get('schema_version')!=1 or row.get('phase') not in {'commit-intent','prepared','advanced'} or row.get('context_sha256')!=fingerprint:
         raise ContextError('acceptance recovery identity changed')
     result=row['result'];selected=read_dispatch(context);path=Path(selected['subplan_path']);root=root_for_plan(context,path)
     for snapshot in list(context['plans'].values())+([context['master_snapshot']] if context.get('master_snapshot') else []):
@@ -213,13 +213,15 @@ def _recover_acceptance(context):
         if any(observed.get(key)!=value for key,value in snapshot['owned_state'].items()):
             raise ContextError('acceptance recovery master state changed')
     attempt=result['attempts'][-1]
-    if (result.get('accepted') is not True or not result.get('proof_provisional') or not attempt.get('all_passed')
+    intended=row['phase']=='commit-intent'
+    if (result.get('accepted') is not (not intended) or not result.get('proof_provisional') or not attempt.get('all_passed')
             or not attempt.get('gate_tree_unchanged') or result.get('tree')!=attempt.get('working_tree')):
         raise ContextError('acceptance recovery has no exact green attempt')
-    _transaction_head(context,result)
     for capture in row['captures']:
         if hashlib.sha256(Path(capture['path']).read_bytes()).hexdigest()!=capture['sha256']:
             raise ContextError('acceptance recovery capture changed')
+    if intended:result=_recover_commit_intent(context,result)
+    _transaction_head(context,result)
     state=parse_frontmatter(path.read_text())
     if state.get('current_step')==str(selected['step']):
         validate(context)
@@ -233,6 +235,46 @@ def _recover_acceptance(context):
     if not audit_context(context)['explained']:raise ContextError('acceptance recovery state is unexplained')
     _save_acceptance(context,result,'advanced')
     return dict(result,recovered_acceptance=True)
+
+
+def _commit_message(selected):
+    return f"{selected.get('slug','step')}: driver accepted step {selected['step']} [plan:{selected.get('slug','step')}#step-{selected['step']}]"
+
+
+def _recover_commit_intent(context,result):
+    """Complete the original staged transaction, never adopt another commit."""
+    selected,path,root,_=validate(context)
+    head=git(root,'rev-parse','HEAD');base=context['base_commit'];tree=result['tree']
+    if head==base:
+        if working_tree(root)!=tree:raise ContextError('commit intent working tree changed')
+        index=git(root,'write-tree')
+        if index not in {context['base_tree'],tree}:raise ContextError('commit intent index changed')
+        git(root,'add','-A','--','.')
+        if git(root,'write-tree')!=tree:raise ContextError('commit intent staging tree changed')
+        git(root,'commit','-m',_commit_message(selected))
+        head=git(root,'rev-parse','HEAD')
+    elif (git(root,'rev-list','--parents','-n','1',head).split()!=[head,base]
+            or git(root,'show','-s','--format=%B',head)!=_commit_message(selected)):
+        raise ContextError('commit intent has unrelated HEAD')
+    committed_tree=git(root,'rev-parse','HEAD^{tree}')
+    if working_tree(root)!=committed_tree:raise ContextError('commit intent hook left uncommitted changes')
+    kernel=context.get('kernel_list') or {}
+    if kernel.get('loop_kernel_policy')=='owner-only':
+        from safety_kernel import touches_kernel
+        if any(touches_kernel(name,kernel=kernel) for name in git(root,'diff','--name-only',base,committed_tree).splitlines()):
+            raise ContextError('commit intent changed frozen owner kernel')
+    attempts=result['attempts']
+    if committed_tree!=tree:
+        # A hook-modified tree needs a fresh authoritative gate; the previous
+        # output remains diagnostic and cannot cover this new shipping tree.
+        attempt=gate(context,root,path,selected,default_timeout=result['gate_timeout'])
+        attempts=attempts+[attempt]
+        if not attempt['all_passed']:raise ContextError('committed intent fresh gate is red or incomplete')
+    validate(context)
+    recovered=dict(result,accepted=True,commits=[head],head_commit=head,tree=committed_tree,
+                   attempts=attempts,commit_ended_monotonic=monotonic())
+    _save_acceptance(context,recovered,'prepared')
+    return recovered
 
 
 def _transaction_head(context,result):
@@ -268,9 +310,12 @@ def _accept_step(context,*,default_timeout):
             from safety_kernel import touches_kernel
             if any(touches_kernel(name,kernel=kernel) for name in git(root,'diff','--name-only',context['base_commit'],tree).splitlines()):
                 raise ContextError('worker changed frozen owner kernel')
+        _save_acceptance(context,dict(accepted=False,commits=[],attempts=[attempt],
+            head_commit=context['base_commit'],tree=tree,gate_timeout=default_timeout,
+            commit_started_monotonic=commit_started,proof_provisional=True),'commit-intent')
         git(root,'add','-A','--','.')
         if git(root,'write-tree')!=tree:raise ContextError('tree changed between gate and commit')
-        git(root,'commit','-m',f"{selected.get('slug','step')}: driver accepted step {selected['step']} [plan:{selected.get('slug','step')}#step-{selected['step']}]")
+        git(root,'commit','-m',_commit_message(selected))
         commits=[git(root,'rev-parse','HEAD')]
     commit_ended=monotonic();attempts=[attempt]
     committed_tree=git(root,'rev-parse','HEAD^{tree}')

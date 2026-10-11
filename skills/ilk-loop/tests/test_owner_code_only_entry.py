@@ -13,7 +13,7 @@ pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='Mac production entr
 ROOT=Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize('case',['normal','hold','pending-advance','two-plans'])
+@pytest.mark.parametrize('case',['normal','hold','pending-advance','pending-staged','pending-committed','two-plans'])
 def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,monkeypatch,case):
     human_hold_during_gate=case=='hold'
     spec=importlib.util.spec_from_file_location('entry_fixture',Path(__file__).with_name('test_pre_loop_exit_sentinel.py'))
@@ -56,7 +56,7 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
     inputs=tmp_path/'inputs';manifest=prepare(ROOT,home,inputs)
     pin_launch_resources(inputs,project=work,executables={'python':sys.executable,'claude':str(cli)})
     code=Path(manifest['code_root'])
-    if case=='pending-advance':
+    if case.startswith('pending-'):
         from iteration_context import resolve_context,write_context
         from iteration_clock import monotonic
         import driver_step
@@ -71,11 +71,21 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         def crash(*args,**kwargs):
             real(*args,**kwargs)
             raise RuntimeError('fixture lost caller after advancement')
+        real_git=driver_step.git
+        def crash_git(root,*args,**kwargs):
+            answer=real_git(root,*args,**kwargs)
+            if (case=='pending-staged' and args[:2]==('add','-A') and kwargs.get('env') is None
+                    or case=='pending-committed' and args[0]=='commit'):
+                raise RuntimeError('fixture lost caller at commit')
+            return answer
         with monkeypatch.context() as patch:
-            patch.setenv('ILK_ITER_CONTEXT',str(frozen));patch.setattr(driver_step,'transition',crash)
+            patch.setenv('ILK_ITER_CONTEXT',str(frozen))
+            if case=='pending-advance':patch.setattr(driver_step,'transition',crash)
+            else:patch.setattr(driver_step,'git',crash_git)
             with pytest.raises(RuntimeError):
                 driver_step.accept_step(context,default_timeout=10,deadline=monotonic()+10)
-        assert 'current_step: 1' in plan.read_text() and 'status: shipped' not in plan.read_text()
+        assert ('current_step: 1' if case=='pending-advance' else 'current_step: 0') in plan.read_text()
+        assert 'status: shipped' not in plan.read_text()
     env=dict(os.environ,HOME=str(tmp_path),ILK_DATA_HOME=str(world['data_home']),ILK_DATA_DIR=str(world['data_home']),
         ILK_SKILL_HOME=str(code/'skills'),ILK_CODE_ROOT=str(code),ILK_RUN_INPUTS=str(inputs),
         CLAUDE_CONFIG_DIR=manifest['worker_home'],ILK_CLAUDE_BIN=str(cli),ILK_WORKER_MODE='code-only',
@@ -104,7 +114,7 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             assert (home/'settings.json').read_bytes()==original
             assert not project_status(runtime)['busy']
             return
-        if case=='pending-advance':
+        if case.startswith('pending-'):
             assert terminal['state']=='already-shipped',(terminal,stdout[-4500:],stderr[-4500:])
             assert process.returncode==0
             assert 'status: shipped' in plan.read_text()

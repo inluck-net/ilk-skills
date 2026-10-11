@@ -6,6 +6,56 @@ from iteration_context import ContextError
 from test_owner_driver_step import fixture
 
 
+@pytest.mark.parametrize('boundary',['staged','committed'])
+def test_commit_intent_recovers_before_receipt_without_duplicate_commit(tmp_path,monkeypatch,boundary):
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    context,root,plan=fixture(tmp_path)
+    (root/'counter.py').write_text('def f(value): return value + 2\n')
+    real=driver_step.git
+    def crash(root,*args,**kwargs):
+        answer=real(root,*args,**kwargs)
+        if (boundary=='staged' and args[:2]==('add','-A') and kwargs.get('env') is None
+                or boundary=='committed' and args[0]=='commit'):
+            raise RuntimeError('fixture lost caller after '+boundary)
+        return answer
+    monkeypatch.setattr(driver_step,'git',crash)
+    with pytest.raises(RuntimeError,match='lost caller'):
+        driver_step.accept_step(context,default_timeout=10,deadline=monotonic()+10)
+    monkeypatch.setattr(driver_step,'git',real)
+    result=driver_step.recover_acceptance(context,deadline=monotonic()+10)
+    assert result['accepted'] and len(result['attempts'])==1 and len(result['commits'])==1
+    assert 'current_step: 1' in plan.read_text()
+    assert len(real(root,'rev-list',context['base_commit']+'..HEAD').splitlines())==1
+
+
+@pytest.mark.parametrize('hook_green',[False,True])
+def test_committed_intent_hook_tree_requires_fresh_gate(tmp_path,monkeypatch,hook_green):
+    from pathlib import Path
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    context,root,plan=fixture(tmp_path)
+    (root/'counter.py').write_text('def f(value): return value + 2\n')
+    hook=Path(driver_step.git(root,'rev-parse','--git-path','hooks'))/'pre-commit'
+    hook.write_text("#!/bin/sh\nprintf '%s\\n' 'def f(value): return value + "+('2 # hook' if hook_green else '3')+"' > counter.py\ngit add counter.py\n")
+    hook.chmod(0o700)
+    real=driver_step.git
+    def crash(root,*args,**kwargs):
+        answer=real(root,*args,**kwargs)
+        if args[0]=='commit':raise RuntimeError('fixture committed')
+        return answer
+    monkeypatch.setattr(driver_step,'git',crash)
+    with pytest.raises(RuntimeError):driver_step.accept_step(context,default_timeout=10,deadline=monotonic()+10)
+    monkeypatch.setattr(driver_step,'git',real)
+    if hook_green:
+        result=driver_step.recover_acceptance(context,deadline=monotonic()+10)
+        assert len(result['attempts'])==2 and result['attempts'][-1]['all_passed']
+        assert result['attempts'][0]['working_tree']!=result['attempts'][1]['working_tree']
+        assert 'current_step: 1' in plan.read_text()
+    else:
+        with pytest.raises(ContextError,match='fresh gate is red'):
+            driver_step.recover_acceptance(context,deadline=monotonic()+10)
+        assert 'current_step: 0' in plan.read_text()
+
+
 @pytest.mark.parametrize('after_advance',[False,True])
 def test_same_frozen_transaction_recovers_before_or_after_cas(tmp_path,monkeypatch,after_advance):
     monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)

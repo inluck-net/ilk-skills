@@ -17,8 +17,8 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: close earlier commit and post-marker recovery gaps,
-owner-death child cleanup and selfmod/consumer recovery adapters; then remaining
+Current next action: check archived pre-receipt commit recovery, then finish
+leaderless-child cleanup and selfmod/consumer recovery adapters; then remaining
 state/lifecycle adapters and activation. D1 POSIX callers and D2 private launch
 inputs now have production-entry candidate evidence. C3 preparation/acceptance/
 repair is wired but remains disabled by default. Actual-base provenance and
@@ -152,6 +152,16 @@ output/context work; verify current state at the actual landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- 2026-10-11 B3 earlier commit gap candidate: fsynced commit intent precedes
+  staging/commit. Same frozen-context recovery finishes only its intended index
+  or exact one-parent driver commit, with original capture hashes and holds.
+  A hook-modified shipping tree receives a new authoritative gate; red refuses
+  advancement. Fifteen focused driver/recovery checks passed in 8.01s, then 11
+  intent/hook recovery checks in 5.11s. Archived new startup cases are next.
+  D1 normal-close cleanup/registry/dispatch checks: 26 passed in 4.25s; archived
+  normal and two-subplan entries at `ee054263`: 2 passed in 18.16s. These are
+  capability checks with a provider stub, not a model speed comparison.
 
 - 2026-10-11 D1/C5 native cleanup candidate: CLI, broker shells and driver
   gate/Git children register their own group before exec, avoiding fast-child
