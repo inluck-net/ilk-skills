@@ -4,7 +4,7 @@ This is a local preview, not a published release. The durable
 [implementation tracker](loop-execution-improvement-plan.md) records the
 installed commit, checked consumer version, measurements and remaining work.
 The supported owned profile is macOS with a clean entry in one repository,
-including checked fresh selfmod and declared-worktree acceptance. Windows,
+including checked fresh selfmod and declared-worktree acceptance and upgrades. Windows,
 member-repository and arbitrary/timeout dirty-entry owned adapters remain unavailable; use the
 existing legacy workflow for those cases. Legacy fallback retains legacy
 worker authority.
@@ -140,3 +140,11 @@ unfinished owners without duplicate checks or findings. Initially human-held
 owners refuse before any revision. Human edits after a partial return require
 owner handling; the operation does not claim atomic replacement across files.
 This path is a recovery adapter, not permission to run final verification.
+
+
+Declared-worktree upgrades preserve the existing absolute `work_tree` binding.
+The driver rechecks the master declaration, Git indirection identity and common
+Git store under the original deadline. Consumer guards carry both clone and
+execution roots; the launcher retains the original master, limits and budget.
+The full two-launch declared-worktree drain fixture passed in 29.83s. This does
+not permit hot replacement of active workers or reusing a gate outcome.

@@ -3452,6 +3452,16 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
   under the original deadline; both clone and execution roots are carried in
   consumer guards. It preserves the declared worktree through launcher relaunch.
   Request/target protocol integers are strict and contradictory non-green
-  acceptance shapes refuse. Focused owned drain checks passed in 0.53s (actual
-  output to be corrected if the completed tool result reports a different time).
+  acceptance shapes refuse. Focused owned drain checks passed in 0.55s.
   Next: committed archived declared-worktree drain and actual launcher activation.
+
+
+- D4 declared-worktree drain archived evidence: the full runner drained after
+  the first accepted step, the actual launcher selected unused new inputs while
+  retaining the master and original 1-iteration/1-minute limits, and the next
+  launch shipped the remaining step in the same declared execution tree.
+  One production-entry fixture passed in 29.83s. No live controller, consumer
+  claim or shared worktree was used. Final verification remained off.
+  This adds supported Mac declared-worktree lifecycle behavior, not native
+  Windows or member-repository ownership. Remaining source/exec settings role
+  agreement is under audit before claiming full D1/D2 closure.
