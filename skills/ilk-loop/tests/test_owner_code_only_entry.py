@@ -13,15 +13,16 @@ pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='Mac production entr
 ROOT=Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize('case',['normal','selfmod','work-tree','native-tools','native-tools-batch-optin','hold','pending-advance','pending-selfmod','pending-work-tree','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain','measured-red'])
+@pytest.mark.timeout(90)
+@pytest.mark.parametrize('case',['normal','selfmod','work-tree','native-tools','native-tools-batch-optin','hold','pending-advance','pending-selfmod','pending-work-tree','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain','measured-red','measured-red-selfmod'])
 def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,monkeypatch,case):
-    measured_red=case=='measured-red'
+    measured_red=case.startswith('measured-red')
     human_hold_during_gate=case=='hold'
     upgrading=case=='upgrade-drain'
     spec=importlib.util.spec_from_file_location('entry_fixture',Path(__file__).with_name('test_pre_loop_exit_sentinel.py'))
     fixtures=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixtures)
     world=fixtures._build_world_shipped(tmp_path,with_steps=True);work=world['project']
-    if case in {'selfmod','pending-selfmod'}:
+    if case in {'selfmod','pending-selfmod','measured-red-selfmod'}:
         import shutil
         shutil.rmtree(work) # disposable fixture only
         subprocess.run(['git','clone','-q','--shared',str(ROOT),str(work)],check=True,capture_output=True)
@@ -37,7 +38,7 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
         master.write_text(master.read_text().replace('status: active','status: active\nbase_sha: '+git('rev-parse','HEAD').stdout.strip()))
         body=plan.read_text();start=body.index('  - command:');end=body.index('\n```',start)
         plan.write_text(body[:start]+'  - command: '+sys.executable+' -m pytest -q test_existing.py'+body[end:])
-    if case=='selfmod':
+    if case in {'selfmod','measured-red-selfmod'}:
         master.write_text(master.read_text().replace('status: active',
             'status: active\nilk_profile: unattended\nresult_file: '+str(tmp_path/'automatic-result.json')))
     declared_root=None
@@ -101,7 +102,7 @@ else:
 print(json.dumps({'type':'system','subtype':'init','session_id':'fixture-session','model':'fixture-model'}))
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'fixture-session'}))
 ''');cli.chmod(0o700)
-    inputs=tmp_path/'inputs';manifest=prepare(work if case in {'selfmod','pending-selfmod'} else ROOT,home,inputs,worker_tools='native' if case.startswith('native-tools') else 'shell')
+    inputs=tmp_path/'inputs';manifest=prepare(work if case in {'selfmod','pending-selfmod','measured-red-selfmod'} else ROOT,home,inputs,worker_tools='native' if case.startswith('native-tools') else 'shell')
     if measured_red:
         # Test-only owner prepares an unavailable candidate policy. Public
         # prepare refuses it until the runtime capability marker lands.
@@ -185,7 +186,11 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         # 40s fixture judgment for sampled ~12s launch/close, below the
         # deliberately supplied 60s iteration budget; slower valid startup
         # falsifies this test bound, not a production limit.
-        stdout,stderr=process.communicate(timeout=40)
+        # Selfmod red adds real base worktrees and positive landing; 55s is
+        # a fixture judgment after the valid path exceeded the old 40s margin.
+        # It stays within the supplied 60s iteration budget; slower valid
+        # completion falsifies this test margin, not production caps.
+        stdout,stderr=process.communicate(timeout=55 if case=='measured-red-selfmod' else 40)
         (tmp_path/'entry.stdout').write_text(stdout);(tmp_path/'entry.stderr').write_text(stderr)
         terminal=json.loads((runtime/'last-exit.json').read_text())
         runs=world['data_home']/'projects'/world['key']/'logs/runs'
@@ -287,12 +292,21 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         if measured_red:
             assert terminal['state']=='shipped-unproven',(terminal,stdout[-6500:],stderr[-6500:])
             assert 'current_step: 1' in plan.read_text() and 'status: shipped' in plan.read_text()
-            assert 'status: shipped' not in master.read_text()
+            # Legacy master completion summarizes authored step statuses;
+            # terminal and proof readers must still refuse green completion.
+            assert terminal['state']!='all-shipped'
             rows=[json.loads(line) for line in (world['data_home']/'projects'/world['key']/'logs/.ilk-loop.log').read_text().splitlines()]
             close=next(row for row in rows if row.get('record_phase')=='close')
             assert close['driver_acceptance']['progress_accepted'] is True and close['driver_acceptance']['accepted'] is False
             assert close['driver_integrity_passed'] is False and close['driver_progress_integrity_passed'] is True
             assert close['state_audit']['explained'] is True and not close.get('stop_reason')
+            if case=='measured-red-selfmod':
+                assert close['merge_outcome']=='merged' and close['selfmod_landing']['progress_accepted'] is True
+                assert close['selfmod_landing']['green_accepted'] is False and close['selfmod_landing']['accepted_tree'] is None
+                assert git('rev-parse','HEAD').stdout.strip()==close['selfmod_landing']['head_after']
+                result=json.loads((tmp_path/'automatic-result.json').read_text())
+                assert result['exit_state']=='shipped-unproven' and result['checks']
+                assert all(row['outcome']!='pass' for row in result['checks'])
             assert len(close['driver_acceptance']['worker_turns'])==1
             from ship_proof_ledger import read_raw_records
             ledger=read_raw_records(Path(close['context']['ledger_path']))

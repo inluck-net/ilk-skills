@@ -461,3 +461,18 @@ failed checks and named unproven reasons. This finishes a sub-plan for next
 selection without asserting green proof. Actual Mac combined lifecycle checks
 are recorded in the tracker; runtime/consumer wiring and marker-crash tests
 remain required before enabling the protocol.
+
+
+Candidate runtime integration now exists in `worker_iteration.run`,
+`driver_step.project_result`, the Bash progress/integrity branches, explicit
+`selfmod_landing --progress` and `progress_close` CLI. Frozen protocol opt-in is
+required; raw gate fail and green integrity false survive close. Dispatch close
+positively retires absent registered groups and refuses reused identities.
+Plain archived Mac entry has measured `shipped-unproven` evidence; selfmod
+runtime checks and safe consumer delivery remain pending. Preparation refuses
+these candidates until the runtime capability marker lands. Consumer owner
+`reap._check_ship_proof` now refuses non-green progress rows, including beside
+older green rows without independently established supersession; that change
+is not installed yet. Final verification stays opt-in. Immediate metadata
+reads are batched/deduplicated only inside the same validated owner operation;
+this is not gate reuse and does not restore the plan 07m R1/R2 false-green path.

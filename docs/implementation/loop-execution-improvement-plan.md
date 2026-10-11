@@ -3024,3 +3024,35 @@ absent children/groups and refuse reused/moved identities. No live-run cleanup
 performed. Rerun required before runtime availability. Also found consumer
 `reap._check_ship_proof` currently treats loop provenance alone as proof; must
 reject non-green progress rows before exposing this new profile to consumers.
+
+
+### Real runner boundary and consumer proof guard — 2026-10-12
+
+After positive registry retirement, plain Mac archived runner **1 passed / 15
+ deselected in 28.43s**: one stub provider turn, actual failed head/base pytest
+checks, step/marker/status completion, closed non-green ledger and terminal
+`shipped-unproven`. Legacy master status summarizes completed authored steps;
+it is not green proof. An earlier overstrict fixture master-status assertion
+failed **27.95s** and was corrected to check terminal/proof behavior.
+
+Consumer owner checkpoint **4f74ae4e** rejects non-green progress/closed rows,
+including alongside older green rows that this reader cannot establish as
+superseding exact-tree verification. Regression measured **2 failed in 0.11s**
+before fix; affected proof/slug/reconcile callers **39 passed in 1.28s** after
+fix (one pre-existing invalid-escape warning). Consumer main is still 2cb713ae;
+no live consumer installation or publication occurred.
+
+Green+red-selfmod runner selection: **1 passed, 1 failed, 15 deselected in
+57.07s**, failure at fixture 40s outer limit, not a measured production stall.
+Candidate now removes redundant immediate HEAD/tree/working-tree reads after
+`_transaction_head`, redundant assessment revalidation after `project`, and
+batches marker parent/tree/message reads from immutable commit objects. No
+prior gate outcome reuse. New selfmod fixture 55s outer / 90s test envelope are
+judgments based on observed >40s path, bounded by unchanged 60s iteration
+budget; slower valid completion falsifies the fixture margin. Checks pending.
+Runtime capability marker remains absent, so normal preparation still refuses
+this partial delivery. Next: metadata/recovery checks, fresh archived selfmod
+entry, consumer safe activation and only then profile availability.
+
+Metadata/projection/strict-green landing/child retirement focused selection:
+**15 passed in 18.68s** (model none). Fresh committed archive selfmod entry next.

@@ -50,8 +50,7 @@ def complete(context,result,*,deadline):
         from progress_projection import project
         project(context,result,deadline=deadline)
         selected=read_dispatch(context);path=Path(selected['subplan_path']);root=Path(context['exec_tree'])
-        # Transfer this exact transaction's fresh evidence, never another gate.
-        transaction._decision(context,result['attempts'][-1],result['progress_observation'])
+        # project just verified this transaction's exact fresh evidence.
         authored=count_authored_steps(path.read_text());state=parse_frontmatter(path.read_text())
         if not authored or authored!=list(range(len(authored))):raise ContextError('unproven ship authored step inventory invalid')
         if selected['step']+1!=len(authored):return None # Intermediate progress stays in-progress.

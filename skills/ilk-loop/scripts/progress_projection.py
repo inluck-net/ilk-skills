@@ -26,10 +26,7 @@ def project(context,result,*,deadline):
         selected=read_dispatch(context);root=Path(context['exec_tree'])
         transaction._decision(context,result['attempts'][-1],result['progress_observation'])
         head=transaction.driver._transaction_head(context,result)
-        if (transaction.driver.git(root,'rev-parse','HEAD')!=head
-                or transaction.driver.git(root,'rev-parse','HEAD^{tree}')!=result['tree']
-                or transaction.driver.working_tree(root)!=result['tree']):
-            raise ContextError('progress projection tree changed')
+        # _transaction_head just validated actual HEAD, tree and working tree.
         state=parse_frontmatter(Path(selected['subplan_path']).read_text())
         if (state.get('current_step')!=str(selected['step']+1) or state.get('status') not in {'in-progress','shipped'}
                 or state.get('hold')=='human' or audit_context(context).get('explained') is not True):

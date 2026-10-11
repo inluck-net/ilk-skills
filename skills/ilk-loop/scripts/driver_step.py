@@ -501,9 +501,10 @@ def _transaction_head(context,result):
     git(root,'merge-base','--is-ancestor',result['head_commit'],head)
     selected=read_dispatch(context);needle=f"[plan:{selected['slug']}#ship]"
     for commit in git(root,'rev-list',result['head_commit']+'..'+head).splitlines():
-        parents=git(root,'rev-list','--parents','-n','1',commit).split()
-        if (len(parents)!=2 or needle not in git(root,'show','-s','--format=%B',commit)
-                or git(root,'rev-parse',commit+'^{tree}')!=result['tree']):
+        # One immutable commit-object read carries parents, tree and message.
+        # This batches metadata only; no gate outcome is cached or substituted.
+        parents,tree,message=git(root,'show','-s','--format=%P%n%T%n%B',commit).split('\n',2)
+        if (len(parents.split())!=1 or needle not in message or tree!=result['tree']):
             raise ContextError('acceptance recovery has unrelated follow-on commits')
     return head
 
