@@ -636,3 +636,11 @@ No completion/ship/proof markers are inferred from this human tracker.
   earlier candidate terminal states absent from collector; all now map to
   self-hosting-drift / needs-human. Full launcher-through-private-input entry
   check and activation remain pending; no installed I6 claim.
+
+- D2 production launcher entry: actual detached fixture launched from private
+  committed code and copied source-home settings, ended shipped-unproven (no
+  proof invented), matching run_id/toolkit_sha, source home unchanged, registry
+  removed. 1 passed in 11.79s. This is startup/caller evidence, not speedup.
+  Terminal-state reader map: 25 passed in 0.10s. Next: C3 code-only dispatch
+  preparation and acceptance callers, bounded actual-provider repair; keep
+  mode disabled until production-entry evidence and consumer compatibility.

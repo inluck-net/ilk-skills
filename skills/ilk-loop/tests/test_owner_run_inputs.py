@@ -132,3 +132,44 @@ def test_plan_script_uses_pinned_code_with_space_in_path(tmp_path,quoted):
     rewritten=pin_gate_command(command,{'ILK_CODE_ROOT':str(code),'HOME':str(tmp_path)})
     cp=subprocess.run(['bash','-c',rewritten],capture_output=True,text=True)
     assert cp.returncode==0 and cp.stdout.strip()=='pinned',cp.stderr
+
+
+def test_actual_launcher_runs_from_private_inputs_without_changing_source_home(tmp_path,monkeypatch):
+    import importlib.util,os,sys,time
+    from ilk_paths import external_launcher_dir
+    from run_registry import project_status,signal_run
+    spec=importlib.util.spec_from_file_location('preloop_fixture',Path(__file__).with_name('test_pre_loop_exit_sentinel.py'))
+    fixture_module=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixture_module)
+    root=tmp_path/'world';root.mkdir();world=fixture_module._build_world_shipped(root,with_steps=True)
+    source_home=root/'source-home';source_home.mkdir()
+    settings=source_home/'settings.json';settings.write_text(json.dumps({'env':{'ANTHROPIC_AUTH_TOKEN':'fixture-private-token','ANTHROPIC_BASE_URL':'https://example.invalid','ANTHROPIC_MODEL':'fixture-model'}}))
+    original=settings.read_bytes()
+    monkeypatch.setenv('ILK_DATA_HOME',str(world['data_home']));monkeypatch.setenv('ILK_DATA_DIR',str(world['data_home']))
+    runtime=external_launcher_dir(world['key']);scripts=Path(__file__).parents[2]
+    env=dict(os.environ,HOME=str(root),ILK_SKIP_MAIN='1',ILK_SKILL_HOME=str(scripts),PATH=str(world['bin'])+os.pathsep+os.environ['PATH'])
+    call='source "$1"; start_ilk_window "$2" fixture 1 2 false false "" claude-worker "$3" true ""'
+    try:
+        cp=subprocess.run(['bash','-c',call,'fixture',str(scripts/'ilk-launcher/scripts/launch.sh'),str(world['project']),str(source_home)],env=env,capture_output=True,text=True,timeout=20)
+        assert cp.returncode==0,(cp.stdout,cp.stderr)
+        launch=json.loads((runtime/'last-launch.json').read_text())
+        # Judgment: 20s observation bound for sampled ~1s pre-loop completion;
+        # a slower valid startup falsifies this fixture, not a production cap.
+        until=time.monotonic()+20
+        terminal={}
+        while time.monotonic()<until:
+            if (runtime/'last-exit.json').exists():
+                terminal=json.loads((runtime/'last-exit.json').read_text())
+                if terminal.get('ended_at') and not project_status(runtime)['busy']:break
+            time.sleep(0.05)
+        assert terminal.get('state')=='shipped-unproven',(terminal,(Path(launch['log_file']).read_text()[-2000:]))
+        assert terminal['toolkit_sha']==launch['toolkit_sha']
+        assert terminal['run_id']==launch['run_id']
+        inputs=Path(launch['log_dir'])/'inputs';manifest=json.loads((inputs/'inputs.json').read_text())
+        assert Path(launch['loop_script']).is_relative_to(inputs/'code')
+        assert 'fixture-private-token' not in (inputs/'inputs.json').read_text()
+        assert settings.read_bytes()==original
+        assert not list((runtime/'runs').glob('*.json'))
+    finally:
+        if runtime.exists():
+            for row in project_status(runtime)['runs']:
+                if row['liveness']=='running':signal_run(runtime,row['run_id'])
