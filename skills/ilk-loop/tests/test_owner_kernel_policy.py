@@ -48,6 +48,7 @@ def test_session_kernel_policy_is_frozen_at_base(tmp_path: Path, legacy: bool):
     "skills/ilk-loop/scripts/selfmod_state.py",
     "skills/ilk-loop/scripts/dispatch_target.py",
     "skills/ilk-loop/scripts/recovery.py",
+    "skills/ilk-loop/scripts/check_verdict_history.py",
     "skills/ilk-loop/scripts/emit_jsonl_record.py",
 ])
 def test_new_authority_and_deployment_paths_are_kernel(path):

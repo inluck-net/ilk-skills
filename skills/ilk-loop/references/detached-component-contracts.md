@@ -972,6 +972,27 @@ this persistent history file.  A sub-plan already shipped before the
 current iteration is never re-litigated (the prior-run guard in the
 runner).
 
+### Diagnostic rolling check verdicts (local preview, 2026-10-12)
+
+`<runtime>/launcher/local-check-verdict-history.json` is a private schema-1
+diagnostic index written by `check_verdict_history.py` from the current frozen
+driver context. Each scoped check retains its last ten execution verdicts,
+keyed by plan identity, command, scope, files and partition. Run/iteration
+identity makes duplicate calls idempotent; changed duplicates and corrupt
+history refuse. This file is never a source of passing ship proof.
+
+Bash and PowerShell use it after measured confirmation and for green executions.
+The existing Chad-selected judgment of two flaky results in ten blocks
+acceptance, preserving `verdict: flaky` and adding `flaky_blocking: true`; it
+does not grant a red strike or reuse any gate result. Owned acceptance remains
+stricter. Healthy recurring noise or defects escaping the window would falsify
+the policy's suitability. Missing history is inconclusive. Writes honor the
+original deadline; adapters without one refuse lock contention immediately.
+
+The current gate row adds `flaky_checks` diagnostics. Public PID/sentinel and
+consumer claim contracts retain their paths and shapes. Readers of this new
+index do not consult old final-gate `gate-history.jsonl` for positive evidence.
+
 ---
 
 ## Contract 3: Liveness (PID + sentinel cross-check)

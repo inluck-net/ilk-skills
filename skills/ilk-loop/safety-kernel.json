@@ -3,6 +3,11 @@
   "loop_kernel_policy": "owner-only",
   "rules": [
     {
+      "path": "skills/ilk-loop/scripts/check_verdict_history.py",
+      "guard": "owner",
+      "why": "driver-only rolling verdict diagnostics and flaky blocking; never cached green proof"
+    },
+    {
       "path": "skills/ilk-loop/scripts/instruction_inputs.py",
       "guard": "owner",
       "why": "frozen named instruction inventory and original deadline verification"

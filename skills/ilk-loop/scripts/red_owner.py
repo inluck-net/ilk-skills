@@ -660,8 +660,15 @@ def main(argv: list[str]) -> int:
                 stdout_tail = sys.stdin.read()
             else:
                 p = Path(args.stdout_file)
-                if p.is_file():
+                try:
                     stdout_tail = p.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    # Losing a named capture must not switch from node-scoped
+                    # attribution to executing the entire original command.
+                    print(json.dumps(dict(verdict='unmeasured',iteration_base=args.iteration_base,
+                        batch_base=batch_base,owner_sha=None,owner_slug=None,node_ids=[],nodes=[],
+                        reason='named complete gate output unavailable')))
+                    return 0
 
         result = attribute_red(
             args.repo,

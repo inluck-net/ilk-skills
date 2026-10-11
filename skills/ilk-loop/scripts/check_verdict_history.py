@@ -3,7 +3,8 @@
 
 The 2-in-10 policy is Chad's existing 2026-09-28 judgment call: tolerate an
 isolated transient failure, block recurrence. Frequent healthy noise or a
-persistent defect escaping this window would falsify its suitability. A single flaky result remains the historical legacy policy;
+persistent defect escaping this window would falsify its suitability. A single
+flaky result remains the historical legacy policy;
 owned acceptance continues to refuse any mixed same-input result.
 """
 from __future__ import annotations

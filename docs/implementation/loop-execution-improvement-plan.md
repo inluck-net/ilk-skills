@@ -2035,3 +2035,27 @@ anchors at the time of inspection and can move as integration changes code.
   enclosing control block. No test count is a full suite claim.
 - Pending: archived production callers against committed candidate, safe
   activation and remaining actual-base/reader/platform/re-entry requirements.
+
+### Committed production checks and complete attribution captures
+
+- Against 70ff1030, archived real native and red→repair→green entries passed
+  2 selected checks in 16.15s (13 deselected). The driver still measures fresh
+  gates and advances only an accepted step. The new history helper introduced
+  no final suite or cached passing evidence. Portable PowerShell full runner
+  parse passed. Owner freeze/CAS/hold/interrupt selection: 36 passed in 0.96s.
+- Added the new verdict-history helper to the owner-only safety kernel so an
+  unattended toolkit batch cannot relax its own acceptance policy. Documented
+  its private index and additive gate-row contract separately from positive
+  ship proof. Numeric policy remains the existing explicit judgment.
+- Actual Bash attribution capture negative failed: the production block chose
+  a temporary output tail rather than the retained full capture. CLI negative
+  failed at a forbidden test-run seam when a named capture was missing (the
+  initial invocation incorrectly omitted main's argv; corrected before using
+  its failure as evidence). Bash now passes the complete capture and deletes
+  only its own historical tail temporary. Missing named capture returns
+  unmeasured and cannot silently run the full original command.
+- Capture/strike/legacy confirmation selection: 10 passed/1 portable PS skip
+  in 0.62s (runtime not supplied in that invocation; earlier actual PS adapter
+  evidence remains). No provider call, production mutation or full suite.
+- Next: frozen-context baseline/root reader migration, then installation of
+  the accumulated checked candidate and remaining whole-plan requirements.

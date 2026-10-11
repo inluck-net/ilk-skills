@@ -7449,16 +7449,22 @@ if m:
               # Attribute each blocking record.
               while IFS= read -r _blocking_line; do
                 [[ -z "$_blocking_line" ]] && continue
-                local _b_slug _b_step _b_cmd _b_stdout_tail
+                local _b_slug _b_step _b_cmd _b_stdout_tail _b_stdout_path
                 _b_slug=$(echo "$_blocking_line" | python3 -c "import json,sys; r=json.loads(sys.stdin.read()); print(r.get('slug',''))" 2>/dev/null) || true
                 _b_step=$(echo "$_blocking_line" | python3 -c "import json,sys; r=json.loads(sys.stdin.read()); print(r.get('step',''))" 2>/dev/null) || true
                 _b_cmd=$(echo "$_blocking_line" | python3 -c "import json,sys; r=json.loads(sys.stdin.read()); print(r.get('command',''))" 2>/dev/null) || true
                 _b_stdout_tail=$(echo "$_blocking_line" | python3 -c "import json,sys; r=json.loads(sys.stdin.read()); print(r.get('stdout_tail',''))" 2>/dev/null) || true
+                _b_stdout_path=$(echo "$_blocking_line" | python3 -c "import json,sys; r=json.loads(sys.stdin.read()); print(r.get('stdout_path',''))" 2>/dev/null) || true
                 [[ -z "$_b_slug" || -z "$_b_cmd" ]] && continue
-                # Write stdout_tail to a temp file for the CLI.
+                # Full output supplies failing IDs; a display tail cannot.
+                # Only old rows without a capture path use the legacy tail.
                 local _stdout_file=""
-                if [[ -n "$_b_stdout_tail" ]]; then
+                local _stdout_temp=0
+                if [[ -n "$_b_stdout_path" ]]; then
+                  _stdout_file="$_b_stdout_path"
+                elif [[ -n "$_b_stdout_tail" ]]; then
                   _stdout_file=$(mktemp)
+                  _stdout_temp=1
                   printf '%s' "$_b_stdout_tail" > "$_stdout_file"
                 fi
                 local _effective_repo
@@ -7468,7 +7474,7 @@ if m:
                 [[ -n "$_stdout_file" ]] && _attr_args+=("--stdout-file" "$_stdout_file")
                 local _attr_out=""
                 _attr_out=$(python3 "$_red_owner_script" "${_attr_args[@]}" 2>/dev/null) || true
-                [[ -n "$_stdout_file" ]] && rm -f "$_stdout_file"
+                [[ "$_stdout_temp" -eq 1 && -n "$_stdout_file" ]] && rm -f "$_stdout_file"
                 if [[ -n "$_attr_out" ]]; then
                   local _verdict
                   _verdict=$(echo "$_attr_out" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('verdict',''))" 2>/dev/null) || true
