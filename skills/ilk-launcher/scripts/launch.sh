@@ -602,8 +602,8 @@ start_ilk_window() {
   # Concurrency guard
   local live_pid
   live_pid=$(test_running_pid "$project_path")
-  if [[ -n "$live_pid" && "$force" != "true" ]]; then
-    echo "[$project_name] already running (PID $live_pid). Use --force to launch anyway, or stop.sh to kill it." >&2
+  if [[ -n "$live_pid" ]]; then
+    echo "[$project_name] runner ownership is busy or unverified ($live_pid); refusing duplicate launch." >&2
     return 1
   fi
 
@@ -615,6 +615,30 @@ start_ilk_window() {
     return 1
   fi
   mkdir -p "$state_dir"
+
+  # Upgrade selection is read-only and fails closed before a new reservation.
+  # Normal scheduler launches use this same entry, so they cannot accidentally
+  # restart the old pin after an intentional drain.
+  local upgrade_selection prepared_inputs="" upgrade_from_run="" prepared_sha=""
+  upgrade_selection=$(python3 -c 'import json,sys;from pathlib import Path;sys.path.insert(0,sys.argv[1]);from upgrade_drain import activation;print(json.dumps(activation(Path(sys.argv[2]),Path(sys.argv[3]))))' \
+      "${_SKILL_ROOT}/ilk-loop/scripts" "$state_dir" "$project_path") || return 1
+  if [[ "$upgrade_selection" != null ]]; then
+    prepared_inputs=$(jq -r '.next_inputs_dir' <<<"$upgrade_selection")
+    upgrade_from_run=$(jq -r '.run_id' <<<"$upgrade_selection")
+    prepared_sha=$(jq -r '.next_toolkit_sha' <<<"$upgrade_selection")
+    local upgrade_master
+    upgrade_master=$(jq -r '.master_path' <<<"$upgrade_selection")
+    if [[ -n "$master_override" && "$(basename "$master_override")" != "$(basename "$upgrade_master")" ]]; then
+      echo "[ilk] scheduler master contradicts drained master; refusing activation" >&2
+      return 1
+    fi
+    master_override="$upgrade_master"
+    max_iterations=$(jq -r '.launch_contract.max_iterations' <<<"$upgrade_selection")
+    timeout_min=$(jq -r '.launch_contract.iteration_timeout_min' <<<"$upgrade_selection")
+    run_local_checks=true
+    engine=claude-worker
+    worker_home_override=$(jq -r '.worker_home' <<<"$upgrade_selection")
+  fi
 
   # Print toolkit staleness notice (non-fatal, silent on error)
   print_toolkit_staleness_notice
@@ -641,6 +665,10 @@ start_ilk_window() {
   # Build runner command — inject worker-home env vars for claude-worker engine.
   local loop_script
   loop_script=$(runner_script_for_engine "$engine")
+  if [[ -n "$prepared_inputs" ]]; then
+    loop_script="${prepared_inputs}/code/skills/ilk-loop/scripts/$(basename "$loop_script")"
+    mcp_config_path="${prepared_inputs}/mcp.json"
+  fi
   local env_prefix=""
   local display_config_dir="(default ~/.claude)"
   local display_skill_home="(default)"
@@ -744,6 +772,9 @@ start_ilk_window() {
     claude-manager) source_home="${CLAUDE_MANAGER_HOME:-$HOME/.claude-manager}" ;;
   esac
   if [[ "$engine" == claude* ]]; then
+    if [[ -n "$prepared_inputs" ]]; then
+      inputs_dir="$prepared_inputs"
+    else
     local pin_args=(--repo "${_SKILL_ROOT}/.." --worker-home "$source_home" --destination "$inputs_dir" --project "$project_path" --observe-scope)
     if [[ "${ILK_WORKER_THINKING:-default}" != default ]]; then
       if [[ "${ILK_WORKER_MODE:-}" != code-only ]]; then
@@ -754,7 +785,9 @@ start_ilk_window() {
     fi
     [[ -n "$mcp_config_path" ]] && pin_args+=(--mcp "$mcp_config_path")
     python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_inputs.py" "${pin_args[@]}" >/dev/null || return 1
-    local pinned_root="${inputs_dir}/code" private_home="${inputs_dir}/worker-home"
+    fi
+    local pinned_root="${inputs_dir}/code" private_home="${inputs_dir}/worker-home" pinned_source_root
+    pinned_source_root=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["source_root"])' "$inputs_dir/inputs.json") || return 1
     loop_script="${pinned_root}/skills/ilk-loop/scripts/$(basename "$loop_script")"
     mcp_config_path="${inputs_dir}/mcp.json"
     local pinned_cli
@@ -766,15 +799,27 @@ if sys.argv[8]:prefix+="export ILK_MASTER="+shlex.quote(sys.argv[8])+"; "
 args=["bash",sys.argv[9],"--project-path",sys.argv[10],"--max-iterations",sys.argv[11],"--iteration-timeout-min",sys.argv[12],"--mcp-config-path",sys.argv[13],"--log-dir",sys.argv[14],"--jsonl-log",sys.argv[15]]
 if sys.argv[16]=="true":args.append("--run-local-checks")
 print(prefix+shlex.join(args))
-' "$private_home" "$pinned_root/skills" "$pinned_root" "$inputs_dir" "${_SKILL_ROOT}/.." "$HOME" "$pinned_cli" \
+' "$private_home" "$pinned_root/skills" "$pinned_root" "$inputs_dir" "$pinned_source_root" "$HOME" "$pinned_cli" \
   "$master_override" "$loop_script" "$project_path" "$max_iterations" "$timeout_min" "$mcp_config_path" "$per_run_dir" "$jsonl_log" "$run_local_checks") || return 1
+    if [[ -n "$upgrade_from_run" ]]; then
+      local quoted_upgrade_run quoted_upgrade_guard
+      quoted_upgrade_run=$(python3 -c 'import shlex,sys;print(shlex.quote(sys.argv[1]))' "$upgrade_from_run") || return 1
+      quoted_upgrade_guard=$(python3 -c 'import json,shlex,sys;d=json.loads(sys.argv[1]);print(shlex.quote(json.dumps({key:d[key] for key in ("master_path","consumer_worktrees")})))' "$upgrade_selection") || return 1
+      runner_cmd="export ILK_WORKER_MODE=code-only; export ILK_UPGRADE_FROM_RUN=$quoted_upgrade_run; export ILK_UPGRADE_GUARD_JSON=$quoted_upgrade_guard; $runner_cmd"
+      local quoted_budget
+      quoted_budget=$(jq -r '.launch_contract.max_budget_usd' <<<"$upgrade_selection")
+      runner_cmd="$runner_cmd --max-budget-usd $quoted_budget"
+    fi
   fi
 
   # Judgment: reuse scheduler's 120s launch-gap window; slow valid startup
   # reaching expiry falsifies this default. Operator can set an explicit TTL.
   local launch_ttl="${ILK_LAUNCH_TTL_SEC:-120}" launcher_dir code_sha
   launcher_dir=$(get_external_launcher_dir "$project_path") || return 1
-  code_sha=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_registry.py" code-sha --code-root "${_SKILL_ROOT}/..") || return 1
+  code_sha="${prepared_sha:-}"
+  if [[ -z "$code_sha" ]]; then
+    code_sha=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_registry.py" code-sha --code-root "${_SKILL_ROOT}/..") || return 1
+  fi
   python3 "${_SKILL_ROOT}/ilk-loop/scripts/run_registry.py" reserve --runtime "$launcher_dir" \
     --run-id "$run_id" --project "$project_path" --key "$project_key" --toolkit-sha "$code_sha" --ttl "$launch_ttl" >/dev/null || return 1
   # Spawn the runner in its own session (new process group + no controlling

@@ -2270,6 +2270,8 @@ _write_terminal_sentinel() {
   }
 if os.environ.get('_HELD_BY'):
     d['held_by'] = os.environ['_HELD_BY']
+if d['state']=='upgrade_request_invalid' and os.environ.get('ILK_UPGRADE_GUARD_JSON'):
+    d.update(json.loads(os.environ['ILK_UPGRADE_GUARD_JSON']))
 print(json.dumps(d))" > "${rd}/last-exit.json.tmp" && mv -f "${rd}/last-exit.json.tmp" "${rd}/last-exit.json"
   echo "Sentinel: ${rd}/last-exit.json (state=$state, iters=0)"
   # Remove phase.json — the run is over.
@@ -2447,6 +2449,9 @@ d = {
 # operator stop into a relaunchable label.
 if os.environ.get('ILK_STOPPED_BY'):
     d['stopped_by'] = os.environ['ILK_STOPPED_BY']
+if os.environ.get('ILK_UPGRADE_FROM_RUN') and os.environ.get('ILK_UPGRADE_GUARD_JSON'):
+    d['state']='upgrade_request_invalid'
+    d.update(json.loads(os.environ['ILK_UPGRADE_GUARD_JSON']))
 print(json.dumps(d))
 " > "${target}.tmp" && mv -f "${target}.tmp" "$target" || true
   echo "[runner] finalize_sentinel: wrote terminal state (interrupted)" >&2
@@ -5978,6 +5983,14 @@ PY
       return 1
     fi
     _RUN_REGISTRY_DIR="$runtime_dir"
+    if [[ -n "${ILK_UPGRADE_FROM_RUN:-}" ]]; then
+      if ! python3 -c 'import sys;from pathlib import Path;sys.path.insert(0,sys.argv[1]);from upgrade_drain import consume;consume(Path(sys.argv[2]),sys.argv[3],int(sys.argv[4]),sys.argv[5],sys.argv[6])' \
+          "${_ILK_SCRIPT_DIR}" "$runtime_dir" "$RUN_ID" "$$" "$ILK_UPGRADE_FROM_RUN" "$ILK_TOOLKIT_SHA"; then
+        _write_terminal_sentinel "upgrade_request_invalid" "$runtime_dir"
+        return 1
+      fi
+      unset ILK_UPGRADE_FROM_RUN ILK_UPGRADE_GUARD_JSON
+    fi
   fi
 
   # Finish an original accepted transaction before selecting another step.
@@ -6304,6 +6317,9 @@ PY
     local timeout_sec
     timeout_sec=$(resolve_iteration_timeout_sec)
     export _ILK_CONTEXT_TIMEOUT="$timeout_sec" _ILK_CONTEXT_OWNER="$$" _ILK_CONTEXT_REGISTRY="${_RUN_REGISTRY_DIR:-}"
+    export _ILK_CONTEXT_MAX_ITERATIONS="$MAX_ITERATIONS" _ILK_CONTEXT_TIMEOUT_MIN="$ITERATION_TIMEOUT_MIN"
+    export _ILK_CONTEXT_RUN_LOCAL_CHECKS="$RUN_LOCAL_CHECKS"
+    export _ILK_CONTEXT_MAX_BUDGET="$MAX_BUDGET_USD"
     if ! _DISPATCH_IDENTITY_JSON="$_dispatch_identity_json" _DISPATCH_STEP="${PRE_ITER_TARGET#* }" \
       python3 -c '
 import json,sys
@@ -6318,6 +6334,9 @@ a=sys.argv
 context=resolve_context(clone=a[2],exec_tree=a[3],plans_dir=a[4],runtime_dir=a[5],
  code_root=Path(a[1]).parent,data_root=ilk_data_root(),mode=a[6],run_id=a[7],
  iteration=int(a[8]),dispatch=identity,observe_tree=dict(zip(a[10::2],a[11::2])))
+context['launch_contract']=dict(max_iterations=int(os.environ['_ILK_CONTEXT_MAX_ITERATIONS']),
+ iteration_timeout_min=int(os.environ['_ILK_CONTEXT_TIMEOUT_MIN']),run_local_checks=os.environ['_ILK_CONTEXT_RUN_LOCAL_CHECKS']=='true',
+ max_budget_usd=float(os.environ['_ILK_CONTEXT_MAX_BUDGET']))
 if os.environ.get("ILK_WORKER_MODE")=="code-only":
  from worker_dispatch import prepare
  from iteration_clock import monotonic

@@ -67,7 +67,11 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
     pin_launch_resources(inputs,project=work,executables={'python':sys.executable,'claude':str(cli)})
     if upgrading:
         target_inputs=tmp_path/'upgrade-target-inputs'
-        target_manifest=prepare(ROOT,home,target_inputs,revision='HEAD^')
+        target_source=tmp_path/'upgrade-target-source'
+        subprocess.run(['git','clone','-q','--shared',str(ROOT),str(target_source)],check=True,capture_output=True)
+        subprocess.run(['git','-C',str(target_source),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid',
+            'commit','--allow-empty','-qm','disposable next release identity'],check=True,capture_output=True)
+        target_manifest=prepare(target_source,home,target_inputs)
         pin_launch_resources(target_inputs,project=work,executables={'python':sys.executable,'claude':str(cli)})
     code=Path(manifest['code_root'])
     if case.startswith('pending-'):

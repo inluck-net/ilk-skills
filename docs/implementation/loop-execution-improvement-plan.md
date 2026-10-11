@@ -153,6 +153,21 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- `b8f094c4` exact archived normal / accepted-step drain callers passed 2 in
+  13.83s: first plan shipped with closed proof, second remained pending at 0,
+  master active, terminal names both toolkit pins and exact consumer roots,
+  running.pid removed and registry/lock idle. Six watchdog guard checks passed
+  in 0.75s, including no old-pin restart. Consumer follow-up preserves the
+  invalid-request path too; 19 focused checks passed in 0.19s. Activation
+  reader/launcher is being built; no shared install or running worker change.
+- D4 activation candidate now selects prepared inputs through the ordinary
+  launcher entry after old PID/children/lock exit and normal holds. New owner
+  archives the exact old request only after registry binding. Frozen launch
+  limits/budget are retained; no source worker-home rewrite or old-pin fallback.
+  Startup refusal preserves consumer guards. Prepared target must advertise
+  the coordinated protocol and keep its exact master/plan contracts. New
+  archive/caller checks are pending this checkpoint; not delivery evidence.
+
 - D4 candidate emitter now checks an exact owner request only after the
   original accepted close, positive integrity/state audit, completed owned
   cleanup and required landing. Pins the unused prepared next inputs; preserves

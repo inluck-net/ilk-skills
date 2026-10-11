@@ -7,6 +7,7 @@ shell hook wrappers refuse preparation instead of retaining live-home commands.
 """
 from __future__ import annotations
 import argparse
+import ast
 import hashlib
 import io
 import json
@@ -173,7 +174,10 @@ def prepare(repo: Path, worker_home: Path, destination: Path, *, revision='HEAD'
         # Exclude credentials and arbitrary env values from public provenance.
         safe={key:value for key,value in pinned.items() if key!='env'}
         env=pinned.get('env',{})
+        drain_api=code/'skills/ilk-loop/scripts/upgrade_drain.py'
+        drain_functions={node.name for node in ast.parse(drain_api.read_text()).body if isinstance(node,ast.FunctionDef)} if drain_api.exists() else set()
         manifest={'schema_version':1,'toolkit_sha':sha,'code_root':str(code),'worker_home':str(home),
+                  'upgrade_drain_protocol':1 if {'boundary','activation','consume'}<=drain_functions else None,
                   'source_root':str(source_root),'source_repo':str(repo),'source_worker_home':str(worker_home),
                   'settings_non_env_sha256':hashlib.sha256(json.dumps(safe,sort_keys=True).encode()).hexdigest(),
                   'env_keys':sorted(env),'requested_model':env.get('ANTHROPIC_MODEL') or pinned.get('model'),
@@ -222,7 +226,11 @@ def pin_launch_resources(destination, *, project, mcp=None, executables=None):
 
 
 def verify_launch_resources(destination):
-    manifest=json.loads((Path(destination)/'inputs.json').read_text())
+    destination=Path(destination).resolve()
+    manifest=json.loads((destination/'inputs.json').read_text())
+    for key,name in (('code_root','code'),('worker_home','worker-home')):
+        if Path(manifest[key]).resolve()!=destination/name:
+            raise InputPinError('private run input root contradicts prepared manifest')
     paths=list(manifest.get('executables',[]))+[manifest['mcp']]
     paths.append({'path':str(Path(manifest['worker_home'])/'settings.json'),'sha256':manifest['settings_sha256']})
     paths.extend({'path':row['pinned_script'],'sha256':row['pinned_sha256']} for row in manifest['hooks'])
