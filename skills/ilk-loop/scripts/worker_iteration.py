@@ -200,6 +200,9 @@ def run(context,path,prompt,*,claude,model,budget,mcp,gate_timeout,turn=worker_t
         if first['accepted']:
             first.update(worker_turns=[],gate_first=True)
             return first
+        if attempts[-1].get('verdict') in {'flaky', 'inconclusive'}:
+            return dict(accepted=False, attempts=attempts, worker_turns=[],
+                        gate_first=True, stop_reason='local_checks_inconclusive')
         prompt+='\nPre-dispatch driver gate is red; implement this step using this diagnostic evidence:\n'+json.dumps(first,indent=2)
     while monotonic()<context['iteration_deadline_monotonic']:
         phase(context,'agent')

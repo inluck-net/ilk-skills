@@ -1840,3 +1840,15 @@ anchors at the time of inspection and can move as integration changes code.
   actual-base ownership across supported adapters, delivery documentation and
   safe final activation. Overall estimate remains about 70% until these broad
   requirements are closed; several candidate fixes are not installed yet.
+
+### Inconclusive gate-first avoids a wasted provider turn
+
+- A real pre-dispatch command exiting 127 produced an inconclusive gate, but
+  worker_iteration narrated it as red and called the provider. The negative
+  check failed in 0.28s at the forbidden provider seam.
+- Gate-first now returns the retained flaky/inconclusive diagnostic immediately,
+  with zero worker turns, unchanged HEAD/plan and no retry strike. Four focused
+  gate-first cases passed in 1.33s, including the normal green and repair paths.
+- Candidate only; no installed pin or active worker changed. Next: canonical
+  PowerShell scheduler terminal-path readers, followed by activation/remaining
+  acceptance-policy migration.

@@ -61,3 +61,27 @@ def test_same_tree_flaky_gate_stops_without_retry_strike_or_state_change(tmp_pat
     assert 'current_step: 0' in plan.read_text() and 'status: pending' in plan.read_text()
     assert git(root,'rev-parse','HEAD')==context['base_commit']
     assert not (Path(context['recovery_dir'])/'gate-red-counts.json').exists()
+
+
+def test_inconclusive_predispatch_gate_never_calls_provider(tmp_path, monkeypatch):
+    from driver_step import git
+    monkeypatch.delenv('ILK_WORKER_SESSION', raising=False)
+    context, root, plan = fixture(tmp_path, 'exit 127')
+    plan.write_text(plan.read_text().replace('local_checks:', 'gate_first: true\nlocal_checks:'))
+    context['plans'][plan.name] = plan_snapshot(plan)
+    context['iteration_deadline_monotonic'] = monotonic()+10
+    path = tmp_path/'context.json'; write_context(path, context)
+    monkeypatch.setenv('ILK_ITER_CONTEXT', str(path))
+    monkeypatch.setattr(worker_iteration, 'phase', lambda *args: None)
+    before = plan.read_bytes()
+    def forbidden(*args, **kwargs):
+        pytest.fail('an unmeasured pre-dispatch gate must not spend a provider turn')
+    result = worker_iteration.run(context, path, 'implement', claude='unused', model='',
+        budget=0, mcp=None, gate_timeout=10, turn=forbidden)
+    assert result['accepted'] is False
+    assert result['stop_reason'] == 'local_checks_inconclusive'
+    assert result['worker_turns'] == [] and len(result['attempts']) == 1
+    assert result['attempts'][0]['verdict'] == 'inconclusive'
+    assert plan.read_bytes() == before
+    assert git(root, 'rev-parse', 'HEAD') == context['base_commit']
+    assert not (Path(context['recovery_dir'])/'gate-red-counts.json').exists()
