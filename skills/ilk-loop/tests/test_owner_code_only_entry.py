@@ -13,14 +13,14 @@ pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='Mac production entr
 ROOT=Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize('case',['normal','selfmod','native-tools','native-tools-batch-optin','hold','pending-advance','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain'])
+@pytest.mark.parametrize('case',['normal','selfmod','native-tools','native-tools-batch-optin','hold','pending-advance','pending-selfmod','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red','upgrade-drain'])
 def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,monkeypatch,case):
     human_hold_during_gate=case=='hold'
     upgrading=case=='upgrade-drain'
     spec=importlib.util.spec_from_file_location('entry_fixture',Path(__file__).with_name('test_pre_loop_exit_sentinel.py'))
     fixtures=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixtures)
     world=fixtures._build_world_shipped(tmp_path,with_steps=True);work=world['project']
-    if case=='selfmod':
+    if case in {'selfmod','pending-selfmod'}:
         import shutil
         shutil.rmtree(work) # disposable fixture only
         subprocess.run(['git','clone','-q','--shared',str(ROOT),str(work)],check=True,capture_output=True)
@@ -85,7 +85,7 @@ else:
 print(json.dumps({'type':'system','subtype':'init','session_id':'fixture-session','model':'fixture-model'}))
 print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'fixture-session'}))
 ''');cli.chmod(0o700)
-    inputs=tmp_path/'inputs';manifest=prepare(work if case=='selfmod' else ROOT,home,inputs,worker_tools='native' if case.startswith('native-tools') else 'shell')
+    inputs=tmp_path/'inputs';manifest=prepare(work if case in {'selfmod','pending-selfmod'} else ROOT,home,inputs,worker_tools='native' if case.startswith('native-tools') else 'shell')
     pin_launch_resources(inputs,project=work,executables={'python':sys.executable,'claude':str(cli)})
     if upgrading:
         target_inputs=tmp_path/'upgrade-target-inputs'
@@ -100,13 +100,18 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         from iteration_context import resolve_context,write_context
         from iteration_clock import monotonic
         import driver_step
-        context=resolve_context(clone=work,exec_tree=work,observe_tree={str(work):str(work)},
+        prior_root=work
+        if case=='pending-selfmod':
+            prior_root=world['data_home']/'projects'/world['key']/'runtime/launcher/worktrees/selfmod-batch'
+            prior_root.parent.mkdir(parents=True,exist_ok=True)
+            git('worktree','add','--detach',str(prior_root))
+        context=resolve_context(clone=work,exec_tree=prior_root,observe_tree={str(work):str(prior_root)},
             code_root=code,plans_dir=world['plans'],runtime_dir=world['data_home']/'projects'/world['key']/'runtime',
-            data_root=world['data_home'],run_id='prior-interrupted',iteration=1,mode='none',
+            data_root=world['data_home'],run_id='prior-interrupted',iteration=1,mode='selfmod' if case=='pending-selfmod' else 'none',
             dispatch={'slug':fixtures.SLUG,'step':0,'subplan_path':str(plan),'master_path':str(master)})
         context.update(worker_sandbox_adapter='macos-brokered-shell',toolkit_sha=manifest['toolkit_sha'])
         frozen=tmp_path/'prior-ctx.json';write_context(frozen,context)
-        (work/'counter.py').write_text('def f(value): return value + 2\n')
+        (prior_root/'counter.py').write_text('def f(value): return value + 2\n')
         real=driver_step.transition
         def crash(*args,**kwargs):
             real(*args,**kwargs)
@@ -120,11 +125,11 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             return answer
         with monkeypatch.context() as patch:
             patch.setenv('ILK_ITER_CONTEXT',str(frozen))
-            if case=='pending-advance':patch.setattr(driver_step,'transition',crash)
+            if case in {'pending-advance','pending-selfmod'}:patch.setattr(driver_step,'transition',crash)
             else:patch.setattr(driver_step,'git',crash_git)
             with pytest.raises(RuntimeError):
                 driver_step.accept_step(context,default_timeout=10,deadline=monotonic()+10)
-        assert ('current_step: 1' if case=='pending-advance' else 'current_step: 0') in plan.read_text()
+        assert ('current_step: 1' if case in {'pending-advance','pending-selfmod'} else 'current_step: 0') in plan.read_text()
         assert 'status: shipped' not in plan.read_text()
     env=dict(os.environ,HOME=str(tmp_path),ILK_DATA_HOME=str(world['data_home']),ILK_DATA_DIR=str(world['data_home']),
         ILK_SKILL_HOME=str(code/'skills'),ILK_CODE_ROOT=str(code),ILK_RUN_INPUTS=str(inputs),
@@ -249,6 +254,9 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             assert len(recovered)==1 and recovered[0]['run_id']=='prior-interrupted'
             assert recovered[0]['driver_integrity_passed'] and recovered[0]['state_audit']['explained']
             assert (home/'settings.json').read_bytes()==original and not project_status(runtime)['busy']
+            if case=='pending-selfmod':
+                assert prior_root.exists() and recovered[0]['merge_outcome']=='merged'
+                assert git('rev-parse','HEAD').stdout.strip()==subprocess.check_output(['git','-C',str(prior_root),'rev-parse','HEAD'],text=True).strip()
             return
         assert terminal['state']=='all-shipped',(terminal,stdout[-4500:],stderr[-4500:])
         assert process.returncode==0,(stdout[-4500:],stderr[-4500:])
@@ -269,7 +277,7 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             assert phases[name]['duration_sec']>=0 and phases[name]['observation_complete']
         if case=='selfmod':
             assert phases['landing']['duration_sec']>=0 and closed['merge_outcome']=='merged'
-            isolated=world['data_home']/'projects'/world['key']/'runtime/worktrees/selfmod-batch'
+            isolated=world['data_home']/'projects'/world['key']/'runtime/launcher/worktrees/selfmod-batch'
             assert isolated.exists() # keep readable through close and recovery
             assert git('rev-parse','HEAD').stdout.strip()==subprocess.check_output(['git','-C',str(isolated),'rev-parse','HEAD'],text=True).strip()
             state=json.loads((runtime/'selfmod-state.json').read_text())

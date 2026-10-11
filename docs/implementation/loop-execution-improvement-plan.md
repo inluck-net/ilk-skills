@@ -170,7 +170,12 @@ No completion/ship/proof markers are inferred from this human tracker.
   metadata policy checks passed 18 in 0.77s. Next archived caller refused
   missing exact dispatch (1 failed in 2.40s): pre-context selection/plans/runtime
   had derived the worktree project identity. They now use the retained clone
-  identity until the frozen context exists. Caller recheck pending.
+  identity until the frozen context exists. Next entry refused unrelated suite
+  baseline declarations (1 failed in 2.43s). Strict code-only acceptance now
+  permits their presence while granting no waiver and recording that policy;
+  every selected raw gate exit must pass. Baseline-red waiver/diff adapter
+  remains unbuilt. Regression reproduced both blanket refusals (2 failed in
+  0.48s); corrected focused driver checks and archived caller pending.
 - `274668ea` archived ordinary entry passed 1 in 6.72s. Consumer task profiles
   and report-v5 execution-root normalization are recorded in
   docs/verification/consumer-step-profile-baseline-2026-10-11.md and CSV.

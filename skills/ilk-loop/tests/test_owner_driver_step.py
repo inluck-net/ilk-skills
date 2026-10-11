@@ -95,3 +95,24 @@ def test_owned_commit_hook_is_bounded_without_advancing(tmp_path,monkeypatch):
         _accept_step(context,default_timeout=10,deadline=monotonic()+2)
     assert marker.exists() and git(root,'rev-parse','HEAD')==base
     assert 'current_step: 0' in plan.read_text()
+
+
+@pytest.mark.parametrize('green',[False,True])
+def test_declared_baseline_reds_never_waive_driver_gate(tmp_path,monkeypatch,green):
+    import json
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]/'skills/ilk-ship/scripts'))
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    context,root,plan=fixture(tmp_path)
+    (root/'.ilk-launch.json').write_text(json.dumps({'ship':{'suite':{'command':'false'},'baseline_red':[
+        {'node_id':'counter.py','reason':'fixture declared red'}]}}))
+    git(root,'add','.ilk-launch.json');git(root,'commit','-qm','baseline declarations')
+    context.update(base_commit=git(root,'rev-parse','HEAD'),base_tree=git(root,'rev-parse','HEAD^{tree}'))
+    from run_local_checks import _read_declared_reds
+    assert _read_declared_reds(root)
+    if green:(root/'counter.py').write_text('def f(value): return value + 2\n')
+    result=accept_step(context,default_timeout=10)
+    assert result['accepted'] is green
+    assert result['attempts'][0]['all_passed'] is green
+    assert result['attempts'][0]['baseline_red_policy']=='strict-raw-exit-no-waivers'
+    assert result['attempts'][0]['diagnostic_baseline_red_declarations']
+    assert ('current_step: 1' if green else 'current_step: 0') in plan.read_text()

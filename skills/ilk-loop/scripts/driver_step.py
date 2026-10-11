@@ -4,8 +4,8 @@
 Gates run against a captured working-tree object. Only the driver commits and
 CAS-advances one step. Changed commit-hook output is gated again; an unchanged
 commit does not rerun the same gates. Unknown/red/mutating gates never advance.
-Existing dirty entry, baseline-red exceptions and multi-repo dispatch require
-their migration adapters before rollout; this candidate refuses them.
+Dirty entry, baseline-red waivers and multi-repo dispatch still require migration
+adapters. Baseline declarations may exist; this path grants no waiver.
 """
 from __future__ import annotations
 from dataclasses import asdict
@@ -87,8 +87,7 @@ def validate(context):
 
 def gate_contract(root,path,selected):
     from run_local_checks import (split_frontmatter,parse_local_checks_block,extract_step_local_checks,
-        count_local_checks_items,count_step_local_checks_items,step_gate_fence,
-        _read_declared_reds)
+        count_local_checks_items,count_step_local_checks_items,step_gate_fence)
     fm,body=split_frontmatter(path.read_text())
     sub=parse_local_checks_block(fm);step=extract_step_local_checks(body,selected['step'])
     if count_local_checks_items(fm)>len(sub) or count_step_local_checks_items(body,selected['step'])>len(step):
@@ -96,12 +95,14 @@ def gate_contract(root,path,selected):
     if step_gate_fence(body,selected['step']).declares_local_checks and not step:
         raise ContextError('unreadable step gate')
     if not sub and not step:raise ContextError('a runnable declared gate is required')
-    if _read_declared_reds(root):raise ContextError('baseline-red attribution adapter not built')
+    # Strict code-only acceptance does not import suite baseline waivers.
+    # Every selected subplan/step/mention check must pass on its raw exit.
+    # A declared unrelated suite red does not require running that suite.
     return sub,step
 
 
 def gate(context,root,path,selected,*,default_timeout):
-    from run_local_checks import build_mention_gate_inventory,run_one
+    from run_local_checks import build_mention_gate_inventory,run_one,_read_declared_reds
     tree=working_tree(root);sub,step=gate_contract(root,path,selected)
     changed=git(root,'diff','--name-only',context['base_commit'],tree).splitlines()
     commands={item.get('command','') for item in sub+step}
@@ -129,6 +130,8 @@ def gate(context,root,path,selected,*,default_timeout):
     record=dict(attempt_id=identifier,run_id=context['run_id'],iteration=context['iteration'],
         slug=selected.get('slug'),step=selected['step'],base_commit=context['base_commit'],
         working_tree=tree,started_monotonic=started,ended_monotonic=monotonic(),
+        baseline_red_policy='strict-raw-exit-no-waivers',
+        diagnostic_baseline_red_declarations=_read_declared_reds(root),
         declared_contract_commands=[check['command'] for check in sub+step],
         check_observations=[asdict(result) for result in results],gate_tree_unchanged=unchanged,
         all_passed=bool(results) and all(result.passed for result in results) and unchanged,
