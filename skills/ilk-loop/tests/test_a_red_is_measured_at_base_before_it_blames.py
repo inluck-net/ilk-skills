@@ -358,10 +358,8 @@ def test_ac5_fail_closed_unknown_base(tmp_path: Path) -> None:
     assert result["verdict"] == "unmeasured", result
 
 
-def test_ac5_unmeasured_ship_integrity_exits_0(tmp_path: Path) -> None:
-    """unmeasured attribution ⇒ ship-integrity excuses the ship (exit 0).
-    Unmeasured means we can't determine who caused the red, so reverting
-    would blame the wrong sub-plan."""
+def test_ac5_unmeasured_ship_integrity_exits_3_without_rollback(tmp_path: Path) -> None:
+    """Unknown attribution proves neither green nor ownership for rollback."""
     repo = _make_repo(tmp_path)
     base = _git(repo, "rev-parse", "HEAD~2")
     head = _git(repo, "rev-parse", "HEAD")
@@ -383,8 +381,11 @@ def test_ac5_unmeasured_ship_integrity_exits_0(tmp_path: Path) -> None:
         attribution=attr,
     )
 
+    before = subplan.read_bytes()
     r = _run_ship_integrity(subplan, "false", results_file, "two")
-    assert r.returncode == 0, f"expected exit 0 (unmeasured — not reverted), got {r.returncode}"
+    assert r.returncode == 3, r.stdout + r.stderr
+    assert "unmeasured" in r.stderr.lower() and "VIOLATION" not in r.stderr
+    assert subplan.read_bytes() == before
 
 
 # ── AC-6: no live-tree run ───────────────────────────────────────────────────

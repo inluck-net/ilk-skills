@@ -135,6 +135,21 @@ def _sample_unchanged(wt,expected_head):
     return head.returncode==0 and head.stdout.strip()==expected_head and diff.returncode==0
 
 
+def _remove_sample(repo,wt,parent):
+    """Cleanup shares the measurement cap; refusal preserves its evidence.
+
+    Git owns linked-worktree metadata. Never bypass a failed/timed-out Git
+    removal with recursive deletion, and never grant an expired sample 30s.
+    """
+    removed=subprocess.run(['git','worktree','remove','--force',str(wt)],
+        cwd=repo,capture_output=True,text=True,encoding='utf-8',
+        errors='replace',timeout=_remaining(30))
+    if removed.returncode:
+        raise RuntimeError('disposable attribution sample cleanup refused; sample retained')
+    try:parent.rmdir()
+    except OSError:pass
+
+
 def _run_base_sample(command,wt,cap):
     """Enforce the existing owned gate boundary on this helper's sample root.
 
@@ -256,16 +271,8 @@ def _bisect_red_owner(
         return {"first_red": None, "first_red_subject": None, "base_green": True}
 
     finally:
-        # Clean up worktree — never touch the live tree.
-        subprocess.run(
-            ["git", "worktree", "remove", "--force", str(wt_path)],
-            cwd=repo, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=30,
-        )
-        try:
-            workdir.rmdir()
-        except OSError:
-            pass
+        # Clean up only the disposable sample within the original budget.
+        _remove_sample(repo,wt_path,workdir)
 
 
 def _parse_pytest_nodes(stdout: str) -> list[str]:
@@ -315,7 +322,6 @@ def _measure_at_base_worktree(
     A usage or collection error (exit 2-5 or ``no tests ran``) is recorded
     as ``"unmeasured"``, never ``"failed"``.
     """
-    import shutil
     tmp = Path(tempfile.mkdtemp(prefix="red-owner-attrib-"))
     wt = tmp / "wt"
     retain=False
@@ -378,12 +384,7 @@ def _measure_at_base_worktree(
         raise
     finally:
         if not retain:
-            subprocess.run(
-                ["git", "worktree", "remove", "--force", str(wt)],
-                cwd=repo, capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=30,
-            )
-            shutil.rmtree(tmp, ignore_errors=True)
+            _remove_sample(repo,wt,tmp)
 
 
 def _extract_plan_slug(commit_msg: str) -> str | None:

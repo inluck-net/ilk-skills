@@ -408,5 +408,7 @@ introduced. worker_sandbox.profile now accepts an explicit deadline or the froze
 driver authority deadline for its metadata query. Expired metadata starts no
 Git subprocess. Unknown registered child cleanup retains scratch/sample instead
 of deleting their worktree. These selected Mac sample/metadata changes are
-checked candidates; complete attribution cleanup bounds and unproven-progress
+checked candidates. Sample cleanup now shares the attribution allowance and
+retains refused/expired worktrees; existing subprocess termination grace and
+retained-sample recovery still need integration. Unproven-progress
 transaction wiring remain open. This is not Windows/member or timeout entry support.

@@ -2781,3 +2781,21 @@ anchors at the time of inspection and can move as integration changes code.
 - Next: cleanup must share attribution's existing deadline and preserve
   uncertain samples. These checked sample primitives do not yet enable
   pre-existing-red progress acceptance or establish Windows/member parity.
+
+### Attribution cleanup keeps its original allowance
+
+- Two focused negatives reproduced expired cleanup receiving a fresh 30s
+  timeout and refused Git removal followed by recursive deletion (2 failed
+  in 0.23s). New _remove_sample uses existing shared remaining(30), retains
+  refused/expired samples and does not bypass Git metadata ownership. Both
+  at-base and bisect cleanup use it; normal output selection is unchanged.
+- Cleanup, shared allowance, real owned sample and exact node classification:
+  16 passed in 2.41s. Attribution callers: 17 passed, 1 failed in 27.09s;
+  the failure expected the already-superseded unknown-integrity exit 0.
+  Updated that fixture to require exit 3, no violation and unchanged plan
+  bytes, matching checked 2991c82a tri-state behavior. Selected final checks:
+  3 passed in 0.50s. No model or full suite.
+- Timeout process termination still has the existing bounded_run grace; do
+  not claim an exact whole-process hard deadline or complete transaction
+  support from these cleanup checks. Retained samples need ownership-aware
+  recovery, not unconditional deletion. Current local installation 2991c82a.
