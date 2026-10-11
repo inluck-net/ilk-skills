@@ -180,45 +180,26 @@ def write_status(path: Path, new_status: str,
     """Replace `status:` in frontmatter atomically. Returns True on
     success (file changed), False on no-op (already matches).
 
-    *allow_from_held*: when False (the default), the function re-reads
-    the file just before writing and refuses if the on-disk status is
-    ``blocked`` with a ``parked_at`` field present (i.e. a parked master).
-    Only ``park_master --unpark`` passes True.  This prevents a running
-    loop from rolling over to a held master and flipping it to active
-    (memory ``held-master-not-enforced-at-execution``).
+    *allow_from_held*: only an explicit operator release may pass True.
+    Ordinary driver calls cannot leave draft/blocked/parked states. All
+    writes compare the observed status under the shared transition lock.
     """
-    text = path.read_text(encoding="utf-8-sig")
-    m = FRONTMATTER_RE.match(text)
-    if not m:
+    from plan_state import transition, TransitionError
+    from plan_status import parse_frontmatter as read_state
+    text=path.read_text(encoding="utf-8-sig")
+    state=read_state(text)
+    if not FRONTMATTER_RE.match(text):
         raise ValueError(f"{path.name}: no frontmatter block")
-
-    fm_block = m.group(2)
-
-    # Re-read guard: refuse to write a held master unless explicitly allowed.
-    if not allow_from_held:
-        _fm = parse_frontmatter(text)
-        _cur_status = (_fm.get("status") or "").strip().lower()
-        if _cur_status == "blocked" and "parked_at" in _fm:
-            raise HeldMasterRefused(
-                f"{path.name}: master is held (status=blocked, "
-                f"parked_at={_fm['parked_at']!r}); refusing to write "
-                f"status={new_status!r}. Pass allow_from_held=True to override."
-            )
-
-    if STATUS_LINE_RE.search(fm_block):
-        new_fm = STATUS_LINE_RE.sub(rf"\1status: {new_status}", fm_block, count=1)
-    else:
-        # Insert status line at the top of the frontmatter.
-        new_fm = f"status: {new_status}\n" + fm_block
-
-    if new_fm == fm_block:
+    if state.get("status")==new_status:
         return False
-
-    new_text = m.group(1) + new_fm + m.group(3) + text[m.end():]
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(new_text, encoding="utf-8")
-    os.replace(tmp, path)
-    return True
+    try:
+        return transition(path, {"status":state.get("status")}, {"status":new_status},
+                          actor="human" if allow_from_held else "driver",
+                          reason="explicit operator release" if allow_from_held else "queue promotion/demotion")
+    except TransitionError as exc:
+        if state.get("status") in {"blocked","parked","draft"} and not allow_from_held:
+            raise HeldMasterRefused(f"{path.name}: master is held; {exc}") from exc
+        raise
 
 
 def _prio(fm: dict) -> int:

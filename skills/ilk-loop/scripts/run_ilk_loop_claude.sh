@@ -2765,17 +2765,16 @@ _write_subplan_current_step() {
   plans_dir=$(_gate_first_plans_dir) || return 1
   sub_file=$(find_subplan_file_by_slug "$plans_dir" "$slug") || return 1
   python3 -c '
-import re, sys
+import sys
 from pathlib import Path
-p = Path(sys.argv[1])
-step = int(sys.argv[2])
-body = p.read_text(encoding="utf-8")
-m = re.search(r"^current_step:[ \t]*(\d+)[ \t]*$", body, re.MULTILINE)
-if not m:
-    raise SystemExit(1)
-p.write_text(body[:m.start()] + "current_step: " + str(step) + body[m.end():], encoding="utf-8")
-raise SystemExit(0)
-' "$sub_file" "$step"
+sys.path.insert(0,sys.argv[1])
+from plan_status import parse_frontmatter
+from plan_state import transition
+p=Path(sys.argv[2]);step=int(sys.argv[3])
+expected=sys.argv[4] if sys.argv[4] else parse_frontmatter(p.read_text(encoding="utf-8-sig")).get("current_step")
+if expected is None: raise SystemExit(1)
+transition(p,{"current_step":expected},{"current_step":step},actor="driver",reason="gate red; pin to failing step")
+' "${_SKILL_ROOT}/ilk-loop/scripts" "$sub_file" "$step" "${3:-}"
 }
 
 # rollback_pointer_past_red <results-file>
@@ -2796,7 +2795,7 @@ rollback_pointer_past_red() {
     cur=$(_read_subplan_current_step "$slug") || continue
     [[ "$cur" =~ ^[0-9]+$ ]] || continue
     if (( cur > step )); then
-      if _write_subplan_current_step "$slug" "$step"; then
+      if _write_subplan_current_step "$slug" "$step" "$cur"; then
         echo "  [pointer] $slug: current_step $cur -> $step (step $step's gate is red)"
       fi
     fi
@@ -2889,7 +2888,7 @@ raise SystemExit(4 if step_gate_fence(body, n).declares_local_checks else 3)
   fi
 
   echo "[driver-ship] $slug: pre-dispatch gate red — current_step reset to $last_step" >&2
-  _write_subplan_current_step "$slug" "$last_step"
+  _write_subplan_current_step "$slug" "$last_step" "$cur_step"
   if [[ -n "$iter" && -n "${RUN_LOG_DIR:-}" && -s "$results_file" ]]; then
     python3 -c '
 import json, sys

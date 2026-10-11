@@ -361,3 +361,11 @@ No completion/ship/proof markers are inferred from this human tracker.
   155.949s; matched foreground test interval 0.178s. Clocks overlap; no final
   worker result. Evidence `old-worker-timeout-observation.json` under external
   design-revision analysis. This was thinking/investigation, not suite waiting.
+
+- State writer migration: Bash red-pointer rollback now supplies the observed
+  pointer to CAS; master reconciliation and queue promotion/demotion use the
+  shared journaled API. Reconciliation preserves draft/blocked/parked holds,
+  including the former pre_park_status=shipped auto-release exception. Focused
+  retraction/hold/promotion/red-pointer/API callers: 42 passed in 0.94s.
+  Parking stamps, ship transitions, integrity restoration, quarantine and
+  PowerShell writers remain open; API existence is not whole I3 enforcement.

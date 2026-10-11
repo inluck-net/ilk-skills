@@ -574,40 +574,15 @@ def reconcile_master_status(master_path: Path, plans_dir: Path) -> bool:
     fm = parse_frontmatter(text)
     current = fm.get("status", "").strip().lower()
 
-    # A held master is a HUMAN gate, and reconciliation does not lift it.
-    #
-    # `draft` means "authored, not released" — completing every sub-plan of
-    # a draft master does not constitute a human releasing it.
-    #
-    # `blocked` is normally "parked, do not dispatch". However, when a
-    # ship-integrity violation reverts a sub-plan and parks the master,
-    # the master must be set back to `active` so the batch can resume.
-    # The distinguishing signal: the master is `blocked` AND not all its
-    # sub-plans are shipped (a parked-with-violations state).
-    #
-    # Measured 2026-09-18: without this guard the first symmetric version
-    # (274bb19) rewrote EVERY not-all-shipped master to `queued`, because it
-    # compared only `current != target`. MASTER-2026-09-08b had been held at
-    # `draft` and parked behind 09-08e for ten days. It was silently released,
-    # sorted ahead of the live batch by date, and five commits of it ran before
-    # anyone noticed. Three call sites reconcile every master file
-    # (run_ilk_loop_claude.sh:3299, loop_status.py:357, scheduler_scan.py:397),
-    # so merely READING status un-parked it.
+    # Holds are operator state. Registry completion or an old pre-park ship
+    # claim cannot release draft/blocked/parked masters.
     if current == "draft":
         return False
 
-    # A blocked master is a human gate — never auto-ship it, even if all
-    # sub-plans are shipped.  The only exception is a master that was parked
-    # while already shipped (pre_park_status == "shipped"), which gets
-    # reverted to active so the batch can resume.
-    if current == "blocked":
-        pre_park = fm.get("pre_park_status") or ""
-        if pre_park == "shipped":
-            target = "active"
-        else:
-            return False
+    if current in {"blocked", "parked"}:
+        return False
 
-    elif is_master_all_shipped(master_path, plans_dir):
+    if is_master_all_shipped(master_path, plans_dir):
         target = "shipped"
     elif current == "shipped":
         # The reverse direction: retract a ship claim.
@@ -619,30 +594,6 @@ def reconcile_master_status(master_path: Path, plans_dir: Path) -> bool:
     if current == target:
         return False
 
-    # Locate the front-matter block boundaries.
-    if not text.startswith("---"):
-        return False
-    fm_end = text.find("\n---", 3)
-    if fm_end < 0:
-        return False
-
-    frontmatter = text[3:fm_end]
-    rest = text[fm_end:]  # includes the closing --- and everything after
-
-    # Replace only the status: line inside frontmatter.
-    new_fm_lines: list[str] = []
-    replaced = False
-    for line in frontmatter.splitlines(keepends=True):
-        if re.match(r"^\s*status\s*:", line):
-            new_fm_lines.append(f"status: {target}\n")
-            replaced = True
-        else:
-            new_fm_lines.append(line)
-
-    if not replaced:
-        # No status line in frontmatter — add one at the end.
-        new_fm_lines.append(f"status: {target}\n")
-
-    new_text = "---" + "".join(new_fm_lines) + rest
-    master_path.write_text(new_text, encoding="utf-8")
-    return True
+    from plan_state import transition
+    return transition(master_path, {"status":fm.get("status")}, {"status":target},
+                      actor="driver",reason="reconcile registered subplan completion")
