@@ -265,3 +265,14 @@ def test_preparation_lock_obeys_original_deadline(tmp_path):
         fcntl.flock(held.fileno(),fcntl.LOCK_EX)
         with pytest.raises(TransitionError,match='deadline'):
             resolve_context(**args,operation_context={'iteration_deadline_monotonic':monotonic()+.06})
+
+
+def test_final_capture_cannot_extend_expired_iteration(tmp_path):
+    from iteration_clock import monotonic
+    from iteration_context import capture_execution
+    context=resolve_context(**fixture(tmp_path))
+    context['iteration_deadline_monotonic']=monotonic()-1
+    result=capture_execution(context)
+    assert result['head_commit'] is None
+    assert result['commits'] is None
+    assert 'deadline' in result['capture_error']

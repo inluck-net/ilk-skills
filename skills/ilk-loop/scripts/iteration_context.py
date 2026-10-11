@@ -99,7 +99,8 @@ def _git_result(root, *args):
     remaining = owner['iteration_deadline_monotonic'] - monotonic()
     if remaining <= 0:
         raise ContextError('context preparation reached original iteration deadline')
-    code, stdout, stderr, timed_out = run(wrap_command(argv, owner), cwd=str(root), timeout=remaining)
+    owned = argv if read_context() else wrap_command(argv, owner)
+    code, stdout, stderr, timed_out = run(owned, cwd=str(root), timeout=remaining)
     if timed_out:
         raise ContextError('context preparation Git reached original iteration deadline')
     return subprocess.CompletedProcess(argv, code, stdout, stderr)
@@ -148,6 +149,19 @@ def plan_status_from_context(context: dict) -> dict:
 
 
 def capture_execution(context: dict) -> dict:
+    from run_registry import RegistryError
+    owner=context if context.get('iteration_deadline_monotonic') is not None else None
+    token=_preparation_owner.set(owner)
+    try:
+        return _capture_execution(context)
+    except (ContextError, RegistryError) as error:
+        return dict(head_commit=None,head_tree=None,commits=None,step_to={},
+                    capture_error='owned execution capture unavailable: '+str(error))
+    finally:
+        _preparation_owner.reset(token)
+
+
+def _capture_execution(context: dict) -> dict:
     root=Path(context['exec_tree'])
     head=git_value(root,'HEAD')
     result={'head_commit':head,'head_tree':git_value(root,'HEAD^{tree}'),
@@ -157,11 +171,15 @@ def capture_execution(context: dict) -> dict:
     if not base or not head:
         result['capture_error']='execution tree has no available git identity'
         return result
-    ancestor=subprocess.run(['git','-C',str(root),'merge-base','--is-ancestor',base,head],capture_output=True)
+    ancestor=_git_result(root,'merge-base','--is-ancestor',base,head)
     if ancestor.returncode:
         result['capture_error']='iteration base is not an ancestor of final execution HEAD'
         return result
-    result['commits']=subprocess.check_output(['git','-C',str(root),'rev-list','--reverse',f'{base}..{head}'],text=True).splitlines()
+    commits=_git_result(root,'rev-list','--reverse',f'{base}..{head}')
+    if commits.returncode:
+        result['capture_error']='execution commit range unavailable'
+        return result
+    result['commits']=commits.stdout.splitlines()
     return result
 
 
