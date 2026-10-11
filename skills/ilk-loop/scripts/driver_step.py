@@ -45,7 +45,11 @@ def git(root,*args,env=None):
         code,stdout,stderr,timed_out=cp.returncode,cp.stdout,cp.stderr,False
     else:
         from bounded_run import run
-        code,stdout,stderr,timed_out=run(['git','-C',str(root),*args],cwd=str(root),timeout=timeout,env=env)
+        argv=['git','-C',str(root),*args]
+        if context and not __import__('iteration_context').read_context():
+            from owned_command import wrap_command
+            argv=wrap_command(argv,context)
+        code,stdout,stderr,timed_out=run(argv,cwd=str(root),timeout=timeout,env=env)
     if timed_out:raise ContextError('driver Git operation reached iteration deadline')
     if code!=0:raise ContextError('driver Git operation failed: '+stderr[-1000:])
     return stdout.strip()
@@ -75,6 +79,8 @@ def validate(context):
     for row in list(context['plans'].values())+([context['master_snapshot']] if context.get('master_snapshot') else []):
         if plan_snapshot(Path(row['path'])).get('fingerprint')!=row.get('fingerprint'):
             raise ContextError('frozen plan contract changed')
+    from instruction_inputs import verify
+    verify(context)
     state=parse_frontmatter(path.read_text())
     if state.get('current_step')!=str(selected['step']):raise ContextError('step changed since dispatch')
     if state.get('status') in {'draft','blocked','parked','shipped'} or state.get('hold')=='human':

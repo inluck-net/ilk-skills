@@ -72,7 +72,9 @@ def instructions(context,path):
          if context.get('worker_tools','shell')=='native' else
          'Use the wrapper for reading files and editing code. Other tools are unavailable.'),
         'Do not invoke /ilk or rediscover a batch. Do not run a full test suite.',
-        'Diagnostic tests are permitted when needed to implement the selected step.',
+        'Run diagnostic tests only when needed to locate or repair a selected-step defect; use the smallest relevant failing check.',
+        'The driver runs the authored gates after your edit. Do not repeat them solely to report green, or expand a focused step into broad adjacent/repository test runs without a driver diagnostic requiring it.',
+        'Report which diagnostics you actually ran; leave unrun verification to the driver.',
         'Report findings in your final text; the driver imports them after acceptance.',
     ])
 
@@ -97,6 +99,8 @@ def _tool_names(context,manifest):
 def _worker_turn(context,path,prompt,*,claude,model,budget,mcp,session,bound,manifest,control):
     deadline=context['iteration_deadline_monotonic']
     import hashlib
+    from instruction_inputs import verify
+    verify(context)
     for row in context.get('root_instruction_inventory',[]):
         if hashlib.sha256(Path(row['path']).read_bytes()).hexdigest()!=row['sha256']:
             raise ContextError('repository instructions changed after dispatch freeze')

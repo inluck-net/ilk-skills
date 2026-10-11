@@ -4,3 +4,4 @@ consumer-provider-explicit-implementation-root,0657df35078232a78b41636ef55feec2b
 consumer-provider-valid-task-bound,0657df35078232a78b41636ef55feec2bad9f848,mimo-v2.6-pro,shell,243.227,,,28,,38,9,9,,0,,False,False,5
 consumer-provider-native-tools,8c884dc130b2ce322ceed3469e2143677225f8e4,mimo-v2.6-pro,native,300.038,135.569,125.771,24,31,30,8,30,,7.05,0.75,True,False,5
 controlled-installed-native-coverage-refusal,2c3b4039a54a5ae5124c426f300603e31d9cceac,mimo-v2.6-pro,native,226.468,218.2,,,,,,,,1.32,,False,False,not-parsed
+controlled-installed-native-corrected-policy,2ed78097de96b527b013505e4380a485c07d3eb0,mimo-v2.6-pro,native,229.799,217.639,170.441,21,,30,3,27,,46.607,,True,True,5

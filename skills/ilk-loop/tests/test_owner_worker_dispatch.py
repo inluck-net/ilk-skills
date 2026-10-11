@@ -109,14 +109,15 @@ rows=scan(registry)
 events=[json.loads(line) for line in (registry/'child-events.jsonl').read_text().splitlines()]
 registered=[event for event in events if event['event']=='registered'];assert len(registered)>=5
 assert all(event['identity']['pid']==event['identity']['pgid'] and event['identity']['lstart'] for event in registered)
-assert all(child['liveness']=='running' for child in rows[0]['children_liveness'])
+assert all(child['liveness'] in {'running','dead'} for child in rows[0]['children_liveness'])
+assert any(child['liveness']=='running' for child in rows[0]['children_liveness'])
 accepted=json.loads((ctx.parent/(ctx.stem+'-acceptance.json')).read_text())
 assert accepted['accepted'] and len(accepted['attempts'])==2
 assert not accepted['attempts'][0]['all_passed'] and accepted['attempts'][1]['all_passed']
 assert len(accepted['commits'])==1 and len(accepted['worker_turns'])==2
 assert accepted['worker_turns'][0]['session_id']==accepted['worker_turns'][1]['session_id']
 close(ctx)
-while scan(registry)[0]['children_liveness'][0]['liveness']=='running':
+while any(child['liveness']=='running' for child in scan(registry)[0]['children_liveness']):
     assert monotonic()<deadline
     time.sleep(.02)
 finish(registry,context['run_id'],identity=process_identity(os.getpid()))

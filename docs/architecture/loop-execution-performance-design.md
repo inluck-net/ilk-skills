@@ -630,3 +630,30 @@ optional-gate design. The earlier 21-file synthetic negative established the
 stricter behavior, not a defect in the designed bounded policy. Complete coverage
 is now explicit opt-in. The failed experiment remains failed; its worker diff is
 preserved and cannot establish accepted-step or speed evidence.
+
+### Named instruction inventory (new candidate)
+
+`instruction_inputs.py` inventories named AGENTS.md, CLAUDE.md and
+CLAUDE.local.md inputs from tracked, untracked and ignored repository paths,
+plus ancestor named files and ancestor .claude/CLAUDE.md. Each row freezes path,
+resolved target and content hash, without file contents. Preparation uses the
+original deadline and registers its Git discovery children before exec. Every
+provider turn and acceptance validation compares the inventory; recovery uses
+its existing supplied driver deadline, without renewing a provider budget.
+`worker_sandbox.py` denies creation/mutation of these named files at any depth;
+native admission gives instruction writes their own denied scope. Existing
+root bootstrap remains brief; inventory is not a request to read every nested
+file. Referenced arbitrary imports, source global-home instructions and native
+Windows enforcement remain unbuilt; this is not exhaustive input pinning.
+
+### Focus worker diagnostics on implementation (new brief revision)
+
+The corrected-policy native sample spent 46.607s in observed foreground
+worker diagnostic-test intervals, including 253 adjacent tests after its
+focused repair. Its authoritative driver gate took 0.984407s. These are
+observed intervals, not a causal subtraction from wall time. The worker brief
+now asks for the smallest diagnostic needed to locate/repair a defect and
+leaves routine authored gates to the driver. A broad adjacent run needs a
+driver diagnostic demonstrating the need. No authored gate is removed and
+no worker report grants acceptance. This is a performance hypothesis requiring
+actual acceptance/quality measurement, not an established speed gain.

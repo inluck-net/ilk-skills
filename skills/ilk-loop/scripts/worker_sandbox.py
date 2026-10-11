@@ -77,6 +77,10 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
         rules.append(f'(allow file-write* (literal {json.dumps(str(log))}))')
     # Default denial already protects broad roots outside the explicit allowed
     # execution/home directories; retain exact nested control-plane exclusions.
+    # Protect existing and newly created named instructions, including nested
+    # directories. A copied input is not permission to rewrite its contract.
+    rules.append('(deny file-write* (require-all (subpath '+json.dumps(str(root))+') '
+                 '(regex "(^|/)(AGENTS[.]md|CLAUDE([.]local)?[.]md)$")))')
     rules.extend(_rule('deny','file-write*',path) for path in protected
                  if any(_inside(path,allowed) for allowed in [root,temporary]+([Path(private_home).resolve()] if private_home and not shell else [])))
     for path in kernel_paths:

@@ -126,3 +126,17 @@ original failed native run remains failed. New baseline has no changed files,
 so this does not test the earlier 87-file mention scope or establish paired
 model speed/quality. A prior fresh fixture put the option in frontmatter,
 attempted a forbidden worker and failed in 3.746s; it remains recorded separately.
+
+## Corrected installed policy: accepted real native consumer repair
+
+A fresh 2ed78097 actual MiMo PRO native run on the same f4468f97 consumer fixture
+passed in **229.799s**, with one accepted gate/advance/ship and positive integrity
+and state audit. Production source settings stayed unchanged; registry released.
+Its attempt explicitly records 87 omitted optional mention files, while authored
+focused checks passed. No final verification suite ran. Parser v5 observes 21
+unique assistant turns, 30 tools, adjusted bootstrap indicator 3 (raw 27), first
+native Edit at 87.640s, CLI worker duration 217.639s, overlapping API duration
+170.441s and foreground diagnostic-test interval union 46.607s. Thinking remains
+unknown; these clocks overlap and cannot be added or subtracted as a causal split.
+Evidence: controlled-corrected-policy-native-20261011/. Paired shell is unmeasured;
+this establishes accepted completion under the corrected policy, not speed.

@@ -47,6 +47,8 @@ def classify(event,context):
             if name in {'data','runtime'} and inside(root,protected_root):
                 continue
             if inside(path,protected_root): row['scope']=name;break
+        if row['scope']=='worktree' and path.name in {'AGENTS.md','CLAUDE.md','CLAUDE.local.md'}:
+            row['scope']='instruction-input'
         kernel=context.get('kernel_list') or {}
         if row['scope']=='worktree' and kernel.get('loop_kernel_policy')=='owner-only':
             sys.path.insert(0,str(Path(context['code_root'])/'skills/ilk-loop/scripts'))

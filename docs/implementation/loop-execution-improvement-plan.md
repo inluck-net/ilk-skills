@@ -159,6 +159,40 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- Worker brief performance hypothesis: actual corrected-policy sample spent
+  46.607s in worker diagnostic test intervals (including broad 253-test adjacent
+  run) versus 0.984407s driver gate. Brief now asks for smallest defect diagnostic,
+  no gate rerun solely to report green, no broad adjacent expansion without a
+  driver diagnostic. Authored gates unchanged. Actual profile measurement is
+  required before claiming faster behavior; this is not a default model change.
+
+
+- Installed 2ed78097 corrected-policy actual native consumer repair PASSED in
+  229.799s, one worker/accepted gate/advance/ship, positive integrity/journal,
+  source home unchanged and registry idle. MiMo PRO, 8 production hooks,
+  explicit disabled thinking; driver records 87 omitted optional mention files
+  under bounded-existing-cap. Same f4468f97 fixture, no final verifier. Parser v5:
+  21 unique assistant turns, 30 tools, bootstrap indicator 3 (raw 27), first
+  native edit 87.640s, worker CLI 217.639s, overlapping API 170.441s, foreground
+  diagnostic-test intervals 46.607s. Thinking unknown. Do not sum these clocks
+  or infer speed without paired shell sample. Evidence controlled-corrected-
+  policy-native-20261011/. Original 226s failed sample remains failed.
+- Named instruction candidate freezes tracked/untracked/ignored nested and
+  ancestor instructions; worker OS policy refuses creating/replacing them.
+  Verification detects changed content, deletion, added names and symlink
+  target changes before another turn or acceptance. All discovery uses owned
+  original deadlines; recovery uses its supplied driver deadline. Initial
+  scope/inventory checks 25 passed in 2.17s; extended checks 32 passed/2 failed
+  in 11.75s because the old fixture required already exited preparation Git
+  children to remain live. Corrected lifecycle assertion keeps positive broker
+  liveness and waits for all children after close: 7 passed in 8.47s. Kernel
+  metadata includes new helper. Recovery-deadline checks: 5 passed in 0.88s.
+  Named instructions in controlled external scratch stay writable for test
+  fixtures; active execution-tree instructions remain denied. Focused sandbox/
+  kernel checks: 27 passed in 1.73s. Arbitrary
+  referenced imports/global-home/Windows pinning remains open.
+
+
 - Misplaced gate_first guard: negative reproduced silent frontmatter ignore
   (1 failed in 0.20s); driver preparation now refuses with exact step-YAML
   guidance before launching a worker. All 11 focused driver checks passed in

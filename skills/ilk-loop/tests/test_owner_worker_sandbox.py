@@ -28,7 +28,7 @@ def test_shell_can_write_code_but_not_control_plane_git_or_foreign_paths(tmp_pat
     root=Path(ctx['exec_tree']);target=root/'accepted.py'
     python=['/usr/bin/python3','-c','import pathlib,sys;pathlib.Path(sys.argv[1]).write_text("fixture")']
     assert run(policy,*python,str(target)).returncode==0
-    for denied in (tmp_path/'outside.py',root/'.git/index',Path(ctx['plans_dir'])/'plan.md',home/'settings.json'):
+    for denied in (tmp_path/'outside.py',root/'.git/index',Path(ctx['plans_dir'])/'plan.md',home/'settings.json',root/'AGENTS.md',root/'CLAUDE.local.md'):
         before=denied.read_bytes() if denied.exists() else None
         cp=run(policy,*python,str(denied));assert cp.returncode!=0
         assert (denied.read_bytes() if denied.exists() else None)==before
@@ -113,3 +113,15 @@ def test_pinned_wrapper_denies_shell_expansion_and_control_writes(tmp_path):
     assert admitted_command(command,ctx,path)
     assert not admitted_command(command+'; touch escaped',ctx,path)
     assert not admitted_command(command.replace("'printf fixture > accepted.txt'",'"$(touch escaped)"'),ctx,path)
+
+
+def test_native_and_shell_cannot_rewrite_nested_instructions(tmp_path):
+    ctx,temporary,home=fixture(tmp_path);root=Path(ctx['exec_tree'])
+    nested=root/'module';nested.mkdir();target=nested/'CLAUDE.md';target.write_text('frozen')
+    for shell in (False,True):
+        policy=profile(ctx,temporary=temporary,private_home=home if not shell else None,shell=shell)
+        cp=run(policy,'/usr/bin/python3','-c','from pathlib import Path;import sys;Path(sys.argv[1]).write_text("changed")',str(target))
+        assert cp.returncode!=0 and target.read_text()=='frozen'
+        scratch=temporary/'CLAUDE.md'
+        assert run(policy,'/usr/bin/python3','-c','from pathlib import Path;import sys;Path(sys.argv[1]).write_text("test fixture")',str(scratch)).returncode==0
+        assert scratch.read_text()=='test fixture'
