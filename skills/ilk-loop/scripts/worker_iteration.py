@@ -184,6 +184,8 @@ def run(context,path,prompt,*,claude,model,budget,mcp,gate_timeout,turn=worker_t
     # Validate both durable histories BEFORE any provider call. Corruption
     # cannot reset the retry budget or be ignored on a first green result.
     read_retry_state(counts,'count');read_retry_state(ids_path,'ids')
+    from driver_step import read_gate_history
+    read_gate_history(context)
     recovered=recover_acceptance(context,deadline=context['iteration_deadline_monotonic'])
     if recovered:
         recovered.update(worker_turns=[])

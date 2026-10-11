@@ -13,6 +13,7 @@ from contextvars import ContextVar
 import json
 import hashlib
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -115,6 +116,80 @@ def gate_contract(root,path,selected):
     return sub,step
 
 
+def read_gate_history(context):
+    """Driver diagnostics survive launches; no row is reusable green proof."""
+    path=Path(context['recovery_dir'])/'driver-gate-history.json'
+    if not path.exists():return []
+    data=json.loads(path.read_text())
+    if not isinstance(data,dict) or data.get('schema_version')!=1 or not isinstance(data.get('attempts'),list):
+        raise ContextError('invalid durable gate history')
+    seen=set()
+    for row in data['attempts']:
+        if (not isinstance(row,dict) or not isinstance(row.get('attempt_id'),str)
+                or not row['attempt_id'] or row['attempt_id'] in seen
+                or not isinstance(row.get('input_fingerprint'),str)
+                or not re.fullmatch(r'[0-9a-f]{64}',row['input_fingerprint'])
+                or not isinstance(row.get('working_tree'),str)
+                or not re.fullmatch(r'[0-9a-f]{40}',row['working_tree'])
+                or not isinstance(row.get('check_observations'),list)
+                or any(not isinstance(check,dict) for check in row['check_observations'])):
+            raise ContextError('invalid durable gate attempt')
+        seen.add(row['attempt_id'])
+    return data['attempts']
+
+
+def gate_input_fingerprint(context,selected):
+    # Private run directory names are transport identities, not gate inputs.
+    # Include original source hashes, executable/MCP identities, frozen code,
+    # exact base/root and contracts. Managed/external inputs remain explicitly
+    # unsupported by this observed-input comparison; no outcome is reused.
+    inputs={key:context.get(key) for key in ('exec_tree','base_commit','toolkit_sha',
+        'toolkit_code_inventory_sha256','instruction_input_inventory','mention_gate_policy')}
+    inputs['dispatch']={key:selected.get(key) for key in ('slug','step','subplan_path','master_path')}
+    inputs['plans']={name:row.get('fingerprint') for name,row in context['plans'].items()}
+    inputs['master']=(context.get('master_snapshot') or {}).get('fingerprint')
+    if context.get('worker_inputs_dir'):
+        manifest=json.loads((Path(context['worker_inputs_dir'])/'inputs.json').read_text())
+        inputs['settings_sources']=manifest.get('settings_sources')
+        inputs['hooks']=[{key:row.get(key) for key in ('phase','source_name','source_sha256','pinned_sha256')}
+                         for row in manifest.get('hooks',[])]
+        inputs['executables']=manifest.get('executables')
+        inputs['mcp_sha256']=(manifest.get('mcp') or {}).get('sha256')
+        inputs['global_instructions']=[{key:row.get(key) for key in ('source_path','sha256')}
+                                       for row in manifest.get('global_instruction_inputs',[])]
+    return hashlib.sha256(json.dumps(inputs,sort_keys=True).encode()).hexdigest()
+
+
+def retain_gate_attempt(context,record,artifact):
+    from run_registry import require_driver
+    from plan_state import _lock,_sync_parent
+    path=Path(context['recovery_dir'])/'driver-gate-history.json'
+    require_driver(context);remaining();path.parent.mkdir(parents=True,exist_ok=True)
+    with _lock(path.with_name(path.name+'.lock'),deadline=_deadline.get(),guard=lambda:require_driver(context)):
+        history=read_gate_history(context)
+        matching=[row for row in history if row['input_fingerprint']==record['input_fingerprint']]
+        prior={row['attempt_id']:row for row in matching}
+        for row in _prior_attempts.get():
+            identifier=row.get('attempt_id')
+            if identifier in prior and prior[identifier]!=row:raise ContextError('gate history identity changed')
+            prior[identifier]=row
+        record['verdict'],record['check_verdicts']=attempt_verdict(record,list(prior.values()))
+        record['all_passed']=record['raw_all_passed'] and record['verdict']=='green'
+        with artifact.open('x') as stream:
+            json.dump(record,stream,indent=2);stream.write('\n');stream.flush();os.fsync(stream.fileno())
+        artifact.chmod(0o600);_sync_parent(artifact);_sync_parent(artifact.parent)
+        with tempfile.NamedTemporaryFile(mode='w',dir=path.parent,delete=False) as stream:
+            temporary=Path(stream.name)
+            try:
+                json.dump(dict(schema_version=1,diagnostic_only=True,attempts=history+[record]),stream)
+                stream.flush();os.fsync(stream.fileno())
+            except BaseException:temporary.unlink(missing_ok=True);raise
+        try:
+            temporary.chmod(0o600);remaining();require_driver(context)
+            os.replace(temporary,path);_sync_parent(path)
+        finally:temporary.unlink(missing_ok=True)
+
+
 def attempt_verdict(record, prior):
     """Use every observed attempt on this exact tree and frozen dispatch.
 
@@ -125,7 +200,8 @@ def attempt_verdict(record, prior):
     identity=('run_id','iteration','slug','step','base_commit')
     relevant=[]
     for row in prior:
-        if any(row.get(key)!=record.get(key) for key in identity):
+        same_inputs=bool(record.get('input_fingerprint')) and row.get('input_fingerprint')==record['input_fingerprint']
+        if not same_inputs and any(row.get(key)!=record.get(key) for key in identity):
             raise ContextError('prior gate attempt belongs to another frozen dispatch')
         if row.get('working_tree')==record['working_tree']:relevant.append(row)
     relevant.append(record)
@@ -190,15 +266,10 @@ def gate(context,root,path,selected,*,default_timeout):
         check_observations=[asdict(result) for result in results],gate_tree_unchanged=unchanged,
         all_passed=bool(results) and all(result.passed for result in results) and unchanged,
         diagnostic_only=True)
+    record['history_path']=str(Path(context['recovery_dir'])/'driver-gate-history.json')
     record['raw_all_passed']=record['all_passed']
-    record['verdict'],record['check_verdicts']=attempt_verdict(record,_prior_attempts.get())
-    record['all_passed']=record['raw_all_passed'] and record['verdict']=='green'
-    artifact=directory/'attempt.json'
-    with artifact.open('x') as stream:
-        json.dump(record,stream,indent=2);stream.write('\n');stream.flush();os.fsync(stream.fileno())
-    artifact.chmod(0o600)
-    from plan_state import _sync_parent
-    _sync_parent(artifact);_sync_parent(directory)
+    record['input_fingerprint']=gate_input_fingerprint(context,selected)
+    retain_gate_attempt(context,record,directory/'attempt.json')
     return record
 
 
@@ -359,6 +430,7 @@ def _transaction_head(context,result):
 
 def _accept_step(context,*,default_timeout):
     selected,path,root,state=validate(context)
+    read_gate_history(context)
     if git(root,'rev-parse','HEAD')!=context['base_commit']:raise ContextError('worker changed HEAD')
     if git(root,'diff','--cached','--name-only'):raise ContextError('worker changed real index')
     attempt=gate(context,root,path,selected,default_timeout=default_timeout)

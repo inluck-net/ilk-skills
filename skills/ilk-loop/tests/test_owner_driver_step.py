@@ -199,3 +199,47 @@ def test_repaired_tree_green_retains_prior_red_without_inheriting_its_verdict(tm
     assert second['attempts'][0]['verdict']=='red'
     assert second['attempts'][1]['verdict']=='green'
     assert second['attempts'][0]['working_tree']!=second['attempts'][1]['working_tree']
+
+
+def test_restart_retains_same_input_flaky_history_without_prior_argument(tmp_path,monkeypatch):
+    import shlex
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    signal=tmp_path/'external-restart-signal'
+    context,root,plan=fixture(tmp_path,'test -f '+shlex.quote(str(signal)))
+    first=_accept_step(context,default_timeout=10,deadline=monotonic()+10)
+    assert not first['accepted']
+    signal.write_text('changed external condition only')
+    restarted=dict(context,run_id='next-launch',iteration=1)
+    second=_accept_step(restarted,default_timeout=10,deadline=monotonic()+10)
+    assert not second['accepted']
+    assert second['attempts'][-1]['verdict']=='flaky'
+    assert 'current_step: 0' in plan.read_text()
+    assert git(root,'rev-parse','HEAD')==context['base_commit']
+
+
+def test_changed_frozen_inputs_get_fresh_gate_without_reusing_old_pass(tmp_path,monkeypatch):
+    import shlex
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    signal=tmp_path/'external-changed-input-signal'
+    context,root,plan=fixture(tmp_path,'test -f '+shlex.quote(str(signal)))
+    first=_accept_step(context,default_timeout=10,deadline=monotonic()+10)
+    signal.write_text('new configured measurement input')
+    changed=dict(context,run_id='changed-input-launch',toolkit_sha='a'*40)
+    second=_accept_step(changed,default_timeout=10,deadline=monotonic()+10)
+    assert second['accepted'] and second['attempts'][-1]['verdict']=='green'
+    assert first['attempts'][0]['input_fingerprint']!=second['attempts'][0]['input_fingerprint']
+    assert second['attempts'][0]['check_observations'][0]['attempt_id']!=first['attempts'][0]['check_observations'][0]['attempt_id']
+
+
+def test_corrupt_durable_gate_history_refuses_before_gate_or_commit(tmp_path,monkeypatch):
+    import driver_step
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    context,root,plan=fixture(tmp_path)
+    history=Path(context['recovery_dir'])/'driver-gate-history.json'
+    history.parent.mkdir(parents=True,exist_ok=True);history.write_text('{"schema_version":1,"attempts":[{}]}')
+    original=history.read_bytes()
+    monkeypatch.setattr(driver_step,'gate',lambda *args,**kwargs:pytest.fail('gate must not run on corrupt history'))
+    with pytest.raises(ContextError,match='invalid durable gate attempt'):
+        _accept_step(context,default_timeout=10,deadline=monotonic()+10)
+    assert history.read_bytes()==original and 'current_step: 0' in plan.read_text()
+    assert git(root,'rev-parse','HEAD')==context['base_commit']

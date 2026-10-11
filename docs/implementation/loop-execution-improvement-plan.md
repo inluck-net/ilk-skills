@@ -198,6 +198,24 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- Further owned recovery correction: real new-launch negative showed a red
+  followed by a same-tree pass advanced when no in-memory history argument
+  survived (1 failed in 0.55s). Driver now retains diagnostic attempt history
+  under the stable frozen batch recovery directory, keyed by exact tree and
+  observed input fingerprint: frozen code/inventory, actual base/root, plan
+  contracts, instruction inventory, original settings/hook source hashes,
+  executables/MCP and global instruction identities. Run-directory names do
+  not stand in for content. Every current gate still executes; old green never
+  replaces it. Cross-launch matching diagnoses flaky results without granting
+  positive proof. Corrupt history refuses before gate/provider or commit.
+  Guarded byte writes/locks use fresh driver authority and original deadline;
+  history and complete output links remain diagnostic, not a parallel green
+  proof ledger. Seventeen driver/controller checks passed in 7.99s; changed
+  input and corrupt-history negatives passed 2 checks in 0.59s. New unknown
+  external/managed inputs are not claimed fully pinned by this fingerprint.
+  Candidate is not yet installed; 4de1eb06 remains current preview.
+
+
 - Local delivery activated: source main fast-forwarded 2ed78097 → 4de1eb06;
   consumer main 8472771f → 2cb713ae. Fresh scheduler was sleep-only; three
   consumer LaunchAgents had active count zero/no PID and no mutating consumer
