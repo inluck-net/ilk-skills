@@ -6414,7 +6414,7 @@ else:write_context(Path(a[9]),context)
     # is reset to the last step and the worker is dispatched with the
     # gate-red notice.  Declined (e.g. an unshipped batch_verification
     # sub-plan) → dispatch normally; never mark an unshipped iteration green.
-    if [[ -n "${_iter_slug:-}" && -n "${PRE_ITER_TARGET:-}" ]]; then
+    if [[ "${ILK_WORKER_MODE:-}" != "code-only" && -n "${_iter_slug:-}" && -n "${PRE_ITER_TARGET:-}" ]]; then
       local _pre_step="${PRE_ITER_TARGET#* }"
       if [[ "$_pre_step" =~ ^[0-9]+$ ]]; then
         local _pre_rc=0
@@ -6734,7 +6734,7 @@ print(json.dumps(d))
     # GATE_FIRST_NO_DISPATCH=1 without the gate-first block re-initialising it
     # to 0.
     local gate_first_results=""
-    if [[ "$RUN_LOCAL_CHECKS" == true ]]; then
+    if [[ "$RUN_LOCAL_CHECKS" == true && "${ILK_WORKER_MODE:-}" != "code-only" ]]; then
       gate_first_results=$(mktemp)
       if attempt_gate_first_fast_path "$gate_first_results"; then
         GATE_FIRST_GREEN=1

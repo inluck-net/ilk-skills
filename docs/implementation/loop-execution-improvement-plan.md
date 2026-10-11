@@ -153,6 +153,15 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- 2026-10-11 B3 archived commit recovery at `e4e67d0a`: staged and committed
+  pre-receipt startup cases passed (2 in 4.94s), original run closed with zero
+  provider dispatch, no duplicate code commit and completed master.
+  C3 gate-first now uses the code-only driver's acceptance path, rather than
+  the legacy shortcut that omitted its receipt. Green accepts the exact frozen
+  head with zero turns; red supplies complete diagnostic evidence to the normal
+  worker and gates its resulting diff freshly. Legacy callers retain their
+  shortcut. Focused and archived caller results recorded after checks.
+
 - 2026-10-11 B3 earlier commit gap candidate: fsynced commit intent precedes
   staging/commit. Same frozen-context recovery finishes only its intended index
   or exact one-parent driver commit, with original capture hashes and holds.

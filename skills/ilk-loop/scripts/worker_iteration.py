@@ -145,6 +145,16 @@ def run(context,path,prompt,*,claude,model,budget,mcp,gate_timeout,turn=worker_t
         recovered.update(worker_turns=[])
         return recovered
     session=None;attempts=[];turns=[];remaining_budget=budget
+    from run_local_checks import step_gate_fence
+    fence=step_gate_fence(Path(selected['subplan_path']).read_text(),selected['step']).fence_text or ''
+    if re.search(r'^\s*gate_first:\s*(true|yes|1)\s*$',fence,re.MULTILINE|re.IGNORECASE):
+        phase(context,'gate')
+        first=accept_step(context,default_timeout=gate_timeout,deadline=context['iteration_deadline_monotonic'])
+        attempts.extend(first['attempts'])
+        if first['accepted']:
+            first.update(worker_turns=[],gate_first=True)
+            return first
+        prompt+='\nPre-dispatch driver gate is red; implement this step using this diagnostic evidence:\n'+json.dumps(first,indent=2)
     while monotonic()<context['iteration_deadline_monotonic']:
         phase(context,'agent')
         outcome=turn(context,path,prompt,claude=claude,model=model,budget=remaining_budget,mcp=mcp,session=session)

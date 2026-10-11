@@ -13,7 +13,7 @@ pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='Mac production entr
 ROOT=Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize('case',['normal','hold','pending-advance','pending-staged','pending-committed','two-plans'])
+@pytest.mark.parametrize('case',['normal','hold','pending-advance','pending-staged','pending-committed','two-plans','gate-first-green','gate-first-red'])
 def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,monkeypatch,case):
     human_hold_during_gate=case=='hold'
     spec=importlib.util.spec_from_file_location('entry_fixture',Path(__file__).with_name('test_pre_loop_exit_sentinel.py'))
@@ -25,6 +25,11 @@ def test_actual_code_only_runner_ships_only_after_driver_acceptance(tmp_path,mon
     plan=world['plans']/(fixtures.STEM+'.md')
     plan.write_text('---\nplan: '+fixtures.SLUG+'\nstatus: pending\ncurrent_step: 0\nestimated_steps: 1\nverification_tier: loop-verified\n---\n# Counter\n## Steps\n### Step 0: fix counter\n```yaml\nlocal_checks:\n  - command: python3 -I -c "from pathlib import Path;exec(Path(\'counter.py\').read_text());assert f(4)==6"\n```\n')
     master=world['plans']/'MASTER-2026-08-29-execution-plan.md'
+    if case.startswith('gate-first-'):
+        plan.write_text(plan.read_text().replace('local_checks:','gate_first: true\nlocal_checks:'))
+        if case=='gate-first-green':
+            (work/'counter.py').write_text('def f(value): return value + 2\n')
+            git('add','.');git('commit','-qm','pre-existing accepted behavior')
     later=world['plans']/'2026-10-11-later.md'
     if case=='two-plans':
         later.write_text('---\nplan: later\nstatus: pending\ncurrent_step: 0\nestimated_steps: 1\n---\n# Later\n'
@@ -137,7 +142,13 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         closed=[row for row in closes if row.get('record_phase')=='close'][0]
         assert closed['driver_acceptance']['accepted'] is True
         assert closed['driver_integrity_passed'] is True and closed['state_audit']['explained'] is True
-        assert len(closed['driver_acceptance']['attempts'])==1
+        assert len(closed['driver_acceptance']['attempts'])==(2 if case=='gate-first-red' else 1)
+        if case=='gate-first-green':
+            assert closed['driver_acceptance']['gate_first'] and closed['driver_acceptance']['worker_turns']==[]
+            assert closed['driver_acceptance']['commits']==[]
+        if case=='gate-first-red':
+            assert len(closed['driver_acceptance']['attempts'])==2
+            assert len(closed['driver_acceptance']['worker_turns'])==1
         if case=='two-plans':
             assert len([row for row in closes if row.get('record_phase')=='close'])==2
     finally:
