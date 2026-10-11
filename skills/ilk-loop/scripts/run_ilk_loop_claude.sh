@@ -2389,6 +2389,9 @@ _write_unattended_result() {
   if [[ -n "${ILK_MASTER:-}" ]]; then
     args+=(--pinned)
   fi
+  if [[ -n "${JSONL_LOG:-}" ]]; then
+    args+=(--iteration-log "$JSONL_LOG")
+  fi
   # Collect per-iteration checks JSONL files.
   if [[ -n "${_RUN_CHECKS_JSONL:-}" ]]; then
     args+=(--checks-jsonl $_RUN_CHECKS_JSONL)

@@ -23,7 +23,7 @@ request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: close remaining legacy reader/recovery/parity requirements
-and delivery documentation in this isolated worktree. Toolkit preview 053678a0
+and delivery documentation in this isolated worktree. Toolkit preview 02bcfa7f
 and consumer compatibility 2cb713ae are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -2370,3 +2370,45 @@ anchors at the time of inspection and can move as integration changes code.
   it adds no suite invocation, baseline run, threshold or production default.
   Native Windows literal-selector/lifecycle evidence remains open. Candidate
   source only; live installed pointer is still 053678a0.
+
+
+### Safe local activation of deadline and legacy-reader fixes
+
+- Immutable local preview 02bcfa7f activated after freshly checked exact
+  controller 94556 ownership, no registered worker children, pinned private
+  inputs and sleep-only controller/scheduler children. Source main was clean
+  and fast-forwarded. Only the idle scheduler was briefly bounced/restored.
+- Controller identity and pause stayed unchanged; all 1,891 protected hashes
+  (including other project plans and private worker-home files) stayed equal.
+  External evidence is toolkit-delivery-preview-20261012e/installed.json.
+  Rezmac, consumer workers and public Git/release state were unchanged.
+- Archived retained-red two-launch entry: 1 passed/3 deselected in 15.09s.
+  Archived native tools with default final verification skipped: 1 passed/14
+  deselected in 7.93s. The first selection contained no native-tools case;
+  the separate actual native-tools entry supplies that evidence.
+
+### Unattended result reader migration (I2/D2)
+
+- Actual disposable Git measurement reproduced the legacy guessed HEAD-parent
+  base. Four new closed-reader contracts were also absent before changes;
+  the initial selection reported 5 failed in 0.20s. Do not describe missing
+  new CLI contracts as five independent historical production defects.
+- run_result._recorded_git_info now projects a contiguous exact-run/master/
+  project close range, retaining additive git_provenance. Contradictory or
+  missing closes, changed roots, unknown capture, discontinuity and a newer
+  open without close stay unknown. This path does not query mutable Git.
+- Bash unattended result invocation passes the existing JSONL log explicitly.
+  Legacy direct calls retain observed current HEAD and an explicitly supplied
+  base, but no longer invent a base from HEAD^ or count HEAD as a run commit.
+- Four result-check negatives reproduced missing/contradictory pass evidence
+  as green (4 failed in 0.05s). Missing outcome and pass without an actual
+  integer zero exit now become unmeasured with an explicit reason. Existing
+  explicit error-without-reason refusal remains unchanged.
+- Initial closed reader/existing result contracts: 18 passed/8 deselected in
+  0.40s. Actual unattended runner/result-source entries: 2 passed/13 deselected
+  in 12.62s before the strengthened close-provenance assertion. No agent model
+  dispatched (provider stubs/local Python); no routine final verification.
+- Strengthened actual runner close-provenance plus result/check contracts:
+  23 passed/7 deselected in 6.71s; shell syntax and diff checks passed.
+  Source candidate only; installed current pointer remains 02bcfa7f. Windows/member/timeout adapters
+  remain open and are not marked complete by this reader migration.

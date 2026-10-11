@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -49,8 +50,15 @@ def _classify_check(raw: dict[str, Any]) -> dict[str, Any]:
       ``exit_code``.
     - ``unmeasured`` rows require a non-empty ``reason``.
     """
-    internal = raw.get("outcome", "pass")
+    internal = raw.get("outcome")
     outcome = _OUTCOME_MAP.get(internal, "unmeasured")
+    evidence_reason = None
+    if internal is None:
+        evidence_reason = 'missing check outcome'
+    elif internal == 'pass' and (type(raw.get('exit_code')) is not int or raw['exit_code'] != 0):
+        outcome = 'unmeasured'
+        evidence_reason = 'passing check has no measured zero exit'
+
 
     row: dict[str, Any] = {
         "slug": raw.get("slug", ""),
@@ -69,7 +77,7 @@ def _classify_check(raw: dict[str, Any]) -> dict[str, Any]:
         # exit_code already set above.
         row["reason"] = raw.get("reason")
     elif outcome == "unmeasured":
-        reason = raw.get("reason") or raw.get("error") or ""
+        reason = evidence_reason or raw.get("reason") or raw.get("error") or ""
         if not reason:
             # Provide a default reason for skipped/inconclusive without
             # explicit reason — the tool opted out of measuring.
@@ -164,15 +172,9 @@ def _git_info(cwd: Path | None) -> tuple[str, str, list[dict[str, str]]]:
         )
         head_sha = head.stdout.strip() if head.returncode == 0 else ""
 
-        # commits since the run started (base_sha from env or parent of first commit)
+        # Without an explicit legacy run base, the current parent says
+        # nothing about the run's starting point. Leave the range unknown.
         base_sha = os.environ.get("ILK_RUN_BASE_SHA", "")
-        if not base_sha and head_sha:
-            # Use parent of HEAD as a conservative base.
-            parent = subprocess.run(
-                ["git", "rev-parse", f"{head_sha}^"], cwd=cwd, capture_output=True,
-                text=True, encoding="utf-8", timeout=10,
-            )
-            base_sha = parent.stdout.strip() if parent.returncode == 0 else head_sha
 
         commits: list[dict[str, str]] = []
         if base_sha and head_sha and base_sha != head_sha:
@@ -187,12 +189,68 @@ def _git_info(cwd: Path | None) -> tuple[str, str, list[dict[str, str]]]:
                         "sha": parts[0],
                         "subject": parts[1] if len(parts) > 1 else "",
                     })
-        elif head_sha:
-            commits = [{"sha": head_sha, "subject": ""}]
 
         return base_sha, head_sha, commits
     except Exception:
         return "", "", []
+
+
+def _recorded_git_info(log: Path, run_id: str, master: str, project: str):
+    """Project a contiguous closed range; never query the mutable Git tree."""
+    provenance = dict(source='closed-iteration-records', observation_complete=False)
+    def unknown(reason):
+        return '', '', [], dict(provenance, reason=reason)
+    try:
+        closes = {}; latest = 0
+        with log.open(encoding='utf-8-sig') as source:
+            for line in source:
+                if not line.strip(): continue
+                row = json.loads(line)
+                if not isinstance(row, dict) or row.get('run_id') != run_id: continue
+                if row.get('record_phase') not in {'open', 'close'}: continue
+                iteration = row.get('iteration')
+                if isinstance(iteration, bool) or not isinstance(iteration, int) or iteration < 1:
+                    return unknown('invalid iteration identity')
+                latest = max(latest, iteration)
+                if row['record_phase'] == 'open': continue
+                if iteration in closes and closes[iteration] != row:
+                    return unknown('contradictory close records')
+                closes[iteration] = row
+        if not closes or latest not in closes:
+            return unknown('latest iteration has no close record')
+        if sorted(closes) != list(range(1, latest+1)):
+            return unknown('closed iteration range is incomplete')
+        base = ''; head = ''; commits = []
+        for iteration in sorted(closes):
+            row = closes[iteration]; context = row.get('context') or {}
+            execution = row.get('execution') or {}
+            if (not isinstance(context, dict) or not isinstance(execution, dict)
+                    or context.get('run_id') != run_id or context.get('iteration') != iteration):
+                return unknown('close and frozen context disagree')
+            selected = context.get('dispatch') or {}
+            if (not isinstance(selected, dict) or not selected.get('master_path')
+                    or Path(selected['master_path']).stem != Path(master).stem):
+                return unknown('close master differs from result master')
+            if project and Path(project).resolve() not in {
+                    Path(context.get(role, '')).resolve() for role in ('clone_tree', 'exec_tree')}:
+                return unknown('close project differs from result project')
+            start = context.get('base_commit'); end = execution.get('head_commit')
+            recorded = execution.get('commits')
+            sha = lambda value: isinstance(value, str) and bool(re.fullmatch('(?:[0-9a-f]{40}|[0-9a-f]{64})', value))
+            if (execution.get('capture_error') or not sha(start) or not sha(end)
+                    or not isinstance(recorded, list) or any(not sha(c) for c in recorded)):
+                return unknown('execution capture unavailable')
+            if head and start != head:
+                return unknown('execution range is discontinuous')
+            if (start == end and recorded) or (start != end and (not recorded or recorded[-1] != end)):
+                return unknown('execution range contradicts captured head')
+            if not base: base = start
+            head = end
+            commits.extend(dict(sha=c, subject='') for c in recorded)
+        return base, head, commits, dict(provenance, observation_complete=True,
+                                        closed_iterations=latest)
+    except (OSError, ValueError, TypeError):
+        return unknown('iteration records unavailable or malformed')
 
 
 def write_result(
@@ -211,11 +269,17 @@ def write_result(
     worktree: str = "",
     gate_resolution: str = "none",
     proof: dict[str, Any] | None = None,
+    iteration_log: Path | None = None,
 ) -> None:
     """Write the result file atomically (tmp + os.replace)."""
-    base_sha, head_sha, commits = _git_info(
-        Path(project_path) if project_path else None
-    )
+    if iteration_log is not None:
+        base_sha, head_sha, commits, git_provenance = _recorded_git_info(
+            iteration_log, run_id, master_slug, project_path)
+    else:
+        base_sha, head_sha, commits = _git_info(
+            Path(project_path) if project_path else None)
+        git_provenance = dict(source='legacy-current-git',
+                              observation_complete=bool(base_sha and head_sha))
 
     result: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -228,6 +292,7 @@ def write_result(
         "base_sha": base_sha,
         "head_sha": head_sha,
         "commits": commits,
+        "git_provenance": git_provenance,
         "checks": checks or [],
         "gate_resolution": gate_resolution,
         "proof": proof or {
@@ -284,6 +349,7 @@ def _cli(argv: list[str]) -> int:
     write_cmd.add_argument("--started-at", default="")
     write_cmd.add_argument("--project-path", default="")
     write_cmd.add_argument("--worktree", default="")
+    write_cmd.add_argument("--iteration-log", type=Path)
     write_cmd.add_argument("--gate-resolution", default="none")
     write_cmd.add_argument(
         "--pinned", action="store_true", default=False,
@@ -319,6 +385,7 @@ def _cli(argv: list[str]) -> int:
             project_path=args.project_path,
             worktree=args.worktree,
             gate_resolution=args.gate_resolution,
+            iteration_log=args.iteration_log,
         )
     except Exception as exc:
         print(f"error: failed to write result: {exc}", file=sys.stderr)

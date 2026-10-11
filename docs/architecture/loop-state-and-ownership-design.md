@@ -364,3 +364,17 @@ root on legacy-context callers too; unknown or changed identities refuse
 before a gate. These are selected I1/I5 reader migrations, not a claim that
 every writer/platform adapter is complete. See the durable tracker for actual
 archived entry and portable PowerShell measurements.
+
+
+### Unattended execution-result reader migration (2026-10-12 candidate)
+
+New `run_result._recorded_git_info` reads the driver's existing close JSONL
+when Bash passes `--iteration-log`. It selects exact run/master/project,
+requires a contiguous range and matching context/execution identities, and
+projects the original recorded base, final recorded head and commit list.
+Unknown capture, a newer open without close or conflicting records supplies
+no range. It never substitutes current mutable Git observations. Additive
+`git_provenance` distinguishes this projection from the historical direct-call
+fallback; that fallback no longer invents a run base from `HEAD^`. This is a
+selected I2 reader migration, not completion of all legacy consumers or an
+independent gate/ship proof. Final verification stays opt-in.

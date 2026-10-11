@@ -292,6 +292,8 @@ def test_e2e_unattended_run_writes_result_instead_of_parking(
     assert data["provenance"] == "runner", f"provenance is {data['provenance']!r}"
     assert data["schema_version"] == 1
     assert data["run_id"], "run_id is empty"
+    assert data['git_provenance']['source'] == 'closed-iteration-records'
+    assert data['git_provenance']['observation_complete'] is True, data['git_provenance']
 
     # At least one check row with outcome: unmeasured.
     checks = data.get("checks", [])
