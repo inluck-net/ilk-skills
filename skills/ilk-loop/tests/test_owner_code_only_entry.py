@@ -164,12 +164,33 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             assert (home/'settings.json').read_bytes()==original
             assert not project_status(runtime)['busy']
             assert not (runtime/'running.pid').exists()
+            selection=[sys.executable,'-c',
+                'import json,sys;from pathlib import Path;from upgrade_drain import activation;print(json.dumps(activation(Path(sys.argv[1]),Path(sys.argv[2]))))',
+                str(runtime),str(work)]
+            selected=subprocess.run(selection,env=env,capture_output=True,text=True,check=True)
+            assert json.loads(selected.stdout)['next_toolkit_sha']==target_manifest['toolkit_sha']
+            # Independently refuse a still-live old PID, a human hold, and a
+            # changed owner request before the scheduler's activation entry.
+            sentinel_path=runtime/'last-exit.json'
+            request_path=runtime/'upgrade-drain-request.json'
+            for protected in (sentinel_path,master,request_path):
+                before=protected.read_bytes()
+                if protected==master:
+                    protected.write_text(before.decode().replace('status: active','status: blocked\nhold: human'))
+                else:
+                    changed=json.loads(before)
+                    changed['pid' if protected==sentinel_path else 'run_id']=os.getpid() if protected==sentinel_path else 'another-run'
+                    protected.write_text(json.dumps(changed))
+                try:
+                    refused=subprocess.run(selection,env=env,capture_output=True,text=True)
+                    assert refused.returncode!=0,(refused.stdout,refused.stderr)
+                finally:protected.write_bytes(before)
             # Activate through the same launcher entry the scheduler calls.
             # Deliberately supplied 99/99 limits must not replace the frozen
             # original 1 iteration / 1 minute contract.
             activation_env=dict(env,ILK_SKIP_MAIN='1')
             launch=ROOT/'skills/ilk-launcher/scripts/launch.sh'
-            argv=['bash','-c','source "$1"; start_ilk_window "$2" fixture 99 99 true false "" claude "" false ""',
+            argv=['bash','-c','source "$1"; unset ILK_SKIP_MAIN; start_ilk_window "$2" fixture 99 99 true false "" claude "" false ""',
                 'fixture',str(launch),str(work)]
             started=subprocess.run(argv,env=activation_env,capture_output=True,text=True,timeout=20)
             assert started.returncode==0,(started.stdout,started.stderr)
