@@ -167,7 +167,10 @@ No completion/ship/proof markers are inferred from this human tracker.
   Historical unmerged bases and member/dirty-entry adapters remain unsupported.
   Archived selfmod entry caught a pre-existing candidate kernel entry missing
   its required why field (1 failed in 2.26s, before provider dispatch). Corrected
-  metadata is pending caller recheck; refusal was truthful, not a green result.
+  metadata policy checks passed 18 in 0.77s. Next archived caller refused
+  missing exact dispatch (1 failed in 2.40s): pre-context selection/plans/runtime
+  had derived the worktree project identity. They now use the retained clone
+  identity until the frozen context exists. Caller recheck pending.
 - `274668ea` archived ordinary entry passed 1 in 6.72s. Consumer task profiles
   and report-v5 execution-root normalization are recorded in
   docs/verification/consumer-step-profile-baseline-2026-10-11.md and CSV.

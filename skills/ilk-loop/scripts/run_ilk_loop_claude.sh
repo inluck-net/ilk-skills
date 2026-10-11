@@ -1959,7 +1959,8 @@ get_ilk_runtime_dir() {
     return 1
   fi
   local json
-  json="$(python3 "$resolver" --start "$PROJECT_PATH")" || {
+  local identity_root="${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
+  json="$(python3 "$resolver" --start "$identity_root")" || {
     echo "get_ilk_runtime_dir: resolver failed for $PROJECT_PATH" >&2
     return 1
   }
@@ -3688,11 +3689,12 @@ get_plans_dir() {
     printf '%s\n' "$_CONTEXT_PLANS_DIR"
     return 0
   fi
+  local identity_root="${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
   # Resolve active plans dir via ilk_paths.py, with legacy walk-up fallback.
   local resolver="${_SKILL_ROOT}/ilk-loop/scripts/ilk_paths.py"
   if [[ -f "$resolver" ]]; then
     local json
-    json=$(python3 "$resolver" --start "$PROJECT_PATH" 2>/dev/null) || true
+    json=$(python3 "$resolver" --start "$identity_root" 2>/dev/null) || true
     if [[ -n "$json" ]]; then
       local resolved
       resolved=$(python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('resolved_plans_dir',''))" <<<"$json")
@@ -3703,7 +3705,7 @@ get_plans_dir() {
     fi
   fi
   # Legacy walk-up
-  local cur="$PROJECT_PATH"
+  local cur="$identity_root"
   while true; do
     local candidate="$cur/docs/plans"
     if [[ -d "$candidate" && -n "$(ls "$candidate"/MASTER-*.md 2>/dev/null | head -1)" ]]; then
@@ -6276,7 +6278,7 @@ PY
     # descriptive input to the existing started/summary records, not a second
     # context file. D1 will absorb it with the tree resolution migration.
     local _dispatch_status_json="" _dispatch_master_name="" _dispatch_filename=""
-    _dispatch_status_json=$(cd "$PROJECT_PATH" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || true
+    _dispatch_status_json=$(cd "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}" && python3 "$LOOP_STATUS_SCRIPT" --json 2>/dev/null) || true
     PRE_ITER_TARGET="$(ILK_DISPATCH_STATUS_JSON="$_dispatch_status_json" get_active_subplan_targets 2>/dev/null || true)"
     _dispatch_master_name=$(printf '%s' "$_dispatch_status_json" | jq -r '.master // empty') || true
     _dispatch_filename=$(printf '%s' "$_dispatch_status_json" | jq -r --arg slug "${PRE_ITER_TARGET%% *}" '[(.subplans // [])[] | select(.slug == $slug) | .fname] | if length == 1 then .[0] else empty end') || true
