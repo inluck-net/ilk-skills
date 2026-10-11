@@ -2189,3 +2189,28 @@ anchors at the time of inspection and can move as integration changes code.
   test filename produced no tests, and is not verification evidence.
 - Next: check owned worker callers and committed native production entry,
   then implement remaining recovery/adapters against their measured failures.
+
+
+### Candidate retained-red entry adapter
+
+- Acceptance criterion: an exact closed driver-observed red diff can re-enter
+  an owned launch after prior processes are absent; fresh gates remain required
+  before commit/advance. Arbitrary dirt and unobserved timeout diffs refuse.
+- New driver_step.admit_retained_red_entry reads the latest close for the exact
+  recovery identity, requires known red/unchanged gate tree, unchanged base and
+  frozen input fingerprint, exact plan state, positive prior state audit, and
+  absent prior runner/registered child groups. It matches the current diff's
+  Git tree object. The immutable context carries a diagnostic ownership receipt,
+  which conveys no reusable green result. Original retry counts persist.
+- worker_dispatch prepares pinned input/ownership/instruction fields before
+  this admission and before any broker/provider spawn. Expired preparation
+  now refuses before reading manifest files. The older negative test expected
+  clean-entry refusal first; it was updated to the earlier deadline precondition.
+- 11 focused admission/real worker-caller tests passed in 10.53s; after stricter
+  close/attempt identity checks, 8 admission checks passed in 2.36s. Archived
+  two-launch production check is next, not yet established.
+- The committed parser increment 4ec9d624 passed native production entry:
+  1 passed/14 deselected in 7.42s, final suite stayed opt-in. It is checked in
+  the owner tree; local installed main remains f40c8aaa pending safe activation.
+- Timeout/unknown audit retention is deliberately still unsupported; this
+  candidate does not finish B1 or the entire delivery checklist.

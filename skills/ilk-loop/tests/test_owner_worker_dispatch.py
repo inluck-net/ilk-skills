@@ -142,7 +142,7 @@ def test_unowned_preparation_refuses_before_spawning(tmp_path):
     from worker_dispatch import prepare as dispatch_prepare
     from iteration_context import ContextError
     context,work,plan=fixtures.fixture(tmp_path)
-    with pytest.raises(ContextError,match='clean frozen entry'):
+    with pytest.raises(ContextError,match='iteration deadline'):
         dispatch_prepare(dict(context,entry_dirty=True),tmp_path/'ctx.json',inputs=tmp_path/'missing',
                          deadline=0,registry=tmp_path/'registry',owner_pid=os.getpid())
     assert not (tmp_path/'ctx.json').exists()

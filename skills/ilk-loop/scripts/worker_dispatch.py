@@ -25,7 +25,7 @@ from run_registry import process_identity,register_child,liveness
 def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
     if os.environ.get('ILK_WORKER_SESSION','').strip():raise ContextError('worker cannot prepare dispatch')
     if sys.platform!='darwin':raise ContextError('code-only host adapter unavailable')
-    if context.get('entry_dirty') is not False:raise ContextError('clean frozen entry required')
+    if deadline<=monotonic():raise ContextError('iteration deadline reached before preparation')
     if not context.get('dispatch'):raise ContextError('exact dispatch required')
     context_path=Path(context_path).resolve();inputs=Path(inputs).resolve();registry=Path(registry).resolve()
     if context_path.exists():raise ContextError('context already frozen')
@@ -41,8 +41,21 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
     if not owner or owner!={key:row[key] for key in ('pid','pgid','lstart')} or liveness(row)!='running':
         raise ContextError('verified runner ownership required')
     if deadline<=monotonic():raise ContextError('iteration deadline reached before preparation')
-    from driver_step import validate,gate_contract
-    selected,plan,root,_=validate(dict(context,worker_sandbox_adapter='macos-brokered-shell'))
+    from driver_step import validate,gate_contract,admit_retained_red_entry
+    context=dict(context,worker_tools=manifest.get('worker_tools','shell'),
+                 private_worker_home=manifest['worker_home'],worker_inputs_dir=str(inputs),
+                 toolkit_code_inventory_sha256=manifest.get('code_inventory_sha256'),
+                 worker_sandbox_adapter='macos-brokered-shell',run_registry_dir=str(registry),
+                 runner_owner_pid=owner_pid,iteration_deadline_monotonic=deadline)
+    from instruction_inputs import inventory
+    context['instruction_input_inventory']=inventory(context)
+    if context.get('entry_dirty') is not False:
+        import driver_step
+        budget=driver_step._deadline.set(deadline);operation=driver_step._operation_context.set(context)
+        try:context['retained_red_entry']=admit_retained_red_entry(context)
+        finally:
+            driver_step._operation_context.reset(operation);driver_step._deadline.reset(budget)
+    selected,plan,root,_=validate(context)
     gate_contract(root,plan,selected)
     # /tmp keeps the AF_UNIX pathname below macOS's fixed length limit.
     # Separate IPC and worker scratch prevent the shell from unlinking IPC.

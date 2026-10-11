@@ -4,7 +4,8 @@
 Gates run against a captured working-tree object. Only the driver commits and
 CAS-advances one step. Changed commit-hook output is gated again; an unchanged
 commit does not rerun the same gates. Unknown/red/mutating gates never advance.
-Dirty entry, baseline-red waivers and multi-repo dispatch still require migration
+Exact closed driver-red diffs have a retained-entry adapter. Arbitrary dirt,
+timeout diffs, baseline-red waivers and multi-repo dispatch require migration
 adapters. Baseline declarations may exist; this path grants no waiver.
 """
 from __future__ import annotations
@@ -67,6 +68,75 @@ def working_tree(root: Path) -> str:
         return git(root,'write-tree',env=env)
 
 
+def admit_retained_red_entry(context):
+    """Admit only an unchanged driver-observed red diff from a closed turn.
+
+    This supplies work ownership, never gate proof. Unknown timeout work,
+    arbitrary initial dirt and missing/live prior ownership remain refused.
+    """
+    from run_registry import require_driver,process_identity,group_exists
+    require_driver(context);remaining()
+    selected=read_dispatch(context)
+    log=Path(context['runtime_dir']).parent/'logs/.ilk-loop.log'
+    candidate=None
+    if log.exists():
+        for line in log.read_text().splitlines():
+            remaining()
+            try: row=json.loads(line)
+            except ValueError: continue
+            if not isinstance(row,dict):continue
+            old=row.get('context')
+            if (row.get('record_phase')=='close' and isinstance(old,dict)
+                    and old.get('recovery_dir')==context.get('recovery_dir')):
+                candidate=row
+    if not candidate: raise ContextError('dirty entry lacks a closed driver red turn')
+    old=candidate['context'];accepted=candidate.get('driver_acceptance') or {}
+    attempts=accepted.get('attempts') or []
+    last=attempts[-1] if attempts else {}
+    if (candidate.get('run_id')!=old.get('run_id') or candidate.get('iteration')!=old.get('iteration')
+            or accepted.get('run_id')!=old.get('run_id') or accepted.get('iteration')!=old.get('iteration')
+            or last.get('run_id')!=old.get('run_id') or last.get('iteration')!=old.get('iteration')
+            or old.get('worker_sandbox_adapter')!='macos-brokered-shell'
+            or old.get('entry_dirty') is not False and not old.get('retained_red_entry')
+            or candidate.get('stop_reason')!='local_checks_failed'
+            or candidate.get('state_audit',{}).get('explained') is not True
+            or accepted.get('accepted') is not False
+            or accepted.get('commits')
+            or last.get('verdict')!='red' or last.get('gate_tree_unchanged') is not True
+            or last.get('base_commit')!=context.get('base_commit')
+            or last.get('input_fingerprint')!=gate_input_fingerprint(context,selected)):
+        raise ContextError('dirty entry has no exact unchanged red input identity')
+    execution=candidate.get('execution') or {}
+    if (execution.get('capture_error') or execution.get('commits')!=[]
+            or execution.get('head_commit')!=context.get('base_commit')):
+        raise ContextError('retained red entry HEAD changed')
+    # State has not advanced and no owner/human contract change is hidden by
+    # the immutable-only gate fingerprint.
+    for key in ('plans','master_snapshot'):
+        if old.get(key)!=context.get(key):raise ContextError('retained red plan state changed')
+    owner_pid=old.get('runner_owner_pid')
+    if not isinstance(owner_pid,int):raise ContextError('retained red runner ownership absent')
+    same_runner=(old.get('run_id')==context.get('run_id') and owner_pid==context.get('runner_owner_pid'))
+    if not same_runner and (process_identity(owner_pid) is not None or group_exists(owner_pid)):
+        raise ContextError('prior retained red runner still live or unverified')
+    events=Path(old['run_registry_dir'])/'child-events.jsonl'
+    if not events.is_file():raise ContextError('retained red child ownership history absent')
+    children=[]
+    for line in events.read_text().splitlines():
+        remaining();event=json.loads(line)
+        if event.get('run_id')==old['run_id'] and event.get('event')=='registered':
+            children.append(event['identity'])
+    if not children:raise ContextError('retained red owned children unavailable')
+    for child in children:
+        if process_identity(child['pid']) is not None or group_exists(child['pgid']):
+            raise ContextError('prior retained red child still live or unverified')
+    tree=working_tree(Path(context['exec_tree']))
+    if tree!=last.get('working_tree'):raise ContextError('retained red diff changed outside its observed turn')
+    return dict(schema=1,diagnostic_only=True,origin_run=old['run_id'],origin_iteration=old['iteration'],
+                origin_close_sha256=hashlib.sha256(json.dumps(candidate,sort_keys=True).encode()).hexdigest(),
+                base_commit=context['base_commit'],entry_tree=tree,input_fingerprint=last['input_fingerprint'])
+
+
 def validate(context):
     if os.environ.get('ILK_WORKER_SESSION','').strip():raise ContextError('worker cannot accept a step')
     from run_registry import require_driver
@@ -75,7 +145,15 @@ def validate(context):
         raise ContextError('enforced worker adapter required')
     from iteration_context import validate_work_tree_binding
     validate_work_tree_binding(context)
-    if context.get('entry_dirty') is not False:raise ContextError('clean frozen entry required')
+    if context.get('entry_dirty') is not False:
+        receipt=context.get('retained_red_entry') or {}
+        selected=read_dispatch(context)
+        if (receipt.get('schema')!=1 or receipt.get('diagnostic_only') is not True
+                or not re.fullmatch('[0-9a-f]{64}',str(receipt.get('origin_close_sha256','')))
+                or not re.fullmatch('[0-9a-f]{40,64}',str(receipt.get('entry_tree','')))
+                or receipt.get('base_commit')!=context.get('base_commit')
+                or receipt.get('input_fingerprint')!=gate_input_fingerprint(context,selected)):
+            raise ContextError('clean frozen entry or verified retained red diff required')
     selected=read_dispatch(context);path=Path(selected['subplan_path']);root=root_for_plan(context,path)
     if root!=Path(context['exec_tree']):raise ContextError('member-repo acceptance adapter not built')
     for row in list(context['plans'].values())+([context['master_snapshot']] if context.get('master_snapshot') else []):
