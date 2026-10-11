@@ -3233,3 +3233,17 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
   discovery, not behavior; repeat uses private HOME/data plus owner skill root.
   Corrected focused owner/fallback/BOM CLI checks: 13 passed in 1.13s under
   explicit isolated roots. This closes that reader defect, not all I2 readers.
+
+- B1/D1 watch reader migration: newest-directory selection showed a different
+  run's logs despite an exact recorded sentinel (negative failed). Watch now
+  selects only the recorded run directory; missing/invalid/escaped directories
+  remain unknown via the logs root instead of choosing a different run.
+  Authored all-shipped queue also hid a still-active closing driver (negative
+  failed); active exact-run ownership now takes precedence. Default watch uses
+  shared pid_health exact-run registry checks, including conservative unknown
+  ownership handling; injected historical probes remain available to callers.
+  Focused watch and registry reader contracts: 18 passed in 0.07s. No lifecycle
+  signals, plans or worker inputs were changed. Candidate, not installed yet.
+- Rezmac private standby advanced to toolkit 6aa18f7f / consumer 3987a299 after
+  independent git-common-dir, clean status and ancestor checks. Shared pointer
+  positively remained v0.9.193; shared repos/services were not activated.

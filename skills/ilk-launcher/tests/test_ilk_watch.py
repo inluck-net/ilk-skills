@@ -225,3 +225,36 @@ class TestEdgeCases:
         )
         result = watch.resolve()
         assert result["status"] == "idle"
+
+
+def test_watch_uses_recorded_run_instead_of_newest_log(tmp_path,monkeypatch):
+    import os
+    logs=tmp_path/'logs';runs=logs/'runs';runs.mkdir(parents=True)
+    selected=runs/'test-run';selected.mkdir()
+    other=runs/'other-run';other.mkdir()
+    os.utime(selected,(1,1));os.utime(other,(2,2))
+    monkeypatch.setattr(ProjectWatch,'_logs_dir',property(lambda self:logs))
+    watch=ProjectWatch(tmp_path,_read_sentinel=_fake_sentinel('running'),
+        _pid_alive=_live_pid,_resolve_queue=_queue(1,PENDING_SUBS))
+    assert watch.resolve()['log_path']==str(selected)
+    selected.rmdir()
+    assert watch.resolve()['log_path']!=str(other)
+
+
+def test_active_driver_is_not_hidden_by_authored_shipped_queue(tmp_path):
+    watch=ProjectWatch(tmp_path,_read_sentinel=_fake_sentinel('running'),
+        _pid_alive=_live_pid,_resolve_queue=_queue(0,ALL_SHIPPED_SUBS))
+    assert watch.resolve()['status']=='running'
+
+
+def test_default_watch_checks_exact_recorded_run(tmp_path,monkeypatch):
+    import pid_health
+    calls=[]
+    def health(state,pid,**kwargs):
+        calls.append((state,pid,kwargs));return True,'unknown','running'
+    monkeypatch.setattr(pid_health,'detect_stale_running',health)
+    monkeypatch.setattr(ProjectWatch,'_runtime_dir',property(lambda self:tmp_path/'launcher'))
+    watch=ProjectWatch(tmp_path,_read_sentinel=_fake_sentinel('running'),
+        _resolve_queue=_queue(1,PENDING_SUBS))
+    assert watch.resolve()['status']=='blocked'
+    assert calls==[('running',12345,dict(runtime=tmp_path/'launcher',run_id='test-run'))]

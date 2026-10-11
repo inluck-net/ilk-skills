@@ -143,6 +143,7 @@ class ProjectWatch:
         self.project_path = Path(project_path).resolve()
         self._read_sentinel = _read_sentinel or _read_sentinel_default
         self._pid_alive = _pid_alive or ilk_pid_alive
+        self._custom_pid_probe = _pid_alive is not None
         self._resolve_queue = _resolve_queue or _resolve_queue_default
 
     # ── derived paths ───────────────────────────────────────────────────
@@ -181,36 +182,40 @@ class ProjectWatch:
         sentinel = self._read_current_sentinel()
         queue = self._resolve_queue(self.project_path)
 
+        state = (sentinel or {}).get('state', 'unknown')
+        pid = (sentinel or {}).get('pid', 0)
+        if not isinstance(pid, int) or isinstance(pid, bool):
+            pid = 0
+        alive = False
+        if state in LIVE_SENTINEL_STATES:
+            if not self._custom_pid_probe and state == 'running':
+                from pid_health import detect_stale_running
+                stale, _, _ = detect_stale_running(state, pid,
+                    runtime=self._runtime_dir, run_id=(sentinel or {}).get('run_id'))
+                alive = not stale
+            else:
+                alive = self._pid_alive(pid)
+        # Authored completion can precede gates, close and landing.
+        if alive:
+            return {'status': 'running', 'log_path': str(self._resolve_log_path(sentinel)), 'hint': ''}
+
         # all-shipped check: loop_status exit 0 + no pending work.
         all_shipped = queue.get("queue_exit", 2) == 0
         non_shipped = [sp for sp in queue.get("subplans", []) if sp.get("status") != "shipped"]
         if all_shipped and not non_shipped:
             return {
                 "status": "all-shipped",
-                "log_path": str(self._resolve_log_path()),
+                "log_path": str(self._resolve_log_path(sentinel)),
                 "hint": "All sub-plans shipped. Do NOT relaunch — nothing to run.",
             }
 
         # running / blocked / idle from sentinel.
         if sentinel is not None:
-            state = sentinel.get("state", "unknown")
-            pid = sentinel.get("pid", 0)
-            if not isinstance(pid, (int, float)):
-                pid = 0
-            pid = int(pid)
-            alive = state in LIVE_SENTINEL_STATES and self._pid_alive(pid)
-
-            if alive:
-                return {
-                    "status": "running",
-                    "log_path": str(self._resolve_log_path()),
-                    "hint": "",
-                }
-            elif state in LIVE_SENTINEL_STATES and not alive:
+            if state in LIVE_SENTINEL_STATES and not alive:
                 # Sentinel says running but PID is dead → stale/blocked.
                 return {
                     "status": "blocked",
-                    "log_path": str(self._resolve_log_path()),
+                    "log_path": str(self._resolve_log_path(sentinel)),
                     "hint": f"Sentinel state={state!r} but PID {pid} is dead (stale).",
                 }
             else:
@@ -218,14 +223,14 @@ class ProjectWatch:
                 # with non-shipped sub-plans → idle (run ended, work remains).
                 return {
                     "status": "idle",
-                    "log_path": str(self._resolve_log_path()),
+                    "log_path": str(self._resolve_log_path(sentinel)),
                     "hint": f"Sentinel state={state!r} (terminal). Run ended; work remains.",
                 }
 
         # No sentinel at all.
         return {
             "status": "idle",
-            "log_path": str(self._resolve_log_path()),
+            "log_path": str(self._resolve_log_path(sentinel)),
             "hint": "No sentinel found.",
         }
 
@@ -238,10 +243,19 @@ class ProjectWatch:
         """
         return self._read_sentinel(self._runtime_dir)
 
-    def _resolve_log_path(self) -> Path:
-        """Pick the best log path: newest run dir > .ilk-loop.log > logs dir."""
+    def _resolve_log_path(self, sentinel: dict | None = None) -> Path:
+        """Use recorded run identity; newest-directory fallback is legacy only."""
         logs = self._logs_dir
         if logs is not None:
+            run_id = (sentinel or {}).get('run_id')
+            if run_id:
+                # Missing/invalid recorded logs are unknown, never another run.
+                if isinstance(run_id, str) and run_id not in {'.', '..'} and '/' not in run_id and '\\' not in run_id:
+                    runs = logs / 'runs'
+                    selected = runs / run_id
+                    if selected.is_dir() and selected.resolve().parent == runs.resolve():
+                        return selected
+                return logs
             newest = _find_newest_run_dir(logs)
             if newest is not None:
                 return newest
