@@ -419,6 +419,23 @@ function Get-WorkerDispatchContext {
   return [PSCustomObject]@{ Identity = $identity; Brief = $brief.TrimEnd() }
 }
 
+function Get-FrozenWorkerBrief {
+  # Format the already-frozen dispatch; do not rediscover the mutable queue.
+  $scriptDir = Join-Path $SkillRoot 'ilk-loop/scripts'
+  $brief = & python -c 'import sys;sys.path.insert(0,sys.argv[1]);from pathlib import Path;from iteration_context import read_context,read_dispatch;from dispatch_target import format_brief;c=read_context();d=read_dispatch(c);print(format_brief(d,d["step"],c["exec_tree"],Path(sys.argv[2])))' $scriptDir $SkillRoot | Out-String
+  if ($LASTEXITCODE -ne 0) { throw 'frozen dispatch brief refused' }
+  return $brief.TrimEnd()
+}
+
+function Save-InterruptedWorkerDiagnostic {
+  param([string]$LogFile, $Context)
+  $source = "$LogFile.jsonl"
+  if (-not (Test-Path -LiteralPath $source) -or (Get-Item -LiteralPath $source).Length -eq 0) { return }
+  $destination = Join-Path $Context.recovery_dir 'last-worker-salvage.json'
+  & python (Join-Path $SkillRoot 'ilk-loop/scripts/recovery.py') --salvage $source --out $destination | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'interrupted transcript diagnostic unavailable' }
+}
+
 function New-IterationContext {
   param([string]$Project, [string[]]$Repos, $Dispatch, [string]$Run,
         [int]$Iteration, [string]$Directory)
@@ -2328,6 +2345,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
   $preIterTarget = Get-ActiveSubplanTarget -Project $ProjectPath -LoopStatusScript $LoopStatusScript
   $dispatchContext = Get-WorkerDispatchContext -Project $ProjectPath -Target $preIterTarget
   $iterationContext = New-IterationContext -Project $ProjectPath -Repos $repos -Dispatch $dispatchContext -Run $RunId -Iteration $i -Directory $RunLogDir
+  if ($dispatchContext) { $dispatchContext.Brief = Get-FrozenWorkerBrief }
   & python (Join-Path $SkillRoot 'ilk-loop/scripts/iteration_record.py') --log $JsonlLog --replay-ledger $iterationContext.ledger_path | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'close-record recovery failed; refusing worker dispatch' }
   $headsBefore = Get-RepoHeads -Repos $repos
@@ -2369,6 +2387,10 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     -ModelOverride $Model
 
   $iterDurSec = [int]((Get-Date) - $iterStart).TotalSeconds
+  if (-not $result.Completed) {
+    try { Save-InterruptedWorkerDiagnostic -LogFile $iterLog -Context $iterationContext }
+    catch { Write-Host "[recovery] diagnostic salvage failed: $_" -ForegroundColor Yellow }
+  }
   $headsAfter = Get-RepoHeads -Repos $repos
 
   $newCommits = @{}

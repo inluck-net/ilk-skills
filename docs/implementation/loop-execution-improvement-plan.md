@@ -173,7 +173,7 @@ an explicit owned-profile refusal does not prove an unbuilt adapter.
 | State ownership (C4/C6/I3) | plan_state.py:158 transition byte CAS + durable journal; :84 owned state audit. | Holds, concurrent transition, registry projection, rollback and interruption negatives passed. Legacy workers keep older authority until migrated; policing retired only on enforced path. |
 | Process ownership (D1/I4) | run_registry.py:145 launch reservation, :352 child registration, :33 fresh driver authority. | Native owned-child and scheduler/watchdog/stop reader checks; PID reuse and unknown group refuse. Windows ownership adapter not established. |
 | Input pinning (D2/I6) | run_inputs private code/settings/hooks/MCP/inventory; instruction_inputs.py:9 named inputs; provider_provenance.py configured origin. | Actual provider with eight copied hooks, immutable homes and sanitized records. Managed settings, system libraries and arbitrary external imports require explicit coordination/adapters. |
-| Consumer compatibility (D3) | gh-resolve claim readers installed at 8472771f; 2cb713ae adds hermetic explicit toolkit fixture and quoted runtime pin rendering/probe. | Consumer negative ambient poison reproduced; 7 pin/integration checks and 8 adjacent focused checks passed. New consumer candidate not yet installed; rezmac unchanged. |
+| Consumer compatibility (D3) | gh-resolve claim readers installed at 8472771f; installed 2cb713ae adds hermetic explicit toolkit fixture and quoted runtime pin rendering/probe. | Consumer negative ambient poison reproduced; 7 pin/integration checks and 8 adjacent focused checks passed. Installed consumer/toolkit 4de pair: 4 focused checks passed in 0.91s; rezmac unchanged. |
 | Upgrade (D4) | upgrade_drain.py:18 positive accepted boundary, :92 activation, :150 consume. | Archived real launcher preserves limits/master/budget/holds, refuses live old children and tampering. Global opt-in remains off. Production local activation separate below. |
 | All-attempt verdicts (E2/I5) | driver_step.attempt_verdict groups same frozen input tree and scope/command; driver history retained before commit. | Same-tree red→pass flaky leaves HEAD/pointer unchanged; changed repaired tree green. Conservative owned refusal does not implement legacy flaky escalation/baseline-red advancement/strike attribution. |
 | Measurements (A4/E1/E3) | report.py parser v6 and phase_observation driver clocks. | Same MiMo consumer task 230s vs 199s; eligible toolkit repair 98s. One pair, uncontrolled concurrency, no causal/default-model speed claim. Shell/native representative pairing remains open. |
@@ -1781,3 +1781,26 @@ Installed toolkit remains 2ed78097. Owner candidate additions are uninstalled.
 No live plans, phase files, launch metadata, scheduler, pause state or workers
 were changed while building this map. References are owner-working-tree line
 anchors at the time of inspection and can move as integration changes code.
+
+### Continued recovery parity after the 70% status answer
+
+- PowerShell built its brief before freezing context, excluding recovery
+  diagnostics. It now formats the frozen dispatch after context creation,
+  without another queue lookup. Incomplete worker streams use the shared
+  salvage helper, preserving completed text and pending tool IDs as diagnostics
+  only; no pending tool is executed and no green proof is imported.
+- Portable actual PowerShell adapter: frozen plan/master may disappear and
+  formatting still uses the recorded identity. A malformed transcript tail is
+  counted; the next brief names the salvage and requires fresh gates. Seven
+  recovery/provenance checks passed in 0.78s. Thirty existing iteration-record
+  checks passed in 3.04s in the preceding run; that run also had a recovery
+  fixture failure because its frozen registry omitted the selected plan. The
+  fixture was corrected, without weakening the production registry check.
+- PowerShell full parser PASS; diff whitespace check PASS. This is candidate
+  recovery parity, not Windows ownership enforcement or installed delivery.
+- Durable gate history commit 01461024 also remains candidate-only: same-input
+  red/pass across launches refuses as flaky, changed inputs run fresh gates,
+  corrupt indexes refuse. Archived two production caller checks passed in
+  37.01s. All gates still execute; history cannot supply green proof.
+- Next: reconcile legacy all-attempt confirmation and its caller handling, then
+  close remaining reader/ownership migration. Preserve the active batch.
