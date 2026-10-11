@@ -254,7 +254,9 @@ is a separate capability check in section 3.
 **Existing:** R:6384-6403 emits `started`; R:7386-7446 emits a summary with
 model, duration, tool/test counters, and local checks. R:5989-5990 starts the
 legacy timer and R:6628-6630 ends it before post-worker checks/cleanup.
-Do not relabel that duration as whole-iteration or run time. I2 is not built.
+Do not relabel that duration as whole-iteration or run time. At this review
+snapshot I2 was not built; the later manual implementation now supplies
+supported close records and separately named driver intervals.
 
 **New first runtime increment:** additive fields on those existing JSONL
 records for actual init model/provider identity (sanitized), session ID,
@@ -389,7 +391,10 @@ remains removed and stall termination remains out of scope. Unsupported
 Windows/member/dirty owned adapters must refuse or use their explicit legacy
 fallback; they do not acquire Mac enforcement evidence.
 
-## 9. Owner candidate and evidence (2026-10-11)
+## 9. Historical first owner candidate and evidence (2026-10-11)
+
+This section preserves the first pre-install checkpoint. Later checked and
+installed work is tracked below and in the manual tracker.
 
 The approved first scope is implemented in the isolated owner worktree on
 `owner/loop-performance-20261011`, based on `6d7e8760`. It is a candidate;

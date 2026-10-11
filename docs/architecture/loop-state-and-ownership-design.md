@@ -119,10 +119,13 @@ requirement still passes at the final tree; final verification remains opt-in.
 New candidate fields `acceptance_base_commit` / `acceptance_base_tree` are
 projected by `iteration_record.py`; `ship_audit.py` validates the continuation.
 Historical rows without these fields can prove their exact accepted tree but
-cannot authorize a changed-tree continuation. This candidate is not installed;
-selfmod merge/member adapters remain unbuilt. Focused negative fixtures must
-keep rejecting unaccepted code and corrupted/changed contracts. A multi-subplan
-production-entry fixture is required before activation.
+cannot authorize a changed-tree continuation. Scoped continuation and the
+fresh-base selfmod landing adapter are checked in the locally installed
+2ed78097 preview; member-repository acceptance remains unsupported in the new
+owned profile. Archived multi-subplan and selfmod caller fixtures passed (see
+the durable tracker for checkpoint-specific output). Later owner candidates
+remain uninstalled. Negative fixtures continue to reject unaccepted code and
+corrupted or changed contracts; this does not authorize gate-outcome reuse.
 
 ## 4. Plan state ownership (I3)
 

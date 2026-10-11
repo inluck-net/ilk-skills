@@ -167,6 +167,17 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- Fresh read-only boundary observation at 23:33 local: toolkit run
+  20261011-215532 has idled on the existing 12:10 pause flag since before
+  iteration 1 dispatch. No provider/iteration artifact exists in its run
+  directory; registry identifies PID/PGID 53493 and immutable 2ed78097 inputs.
+  Only this local production controller is live. This corrects the prior
+  liveness-only assumption; it does not authorize removing the pause. Verify
+  exact identities, no worker/transaction/landing, and scheduler exclusion
+  before a local safe-boundary activation. Separate rezmac activity remains
+  outside this local rollout. No current controller has been signalled yet.
+
+
 - Supported code-only all-attempt correction: accept_step accepts retained
   driver history; exact run/iteration/slug/step/base/tree and scope/command
   identify the measurement. Same-tree red then green is flaky, errors/caps
