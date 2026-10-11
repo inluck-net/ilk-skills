@@ -18,7 +18,7 @@ import time
 from iteration_clock import monotonic
 import uuid
 from iteration_context import ContextError,read_context,write_context
-from run_inputs import bind_context,verify_launch_resources
+from run_inputs import bind_context,verify_launch_resources,pin_context_policy
 from run_registry import process_identity,register_child,liveness
 
 
@@ -82,6 +82,7 @@ def prepare(context,context_path,*,inputs,deadline,registry,owner_pid):
         with policy_path.open('x') as stream:
             stream.write(policy);stream.flush();os.fsync(stream.fileno())
         policy_path.chmod(0o400)
+        pin_context_policy(inputs,context_path,policy_path)
         return dict(settings_path=str(settings),sandbox_path=str(policy_path),
                     worker_tmp_dir=str(scratch),broker_pid=process.pid,
                     context_sha256=hashlib.sha256(context_path.read_bytes()).hexdigest())
@@ -132,17 +133,18 @@ def close(context_path):
         threading.Event().wait(.02)
 
 
-def binding(context_path):
+def binding(context_path,*,with_manifest=False):
     context_path=Path(context_path);context=read_context(context_path);inputs=Path(context['worker_inputs_dir'])
     manifest=verify_launch_resources(inputs);fingerprint=hashlib.sha256(context_path.read_bytes()).hexdigest()
     bindings=[row for row in manifest.get('context_bindings',[]) if row['context_sha256']==fingerprint]
     if len(bindings)!=1:raise ContextError('exact settings binding unavailable')
     row=bindings[0];settings=Path(row['settings_path'])
-    safe={key:value for key,value in json.loads(settings.read_text()).items() if key!='env'}
-    if hashlib.sha256(json.dumps(safe,sort_keys=True).encode()).hexdigest()!=row['settings_non_env_sha256']:
+    if hashlib.sha256(settings.read_bytes()).hexdigest()!=row['settings_sha256']:
         raise ContextError('bound settings changed')
-    return dict(settings_path=str(settings),worker_tmp_dir=context['worker_tmp_dir'],
-                sandbox_path=str(context_path.parent/(context_path.stem+'-sandbox.sb')))
+    expected=context_path.parent/(context_path.stem+'-sandbox.sb')
+    if row.get('sandbox_path')!=str(expected):raise ContextError('bound sandbox policy missing or contradictory')
+    result=dict(settings_path=str(settings),worker_tmp_dir=context['worker_tmp_dir'],sandbox_path=str(expected))
+    return (result,manifest) if with_manifest else result
 
 
 def main():

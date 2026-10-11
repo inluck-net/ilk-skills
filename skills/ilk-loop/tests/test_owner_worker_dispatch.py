@@ -85,6 +85,20 @@ for target in (ctx,ctx.parent/'forged-proof.json'):
         capture_output=True,text=True)
     assert denied.returncode!=0
 assert ctx.read_bytes()==original
+from worker_dispatch import binding as read_binding
+from run_inputs import InputPinError
+for protected in (Path(binding['settings_path']),Path(binding['sandbox_path'])):
+    before=protected.read_bytes();protected.chmod(0o600)
+    if protected.suffix=='.json':
+        altered=json.loads(before);altered['env']['ANTHROPIC_BASE_URL']='https://foreign.invalid'
+        protected.write_text(json.dumps(altered))
+    else:protected.write_text(before.decode()+'(allow file-write*)\\n')
+    try:
+        read_binding(ctx)
+        raise AssertionError('changed private settings/policy admitted')
+    except InputPinError as exc:assert 'pinned run input changed' in str(exc)
+    finally:protected.write_bytes(before);protected.chmod(0o400)
+assert read_binding(ctx)['sandbox_path']==binding['sandbox_path']
 cp=subprocess.run([sys.executable,str(Path(frozen['code_root'])/'skills/ilk-loop/scripts/worker_iteration.py'),
     '--context',str(ctx),'--prompt','implement selected step','--claude',str(provider),'--gate-timeout','10',
     '--mcp',str(inputs/'mcp.json')],

@@ -226,6 +226,10 @@ def verify_launch_resources(destination):
     paths=list(manifest.get('executables',[]))+[manifest['mcp']]
     paths.append({'path':str(Path(manifest['worker_home'])/'settings.json'),'sha256':manifest['settings_sha256']})
     paths.extend({'path':row['pinned_script'],'sha256':row['pinned_sha256']} for row in manifest['hooks'])
+    for row in manifest.get('context_bindings',[]):
+        paths.append({'path':row['settings_path'],'sha256':row['settings_sha256']})
+        if row.get('sandbox_path'):
+            paths.append({'path':row['sandbox_path'],'sha256':row['sandbox_sha256']})
     for row in paths:
         if digest(Path(row['path']))!=row['sha256']:raise InputPinError('pinned run input changed: '+row['path'])
     return manifest
@@ -286,6 +290,7 @@ def bind_context(destination: Path, context_path: Path) -> Path:
     output.chmod(0o400)
     safe={key:value for key,value in settings.items() if key!='env'}
     row={'context_sha256':fingerprint,'context_path':str(context_path),'settings_path':str(output),
+         'settings_sha256':digest(output),
          'settings_non_env_sha256':hashlib.sha256(json.dumps(safe,sort_keys=True).encode()).hexdigest(),
          'scope_mode':'enforce','shell_adapter':'macos-brokered-shell'}
     manifest.setdefault('context_bindings',[]).append(row)
@@ -294,6 +299,24 @@ def bind_context(destination: Path, context_path: Path) -> Path:
     try:temporary_manifest.chmod(0o600);os.replace(temporary_manifest,manifest_path)
     finally:temporary_manifest.unlink(missing_ok=True)
     return output
+
+
+def pin_context_policy(destination,context_path,policy_path):
+    from iteration_context import read_context
+    from run_registry import require_driver
+    from plan_state import _sync_parent
+    require_driver(read_context(context_path))
+    target=Path(destination)/'inputs.json';manifest=json.loads(target.read_text())
+    fingerprint=digest(Path(context_path));rows=[row for row in manifest.get('context_bindings',[])
+                                                if row['context_sha256']==fingerprint]
+    if len(rows)!=1 or rows[0].get('sandbox_path'):
+        raise InputPinError('unique unbound policy record required')
+    rows[0].update(sandbox_path=str(Path(policy_path).resolve(strict=True)),sandbox_sha256=digest(Path(policy_path)))
+    with tempfile.NamedTemporaryFile(mode='w',dir=target.parent,delete=False) as stream:
+        temporary=Path(stream.name);json.dump(manifest,stream,indent=2);stream.write('\n');stream.flush();os.fsync(stream.fileno())
+    try:
+        temporary.chmod(0o600);require_driver(read_context(context_path));os.replace(temporary,target);_sync_parent(target)
+    finally:temporary.unlink(missing_ok=True)
 
 
 def main():

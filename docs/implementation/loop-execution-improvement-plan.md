@@ -17,8 +17,8 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: build and validate the opt-in MiMo thinking-control adapter
-against actual CLI wire behavior; then selfmod/consumer recovery adapters and remaining
+Current next action: validate opt-in MiMo thinking-control same-session red repair
+through the actual production entry; then selfmod/consumer recovery adapters and remaining
 state/lifecycle adapters and activation. D1 POSIX callers and D2 private launch
 inputs now have production-entry candidate evidence. C3 preparation/acceptance/
 repair is wired but remains disabled by default. Actual-base provenance and
@@ -152,6 +152,20 @@ output/context work; verify current state at the actual landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- `a4aa2f26` owned opt-in thinking adapter: archived normal/external-hold callers
+  passed 2 in 11.97s. Actual provider entry with eight production hook copies
+  PASSED in 62.328s wall / 56.248s CLI, nine HTTP 200 requests with explicit
+  thinking disabled and other request fields retained. One gate/commit/CAS,
+  positive integrity/journal, shipped, private source home unchanged and registry
+  clear. Evidence `full-entry-provider-owned-thinking-control/`. Synthetic only;
+  no default change, installation or representative consumer quality claim.
+- D2 bound-input checks now include full private settings (including provider
+  environment) and the exact sandbox policy digest. Mutating either refuses
+  dispatch; restored bytes dispatch successfully. Driver-authorized policy
+  binding fsyncs file and parent. Shared verification avoids duplicate executable
+  hashing in a worker turn. Three real owned dispatch checks passed in 6.35s
+  before adding the parent fsync; repeat passed 3 in 6.09s. Archived caller checks follow.
 
 - 2026-10-11 C2 measured gate proxy gap: registered-driver fixture accepted
   code while the test child wrote into the external proof directory (3.31s

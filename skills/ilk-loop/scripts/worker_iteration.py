@@ -72,10 +72,8 @@ def instructions(context,path):
 
 
 def worker_turn(context,path,prompt,*,claude,model,budget,mcp,session=None):
-    bound=binding(path)
-    from run_inputs import verify_launch_resources
+    bound,manifest=binding(path,with_manifest=True)
     from provider_control import session as provider_session
-    manifest=verify_launch_resources(Path(context['worker_inputs_dir']))
     with provider_session(context,path,manifest,bound['settings_path'],model) as control:
         outcome=_worker_turn(context,path,prompt,claude=claude,model=model,budget=budget,
                              mcp=mcp,session=session,bound=bound,manifest=manifest,control=control)
