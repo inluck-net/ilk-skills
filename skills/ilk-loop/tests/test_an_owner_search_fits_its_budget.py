@@ -428,6 +428,7 @@ def test_ac6_owner_runs_after_reruns_on_reliably_red_only(
 
     record = tmp_path / "record.md"
     ret = vr.main([
+        "--project", str(repo),
         "--record", str(record),
         "--base-sha", base_sha,
         "--run-suite",
