@@ -3645,6 +3645,18 @@ get_plan_slugs() {
   fi
   [[ -z "$plans_dir" || ! -d "$plans_dir" ]] && return 0
 
+  if [[ -n "${ILK_ITER_CONTEXT:-}" ]]; then
+    python3 -c '
+import json,sys
+from pathlib import Path
+ctx=json.loads(Path(sys.argv[1]).read_text())
+if Path(ctx["plans_dir"]).resolve()!=Path(sys.argv[2]).resolve():
+    raise SystemExit("plans dir contradicts frozen iteration context")
+for row in ctx.get("plans",{}).values():
+    if not row.get("error"): print(row["slug"])
+' "$ILK_ITER_CONTEXT" "$plans_dir"
+    return
+  fi
   for f in "$plans_dir"/*.md; do
     [[ "$(basename "$f")" == MASTER* ]] && continue
     local slug

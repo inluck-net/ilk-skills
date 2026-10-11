@@ -11,6 +11,39 @@ import subprocess
 import tempfile
 
 
+class ContextError(ValueError):
+    pass
+
+
+def read_context(path: Path | None = None) -> dict | None:
+    raw=path or os.environ.get('ILK_ITER_CONTEXT')
+    if not raw: return None
+    try:
+        data=json.loads(Path(raw).read_text(encoding='utf-8-sig'))
+        if not isinstance(data,dict) or data.get('schema_version')!=1:
+            raise ValueError('unsupported context schema')
+        for name in ('clone','exec_tree','plans_dir','runtime_dir','data_root','code_root'):
+            if not isinstance(data.get(name),str) or not Path(data[name]).is_absolute():
+                raise ValueError(f'invalid context {name}')
+        return data
+    except (OSError, ValueError, TypeError) as exc:
+        raise ContextError(f'iteration context invalid: {exc}') from exc
+
+
+def root_for_plan(context: dict, subplan: Path) -> Path:
+    from plan_status import parse_frontmatter
+    subplan=subplan.resolve()
+    if subplan.parent!=Path(context['plans_dir']) or subplan.name not in context.get('plans',{}):
+        raise ContextError('plan is outside the frozen iteration registry')
+    member=context['plans'][subplan.name].get('repo')
+    if member:
+        key=str((Path(context['clone'])/member).resolve())
+        if key not in context['observe_tree']:
+            raise ContextError('plan repo is outside frozen observation map')
+        return Path(context['observe_tree'][key])
+    return Path(context['exec_tree'])
+
+
 def git_value(root: Path, name: str) -> str | None:
     try:
         return subprocess.check_output(['git','-C',str(root),'rev-parse',name],text=True,stderr=subprocess.DEVNULL).strip()
@@ -33,7 +66,7 @@ def plan_snapshot(path: Path) -> dict:
             parts[1]=re.sub(r'^(?:current_step|status|last_updated):[^\n]*\n?', '',parts[1],flags=re.MULTILINE)
             immutable='---'.join(parts)
     return dict(path=str(path),slug=strip_date_prefix(path.stem),
-                status=fm.get('status'),step=fm.get('current_step'),
+                status=fm.get('status'),step=fm.get('current_step'),repo=fm.get('repo'),estimated_steps=fm.get('estimated_steps'),
                 fingerprint=hashlib.sha256(immutable.encode()).hexdigest())
 
 

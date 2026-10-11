@@ -128,7 +128,7 @@ def _get_cutover_timestamp(
     for search_cwd, source in search_dirs:
         try:
             result = subprocess.run(
-                ["git", "log", "--format=%ct %s%n%b", "--all"],
+                ["git", "log", "--format=%ct %s%n%b", "HEAD"],
                 capture_output=True, text=True, cwd=search_cwd,
                 encoding="utf-8", errors="replace",
             )
@@ -319,6 +319,27 @@ def count_authored_steps(body: str) -> list[int]:
     return sorted(int(x) for x in _STEP_HEADING_RE.findall(scoped))
 
 
+def ledger_record_is_reachable(record: dict, cwd: Path | None = None) -> bool:
+    """Reject proof whose commit identities are outside audited HEAD.
+
+    Rows predating commit identity fields retain their legacy interpretation;
+    newly produced rows always carry commits or a gate-at-head identity.
+    """
+    commits=record.get('commits')
+    head=record.get('head') or record.get('head_sha')
+    if commits is None and not head:
+        return True # Legacy shape; strict new-batch migration is separate.
+    identities=commits if isinstance(commits,list) else []
+    if head: identities=identities+[head]
+    if not identities: return False
+    for sha in identities:
+        if not isinstance(sha,str) or not re.fullmatch(r'[0-9a-fA-F]{7,64}',sha):
+            return False
+        cp=subprocess.run(['git','merge-base','--is-ancestor',sha,'HEAD'],cwd=cwd,capture_output=True)
+        if cp.returncode: return False
+    return True
+
+
 def check_step_commits(
     slug: str,
     expected_steps: list[int],
@@ -344,7 +365,7 @@ def check_step_commits(
 
     try:
         result = subprocess.run(
-            ["git", "log", "--format=%s%n%b", "--all"],
+            ["git", "log", "--format=%s%n%b", "HEAD"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -411,6 +432,8 @@ def check_step_commits(
                 continue
             if rec.get("slug") != slug:
                 continue
+            if not ledger_record_is_reachable(rec, cwd):
+                continue
             try:
                 r_from = int(rec["step_from"])
                 r_to = int(rec["step_to"])
@@ -462,7 +485,7 @@ def _step_has_own_trailer(slug: str, step: int, cwd: Path | None = None) -> bool
     """
     try:
         result = subprocess.run(
-            ["git", "log", "--format=%s%n%b", "--all"],
+            ["git", "log", "--format=%s%n%b", "HEAD"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -828,6 +851,9 @@ def audit_ship(
             "reasons": [],
         }
 
+    if ledger_records is not None:
+        ledger_records = [rec for rec in ledger_records
+                          if isinstance(rec, dict) and ledger_record_is_reachable(rec, cwd)]
     authored = count_authored_steps(body)
     present, missing = check_step_commits(
         slug, authored, cwd=cwd, ledger_records=ledger_records,
@@ -877,7 +903,7 @@ def audit_ship(
         if len(missing) == len(authored):
             try:
                 result = subprocess.run(
-                    ["git", "log", "--format=%H %s%n%b", "--all"],
+                    ["git", "log", "--format=%H %s%n%b", "HEAD"],
                     capture_output=True, text=True, cwd=cwd,
                     encoding="utf-8", errors="replace",
                 )

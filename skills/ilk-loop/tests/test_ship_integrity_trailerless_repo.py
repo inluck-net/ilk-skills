@@ -119,7 +119,7 @@ def _ledger(repo: Path, slug: str, step_from: int, step_to: int) -> Path:
         fh.write(json.dumps({
             "run_id": "20260918-000000", "iteration": 1, "slug": slug,
             "repo": str(repo), "step_from": step_from, "step_to": step_to,
-            "commits": ["deadbee"], "provenance": "loop-executed",
+            "commits": _git(repo, "rev-list", "HEAD").splitlines(), "provenance": "loop-executed",
         }) + "\n")
     return f
 

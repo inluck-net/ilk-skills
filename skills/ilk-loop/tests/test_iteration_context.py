@@ -82,3 +82,55 @@ def test_selfmod_state_reentry_and_disappeared_unmerged_work(tmp_path):
     assert reconcile(clone,work,state)['state']=='MERGED'
     subprocess.run(['git','-C',str(clone),'worktree','add','--detach',str(work)],check=True,capture_output=True)
     assert reconcile(clone,work,state)['state']=='ISOLATED'
+
+
+def test_audit_ignores_unmerged_trailer_and_unreachable_ledger(tmp_path):
+    import ship_audit
+    args=fixture(tmp_path);clone=Path(args['clone']);work=Path(args['exec_tree'])
+    subprocess.run(['git','-C',str(work),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-qm','step [plan:work#step-0]'],check=True)
+    sha=subprocess.check_output(['git','-C',str(work),'rev-parse','HEAD'],text=True).strip()
+    subprocess.run(['git','-C',str(clone),'branch','unmerged',sha],check=True)
+    assert ship_audit.check_step_commits('work',[0],cwd=clone)==([],[0])
+    assert not ship_audit._step_has_own_trailer('work',0,cwd=clone)
+    record={'slug':'work','step_from':0,'step_to':1,'commits':[sha]}
+    assert ship_audit.check_step_commits('work',[0],cwd=clone,ledger_records=[record])==([],[0])
+    subprocess.run(['git','-C',str(clone),'merge','--ff-only',sha],check=True,capture_output=True)
+    assert ship_audit.check_step_commits('work',[0],cwd=clone)==([0],[])
+
+
+def test_integrity_reads_frozen_execution_tree_and_refuses_bad_context(tmp_path,monkeypatch):
+    import ship_integrity
+    from iteration_context import ContextError
+    args=fixture(tmp_path);ctx=resolve_context(**args)
+    path=tmp_path/'ctx.json';write_context(path,ctx)
+    monkeypatch.setenv('ILK_ITER_CONTEXT',str(path))
+    subplan=Path(args['dispatch']['subplan_path'])
+    assert ship_integrity._resolve_project_root(subplan)==(Path(ctx['exec_tree']),'iteration_context')
+    subplan.write_text('---\nstatus: shipped\nplan: work\n---\n')
+    assert 'contradicts' in ship_integrity._missing_step_reason(subplan,repo=Path(ctx['clone']))
+    outside=tmp_path/'outside.md';outside.write_text('---\nstatus: shipped\nplan: outside\n---\n')
+    with pytest.raises(ContextError,match='outside'):
+        ship_integrity._resolve_project_root(outside)
+    monkeypatch.setenv('ILK_ITER_CONTEXT',str(tmp_path/'missing.json'))
+    assert 'iteration context invalid' in ship_integrity._missing_step_reason(outside)
+
+
+def test_batch_gate_keeps_frozen_identity_and_refuses_wrong_latest_batch(tmp_path,monkeypatch):
+    import batch_gate
+    args=fixture(tmp_path);plans=Path(args['plans_dir'])
+    master=plans/'MASTER-selected.md';master.write_text('| step.md |\n')
+    base=subprocess.check_output(['git','-C',str(args['clone']),'rev-parse','HEAD'],text=True).strip()
+    args['dispatch'].update(master_path=str(master),batch_base_sha=base)
+    ctx=resolve_context(**args);path=tmp_path/'ctx.json';write_context(path,ctx)
+    monkeypatch.setenv('ILK_ITER_CONTEXT',str(path))
+    monkeypatch.delenv('ILK_WORKER_SESSION',raising=False)
+    subprocess.run(['git','-C',str(args['exec_tree']),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-qm','later'],check=True)
+    current=subprocess.check_output(['git','-C',str(args['exec_tree']),'rev-parse','HEAD'],text=True).strip()
+    record=batch_gate.BatchGateRecord('delegated',current,'none','now')
+    runtime=Path(ctx['runtime_dir'])
+    batch_gate.write_record(record,runtime,batch='selected')
+    read=batch_gate.read_record(runtime,batch='selected')
+    assert read.master_path==str(master)
+    assert read.batch_base_sha==base and read.batch_base_sha!=read.head_sha
+    assert read.run_id=='test'
+    assert batch_gate.read_record(runtime,batch='different') is None

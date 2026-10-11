@@ -272,7 +272,13 @@ def _missing_step_reason(subplan: Path, repo: Path | None = None) -> str | None:
         # repo), so Path.cwd() would cause the probe to fail and the check
         # to silently skip — measured 18 skips vs 18 fires on 2026-09-16.
         # Record which input won so a silent fallback is diagnosable.
-        # --repo takes precedence: the driver knows the repo path.
+        # A new dispatch has one frozen tree; explicit flags may not
+        # contradict it. Legacy callers keep their existing repo precedence.
+        from iteration_context import read_context, root_for_plan, ContextError
+        context=read_context()
+        if context and repo is not None and repo.resolve()!=root_for_plan(context,subplan).resolve():
+            raise ContextError('repo flag contradicts frozen execution tree')
+        # --repo takes precedence for legacy callers.
         if repo is not None:
             probe = subprocess.run(
                 ["git", "rev-parse", "--is-inside-work-tree"],
@@ -382,7 +388,10 @@ def _missing_step_reason(subplan: Path, repo: Path | None = None) -> str | None:
             f"by the work ({len(authored) - len(missing)} of {len(authored)} "
             f"authored steps committed)"
         )
-    except Exception as exc:  # noqa: BLE001 - fail open, but loudly
+    except Exception as exc:  # noqa: BLE001 - legacy fallback remains loud
+        from iteration_context import ContextError
+        if isinstance(exc, ContextError):
+            return str(exc)
         print(
             f"warning: step-commit check could not run ({exc}); "
             "ship-integrity fell back to the gate check alone",
@@ -403,6 +412,10 @@ def _resolve_project_root(subplan: Path) -> tuple[Path | None, str]:
     that blocks a legitimate ship because of its own resolution bug is worse
     than the gap it closes.
     """
+    from iteration_context import read_context, root_for_plan
+    context=read_context()
+    if context:
+        return root_for_plan(context, subplan), 'iteration_context'
     try:
         from ilk_paths import find_project_root, git_root as _git_root
     except ImportError:
@@ -439,8 +452,10 @@ def _resolve_project_root(subplan: Path) -> tuple[Path | None, str]:
         if key:
             try:
                 import json as _json
-                from ilk_paths import project_key as _project_key, skill_root
-                reg = skill_root() / "ilk-launcher" / "projects.json"
+                from ilk_paths import project_key as _project_key, skill_root, ilk_data_root
+                reg = ilk_data_root() / "projects.json"
+                if not reg.is_file():
+                    reg = skill_root() / "ilk-launcher" / "projects.json"
                 if reg.is_file():
                     entries = _json.loads(reg.read_text(encoding="utf-8"))
                     if isinstance(entries, dict):
@@ -524,7 +539,13 @@ def _missing_record_reason(subplan: Path, repo: Path | None = None) -> str | Non
                 "record cannot be located"
             )
 
-        # --repo takes precedence: the driver knows the repo path.
+        # A new dispatch has one frozen tree; explicit flags may not
+        # contradict it. Legacy callers keep their existing repo precedence.
+        from iteration_context import read_context, root_for_plan, ContextError
+        context=read_context()
+        if context and repo is not None and repo.resolve()!=root_for_plan(context,subplan).resolve():
+            raise ContextError('repo flag contradicts frozen execution tree')
+        # --repo takes precedence for legacy callers.
         if repo is not None:
             probe = subprocess.run(
                 ["git", "rev-parse", "--is-inside-work-tree"],
@@ -547,7 +568,10 @@ def _missing_record_reason(subplan: Path, repo: Path | None = None) -> str | Non
                 return f"verification record absent — {exc}"
 
         return None
-    except Exception as exc:  # noqa: BLE001 - fail open, but loudly
+    except Exception as exc:  # noqa: BLE001 - legacy fallback remains loud
+        from iteration_context import ContextError
+        if isinstance(exc, ContextError):
+            return str(exc)
         print(
             f"warning: record-absence check could not run ({exc}); "
             "ship-integrity fell back to the other checks alone",

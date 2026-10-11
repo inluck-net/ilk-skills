@@ -48,7 +48,7 @@ import os
 import re
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -161,6 +161,12 @@ class BatchGateRecord:
     #: release baseline needs identities, not just attribution bucket counts.
     failing_nodes: Optional[list[str]] = None
 
+    # Additive dispatch identity, never inferred from the current iteration HEAD.
+    batch: Optional[str] = None
+    master_path: Optional[str] = None
+    batch_base_sha: Optional[str] = None
+    run_id: Optional[str] = None
+
     def to_dict(self) -> dict:
         d = {
             "verdict": self.verdict,
@@ -187,6 +193,9 @@ class BatchGateRecord:
             d["suite_scope"] = dict(self.suite_scope)
         if self.failing_nodes is not None:
             d["failing_nodes"] = list(self.failing_nodes)
+        for name in ('batch','master_path','batch_base_sha','run_id'):
+            value=getattr(self,name)
+            if value is not None: d[name]=value
         return d
 
 
@@ -263,6 +272,16 @@ def write_record(
     ``batch-gate.json`` as "latest" for back-compat.
     """
     _refuse_in_worker_session("write_record")
+    from iteration_context import read_context, ContextError
+    context=read_context()
+    if context:
+        if runtime_dir.resolve()!=Path(context['runtime_dir']):
+            raise ContextError('batch gate runtime contradicts frozen context')
+        dispatch=context.get('dispatch') or {}
+        record=replace(record,batch=batch,master_path=dispatch.get('master_path'),
+                       batch_base_sha=dispatch.get('batch_base_sha'),run_id=context['run_id'])
+    elif batch is not None:
+        record=replace(record,batch=batch)
     if batch is not None:
         p = batch_record_path(runtime_dir, batch)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -285,6 +304,23 @@ def write_record(
                    encoding="utf-8")
     os.replace(tmp, p)
     return p
+
+
+def _record_identity_matches(data: dict, batch: Optional[str]) -> bool:
+    for name in ('batch','master_path','batch_base_sha','run_id'):
+        if data.get(name) is not None and not isinstance(data[name],str): return False
+    if batch is not None and data.get('batch') is not None and data['batch']!=batch:
+        return False
+    from iteration_context import read_context, ContextError
+    try:
+        context=read_context()
+    except ContextError:
+        return False
+    if context:
+        dispatch=context.get('dispatch') or {}
+        for name in ('master_path','batch_base_sha'):
+            if data.get(name) and dispatch.get(name) and data[name]!=dispatch[name]: return False
+    return True
 
 
 def read_record(
@@ -316,10 +352,13 @@ def read_record(
                 return None
             if not isinstance(data, dict):
                 return None
+            if not _record_identity_matches(data,batch): return None
             for field in REQUIRED_FIELDS:
                 if field not in data:
                     return None
             return BatchGateRecord(
+                batch=data.get('batch'),master_path=data.get('master_path'),
+                batch_base_sha=data.get('batch_base_sha'),run_id=data.get('run_id'),
                 verdict=data["verdict"],
                 head_sha=data["head_sha"],
                 invocation=data["invocation"],
@@ -343,10 +382,13 @@ def read_record(
         return None
     if not isinstance(data, dict):
         return None
+    if not _record_identity_matches(data,batch): return None
     for field in REQUIRED_FIELDS:
         if field not in data:
             return None
     return BatchGateRecord(
+        batch=data.get('batch'),master_path=data.get('master_path'),
+        batch_base_sha=data.get('batch_base_sha'),run_id=data.get('run_id'),
         verdict=data["verdict"],
         head_sha=data["head_sha"],
         invocation=data["invocation"],

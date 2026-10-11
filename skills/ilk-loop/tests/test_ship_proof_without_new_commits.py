@@ -320,6 +320,12 @@ def test_check_step_commits_accepts_gate_pass_at_head_row(tmp_path: Path) -> Non
     # union logic — this is the original shared-remote path.
     normal_row = {k: v for k, v in gate_row.items()
                   if k not in ("proof", "head", "gate_outcome")}
+    # A normal attribution row needs actual reachable commits; an empty
+    # list without the explicit gate-at-head proof is unknown, not proof.
+    assert ship_audit.check_step_commits(
+        "gate-work", [0, 1], cwd=project, ledger_records=[normal_row],
+    ) == ([], [0, 1])
+    normal_row["commits"] = [head]
     present3, missing3 = ship_audit.check_step_commits(
         "gate-work", [0, 1], cwd=project, ledger_records=[normal_row],
     )

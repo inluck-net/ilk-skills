@@ -521,6 +521,15 @@ def _record_project_matches(
     return False
 
 
+def measured_iteration_elapsed(rec: dict) -> float | None:
+    """Use complete driver time when observed; retain legacy worker duration."""
+    for name in ('driver_elapsed_sec','duration_sec'):
+        value=rec.get(name)
+        if isinstance(value,(int,float)) and not isinstance(value,bool) and value>=0 and value<float('inf'):
+            return value
+    return None
+
+
 def _carries_outcome(rec: dict) -> bool:
     """True when a record carries an iteration's OUTCOME, not just its start.
 
@@ -534,6 +543,8 @@ def _carries_outcome(rec: dict) -> bool:
     completion line carries no ``status`` key at all, so absence of the token
     is not evidence of completeness.
     """
+    if rec.get('record_phase') == 'open':
+        return False
     return any(k in rec for k in ("duration_sec", "exit_code", "stop_reason"))
 
 
@@ -589,7 +600,14 @@ def read_jsonl_iters(project_path: Path, last_launch: dict | None = None) -> lis
                         # `Exit ?` and `Stop reason -` while the record on
                         # disk says otherwise -- and then recommends against
                         # relaunching on the strength of those zeros.
+                        opened = records[prev].get('timestamp')
+                        if opened and not rec.get('opened_at'):
+                            rec = dict(rec, opened_at=opened)
                         records[prev] = rec
+                    elif not _carries_outcome(rec) and _carries_outcome(records[prev]):
+                        # Candidate log ordering may present close before open.
+                        if rec.get('timestamp') and not records[prev].get('opened_at'):
+                            records[prev] = dict(records[prev], opened_at=rec['timestamp'])
         except OSError:
             continue
 
@@ -2639,17 +2657,19 @@ def render_report(
         to_cfg = next(
             (r.get("iteration_timeout_min") for r in iters if r.get("iteration_timeout_min") is not None), "unknown"
         )
-    total_elapsed = sum((r.get("duration_sec") or 0) for r in _real_iters)
+    measured_elapsed = [measured_iteration_elapsed(r) for r in _real_iters]
+    total_elapsed = sum(value for value in measured_elapsed if value is not None)
+    unknown_elapsed = sum(value is None for value in measured_elapsed)
     new_commits_total = sum((r.get("new_commits_total") or 0) for r in _real_iters)
     err_count = sum(1 for r in _real_iters if r.get("exit_code") not in (0, None))
-    durations_min = [(r.get("duration_sec") or 0) / 60.0 for r in _real_iters]
+    durations_min = [value/60.0 for value in measured_elapsed if value is not None]
     avg_dur = sum(durations_min) / len(durations_min) if durations_min else 0
     max_dur = max(durations_min) if durations_min else 0
 
     # Prefer the run's own earliest record timestamp.  Only fall back to
     # last-launch.json when it names the SAME run — a last-launch that
     # belongs to a later run would give a wrong start time.
-    started_at = _real_iters[0].get("timestamp") if _real_iters else None
+    started_at = (_real_iters[0].get('opened_at') or _real_iters[0].get('timestamp')) if _real_iters else None
     if not started_at and last_launch is not None and last_launch.get("run_id") == run_id:
         started_at = last_launch.get("started_at")
     if not started_at:
@@ -2672,6 +2692,8 @@ def render_report(
         "iteration_timeout_min_configured": to_cfg,
         "new_commits_total": new_commits_total,
         "total_elapsed_sec": total_elapsed,
+        "unknown_elapsed_iterations": unknown_elapsed,
+        "elapsed_basis": "driver where measured; legacy worker otherwise",
         "transient_error_count": err_count,
         "started_at": started_at,
         "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
@@ -2692,6 +2714,8 @@ def render_report(
     body_lines.append(f"| Started | {started_at} |")
     body_lines.append(f"| Iterations | {iter_count} / {max_iter_cfg if max_iter_cfg else 'unknown'} |")
     body_lines.append(f"| Total elapsed | {total_elapsed/60:.1f} min |")
+    if unknown_elapsed:
+        body_lines.append(f"| Iterations with unknown elapsed | {unknown_elapsed} |")
     body_lines.append(f"| Avg iter | {avg_dur:.1f} min |")
     to_disp = f"{to_cfg} min" if to_cfg and to_cfg != "unknown" else "unknown (last-launch.json missing)"
     body_lines.append(f"| Max iter | {max_dur:.1f} min (configured timeout: {to_disp}) |")

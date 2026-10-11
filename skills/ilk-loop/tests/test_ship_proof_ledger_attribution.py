@@ -151,7 +151,7 @@ def test_ledger_record_attributes_steps_the_trailer_cannot(tmp_path: Path) -> No
     Asserted at the function level so the range arithmetic (half-open, and
     slug-scoped) is pinned independently of the CLI wiring in AC-4.
     """
-    project, _, _ = _shipped_project(tmp_path, steps=3, trailers=False)
+    project, _, shas = _shipped_project(tmp_path, steps=3, trailers=False)
 
     present, missing = ship_audit.check_step_commits(
         "gate-work", [0, 1, 2], cwd=project,
@@ -163,7 +163,7 @@ def test_ledger_record_attributes_steps_the_trailer_cannot(tmp_path: Path) -> No
 
     full = [{
         "run_id": "20260829-120000", "iteration": 1, "slug": "gate-work",
-        "repo": str(project), "step_from": 0, "step_to": 3, "commits": ["abc1234"],
+        "repo": str(project), "step_from": 0, "step_to": 3, "commits": shas,
     }]
     present, missing = ship_audit.check_step_commits(
         "gate-work", [0, 1, 2], cwd=project, ledger_records=full,
