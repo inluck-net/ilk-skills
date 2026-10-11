@@ -330,3 +330,17 @@ No completion/ship/proof markers are inferred from this human tracker.
   Timeout 60s is an experiment judgment (sampled normal latency fits; a slow
   successful run would falsify it), not a batch default. Production hooks,
   interrupted transcript and real driver-red repair remain C5 requirements.
+
+- State ownership increment: new `plan_state.transition` re-reads under a
+  process lock, compares expected fields, refuses worker calls/foreign frozen
+  registry plans and driver changes to human holds, and writes intent/applied
+  JSONL with before/after hashes around atomic replacement. Interrupted intents
+  are classified applied/not-applied by exact bytes; unexplained edits refuse.
+  Journal lives beside the plans in `state-transitions.jsonl`; all migrated
+  writers of that plans root share one lock/journal. Bash gate-first step
+  advancement now uses it; rollback, ship, reconcile, promotion, parking and
+  PowerShell writers are not yet migrated. No I3 completion claim.
+  Focused API/gate-first/final-step/one-step callers: 19 passed in 13.72s;
+  API follow-up with concurrent same-step CAS: 10 passed in 0.12s. Exactly
+  one of two concurrent drivers advanced; the stale call refused.
+  Bash syntax and diff checks passed. New authority module is kernel protected.

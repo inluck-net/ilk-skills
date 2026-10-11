@@ -2746,19 +2746,14 @@ advance_subplan_current_step() {
   plans_dir=$(_gate_first_plans_dir) || return 1
   sub_file=$(find_subplan_file_by_slug "$plans_dir" "$slug") || return 1
   python3 -c '
-import re, sys
+import sys
 from pathlib import Path
-p = Path(sys.argv[1])
-step = int(sys.argv[2])
-body = p.read_text(encoding="utf-8")
-m = re.search(r"^current_step:[ \t]*(\d+)[ \t]*$", body, re.MULTILINE)
-if not m:
-    raise SystemExit(1)
-if int(m.group(1)) != step:
-    raise SystemExit(1)
-p.write_text(body[:m.start()] + "current_step: " + str(step + 1) + body[m.end():], encoding="utf-8")
-raise SystemExit(0)
-' "$sub_file" "$step"
+sys.path.insert(0,sys.argv[1])
+from plan_state import transition
+step=int(sys.argv[3])
+transition(Path(sys.argv[2]), {"current_step":step}, {"current_step":step+1},
+           actor="driver",reason="dispatched step gate passed")
+' "${_SKILL_ROOT}/ilk-loop/scripts" "$sub_file" "$step"
 }
 
 # _write_subplan_current_step <slug> <step>
