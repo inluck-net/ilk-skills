@@ -17,7 +17,7 @@ import shlex
 from datetime import datetime
 from pathlib import Path
 
-PARSER_VERSION = 5
+PARSER_VERSION = 6
 BOOTSTRAP = re.compile(r'\.claude[^/\s]*/|\.ilk-data|\.ilk/|plans/|MASTER-|loop_status|find ~')
 TEST = re.compile(r'\b(?:pytest|unittest|vitest|jest|playwright)\b|\bnpm\s+(?:run\s+)?test\b')
 THINK = re.compile(r'\[thinking\] \d+ chars in ([\d.]+)s')
@@ -45,9 +45,12 @@ def bootstrap_input(tool,exec_tree=None):
     # explicitly supplied execution-root prefix; a repo living under .ilk-data
     # does not turn every native read into toolkit/bootstrap work.
     if tool.get('name') in {'Edit','Write','MultiEdit','NotebookEdit'}:return ''
-    prefix=str(Path(exec_tree).resolve()).rstrip('/')+'/' if exec_tree is not None else None
+    root=str(Path(exec_tree).resolve()).rstrip('/') if exec_tree is not None else None
+    prefix=root+'/' if root is not None else None
     def relative(value):
-        if isinstance(value,str):return value.replace(prefix,'') if prefix else value
+        if isinstance(value,str):
+            if root is not None and value==root:return '.'
+            return value.replace(prefix,'') if prefix else value
         if isinstance(value,dict):return {key:relative(item) for key,item in value.items()}
         if isinstance(value,list):return [relative(item) for item in value]
         return value

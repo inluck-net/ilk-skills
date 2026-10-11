@@ -163,3 +163,17 @@ Thinking completion time is unknown; compaction and explicit retries were zero. 
 240s/300s experimental bounds and their judgment basis apply unchanged.
 Evidence: external `controlled-focused-diagnostics-native-20261011/summary.json`.
 Current production installation remains `2ed78097`; this candidate was isolated.
+
+## Parser-v6 correction without new execution
+
+The exact execution-root path in native Grep inputs was not normalized by
+parser-v5; it falsely counted ordinary consumer searches as bootstrap when the
+fixture root lived under `.ilk-data`. A negative reproduced 1 adjusted indicator
+instead of 0. Parser-v6 normalizes that exact root to `.` while preserving
+actual subpaths and outside-root references. Seven focused reporter checks
+passed. Saved streams were reparsed into separate cost-report-v6.json files;
+original v5 reports and CSV rows remain unchanged. The corrected-policy sample
+still has three adjusted bootstrap indicators; focused-diagnostics now has five
+instead of eleven. Timing, acceptance and tool/message counts are unchanged.
+CSV v6 rows are reparses of the same runs, not new independent samples. These
+indicators still do not establish wasted work. No provider or suite was rerun.

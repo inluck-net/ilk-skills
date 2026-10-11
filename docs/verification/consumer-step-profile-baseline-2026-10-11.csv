@@ -6,3 +6,5 @@ consumer-provider-native-tools,8c884dc130b2ce322ceed3469e2143677225f8e4,mimo-v2.
 controlled-installed-native-coverage-refusal,2c3b4039a54a5ae5124c426f300603e31d9cceac,mimo-v2.6-pro,native,226.468,218.2,,,,,,,,1.32,,False,False,not-parsed
 controlled-installed-native-corrected-policy,2ed78097de96b527b013505e4380a485c07d3eb0,mimo-v2.6-pro,native,229.799,217.639,170.441,21,,30,3,27,,46.607,,True,True,5
 focused-diagnostics-native,7e8f6cccb74154be92c06a2e66e191eab8c76a0b,mimo-v2.6-pro,native,199.194,187.071,179.761,16,,30,11,25,,4.868,,True,True,5
+controlled-corrected-policy-native-20261011-reparse-v6,2ed78097de96b527b013505e4380a485c07d3eb0,mimo-v2.6-pro,native,229.799,217.639,170.441,21,,30,2,27,,46.607,,True,True,6
+controlled-focused-diagnostics-native-20261011-reparse-v6,7e8f6cccb74154be92c06a2e66e191eab8c76a0b,mimo-v2.6-pro,native,199.194,187.071,179.761,16,,30,5,25,,4.868,,True,True,6

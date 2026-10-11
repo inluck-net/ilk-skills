@@ -18,6 +18,10 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
+Delivery target: by 2026-10-12 00:48 Asia/Shanghai (two hours from Chad’s
+request). This is a target, not permission to interrupt the live batch or omit
+required correctness. Prioritize delivery closure over new exploratory work.
+
 Current next action: finish remaining supported lifecycle/caller requirements
 in this isolated worktree, continue controlled performance analysis, and wait
 for the live batch's normal completion before overlap comparison/integration.
@@ -29,7 +33,7 @@ Mac evidence. Actual provider red then green used the same session; a real
 consumer repair passed and a focused-diagnostics comparison is recorded.
 Windows/member/dirty-entry adapters and controlled shell pairing remain open.
 Continue here per Chad: “no more handover, until the whole thing done”.
-Overall estimate 58% remains a judgment over the whole installed/measured scope,
+Overall estimate 62% remains a judgment over the whole installed/measured scope,
 not a checkbox count. Do not infer whole completion from capability checks.
 
 Old runs 20261011-102057/130246/212131 and their scheduler identities are
@@ -162,6 +166,19 @@ an actual safe landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- Reporter-v6 measurement correction: exact native execution-root search was
+  falsely counted as bootstrap under a .ilk-data fixture root. Negative failed
+  1 in 0.03s; seven reporter checks passed 0.03s after exact-root normalization.
+  Separate v6 reparses preserve original raw/v5 reports and rows: corrected
+  policy remains three adjusted bootstrap indicators, focused diagnostics is
+  five rather than eleven. Runtime/acceptance unchanged. No new execution.
+
+- Chad asked to target completion in two hours or less (22:48 local). Finish
+  remaining correctness, reconcile delivered live-batch changes, and activate
+  only after a verified safe boundary. No repeat provider/full-suite runs.
+  Progress estimate 62% reflects checked candidates plus remaining deployment
+  and evidence closure; it does not authorize widening or dropping scope.
 
 - Documentation consistency: label old ownership/kernel policy snapshots as
   historical, describe current new-base owner-only admission/range/write guards,

@@ -113,8 +113,18 @@ def test_runtime_location_does_not_make_native_edits_bootstrap(tmp_path):
         {'type':'tool_use','id':str(i),'name':name,'input':payload}]}} for i,(name,payload) in enumerate(tools)]
     p.write_text('\n'.join(json.dumps(row) for row in rows))
     r=mod.report(p,exec_tree=root)
-    assert r['parser_version']==5
+    assert r['parser_version']==6
     assert r['bootstrap_path_indicator_calls_raw']==4
     assert r['bootstrap_path_indicator_calls']==1
     assert r['bootstrap_indicator_before_first_edit']==0
     assert r['first_edit_observed']
+
+
+def test_native_search_at_exact_execution_root_is_not_bootstrap(tmp_path):
+    root=tmp_path/'.ilk-data/project';root.mkdir(parents=True)
+    p=tmp_path/'iter.log.jsonl'
+    tool={'type':'tool_use','id':'search','name':'Grep','input':{'path':str(root),'pattern':'upgrade_request_invalid'}}
+    p.write_text(json.dumps({'type':'assistant','message':{'id':'turn','content':[tool]}})+'\n')
+    result=mod.report(p,exec_tree=root)
+    assert result['bootstrap_path_indicator_calls_raw']==1
+    assert result['bootstrap_path_indicator_calls']==0
