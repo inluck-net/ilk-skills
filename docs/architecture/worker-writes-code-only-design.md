@@ -282,3 +282,13 @@ remain unbuilt; unsupported gates must refuse rather than broaden permissions.
 The hold fixture now uses an external coordinator during a green gate, so gate
 code no longer impersonates a human writing protected state. Focused scope and
 dispatch checks passed; the archived runner caller check precedes activation.
+
+### Unsupported PowerShell owned profiles
+
+`run_ilk_loop_claude.ps1` now explicitly refuses code-only, native tools,
+explicit thinking control and prepared-pin drain before preflight/artifact
+writes. Their Windows enforcement/activation adapters are not built. The
+legacy default remains available with its existing authority model. Portable
+PowerShell 7.6.6 on Mac exercised parser/dispatch/context, canonical execution
+observation and all four refusals; that does not establish native Windows
+write enforcement. An unsupported owned profile must never silently downgrade.

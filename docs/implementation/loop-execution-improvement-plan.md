@@ -159,6 +159,18 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- PowerShell observation now receives canonical execution root. Direct entry
+  explicitly refuses code-only/native/disabled-thinking/drain profiles before
+  preflight or artifact writes, because their Windows enforcement/activation
+  adapter is unbuilt. Legacy default remains available; no downgrade claim.
+  Private portable PowerShell 7.6.6 parser/function probe: PASS for exact
+  dispatch/brief/context, missing observation, canonical observation root and
+  all four profile refusals. Reproducible owner_dispatch_parity.ps1. First
+  refusal fixture encountered Python preflight before the new guard; guard was
+  moved earlier. A wrapped stderr assertion was corrected. This Mac probe is
+  not native Windows enforcement evidence; Windows adapter remains open.
+
+
 - Consumer compatibility locally installed: clean gh-resolve main fast-forwarded
   d67f26b4 → 8472771f after 27 focused checks passed in 0.26s. Reap/GC/drain
   launchd services were freshly idle (active count zero), briefly unloaded to

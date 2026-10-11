@@ -180,6 +180,16 @@ if (-not $LogDir -or -not $JsonlLogPath) {
   }
 }
 
+# Owned worker enforcement and prepared-pin activation have no Windows adapter
+# yet. Refuse before discovery/state writes; legacy default remains available.
+if ($MyInvocation.InvocationName -ne '.' -and $env:ILK_DOTSOURCE_ONLY -ne '1' -and (
+    $env:ILK_WORKER_MODE -eq 'code-only' -or
+    ($env:ILK_WORKER_TOOLS -and $env:ILK_WORKER_TOOLS -ne 'shell') -or
+    ($env:ILK_WORKER_THINKING -and $env:ILK_WORKER_THINKING -ne 'default') -or
+    $env:ILK_ENABLE_UPGRADE_DRAIN -eq '1')) {
+  throw 'Owned worker/tool/thinking/upgrade profiles require a verified platform adapter; PowerShell supports the legacy default only.'
+}
+
 # ----- Pre-flight ---------------------------------------------------
 # Skip when ProjectPath is empty (dot-sourcing for function definitions).
 if ($ProjectPath) {
@@ -428,11 +438,13 @@ function New-IterationContext {
 }
 
 function Get-WorkerCostObservation {
-  param([string]$LogFile)
+  param([string]$LogFile, [string]$ExecTree)
   $report = Join-Path (Split-Path $SkillRoot -Parent) "tools/loop-performance/report.py"
   if (-not (Test-Path "$LogFile.jsonl") -or -not (Test-Path $report)) { return $null }
   try {
-    $payload = & python $report "$LogFile.jsonl" 2>$null | Out-String
+    $reportArgs = @("$LogFile.jsonl")
+    if ($ExecTree) { $reportArgs += @("--exec-tree", $ExecTree) }
+    $payload = & python $report @reportArgs 2>$null | Out-String
     if ($LASTEXITCODE -ne 0) { return $null }
     $rows = @($payload | ConvertFrom-Json)
     if ($rows.Count -gt 0) { return $rows[0] }
@@ -2673,7 +2685,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     $jsonlRecord['execution'] = @{ capture_error = 'execution capture failed' }
   }
   if ($dispatchContext) { $jsonlRecord['dispatch'] = $dispatchContext.Identity }
-  $workerCosts = Get-WorkerCostObservation -LogFile $iterLog
+  $workerCosts = Get-WorkerCostObservation -LogFile $iterLog -ExecTree $iterationContext.exec_tree
   if ($workerCosts) { $jsonlRecord['worker_cost_observation'] = $workerCosts }
   if ($wipPreserved -gt 0) { $jsonlRecord['wip_preserved'] = $wipPreserved }
   if ($iterMetrics.ToolCalls -gt 0) { $jsonlRecord['tool_calls'] = $iterMetrics.ToolCalls }
