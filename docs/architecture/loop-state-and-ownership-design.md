@@ -524,3 +524,13 @@ and reopened the plan before correction; the affected checks passed 28 in
 0.84s and specific CAS/encoding checks passed five in 0.05s afterward. No live
 plans were edited, and no final verification requirement changes. Multi-plan
 atomicity and returned-id artifact crash recovery remain unbuilt.
+
+The subsequent candidate also recovers returned-ID bookkeeping for a single
+legacy owner. A private intent binds batch, source record hash, exact IDs and
+plan before/after hashes; that binding is part of the state journal. Per-project
+return serialization and exact matched applied/recovered-applied journal records
+prevent duplicate plan revisions across three injected crash gaps. Changed or
+unknown evidence refuses. Atomic fsynced ID bookkeeping replaces the prior
+whole-file write. This is new single-owner recovery, not multi-plan atomicity,
+owned-contract revision, or green proof. The focused affected checks passed 37
+in 1.15s and three injected gaps passed in 0.33s; no full suite ran.

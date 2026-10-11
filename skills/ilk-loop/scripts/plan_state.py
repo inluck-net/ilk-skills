@@ -255,7 +255,7 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
         return True
 
 
-def replace_legacy_contract(path, expected: bytes, replacement: str, *, reason):
+def replace_legacy_contract(path, expected: bytes, replacement: str, *, reason, return_binding=None):
     """Journal a legacy verification contract revision with exact-byte CAS.
 
     Owned dispatch never revises its frozen contract. This adapter retains the
@@ -289,7 +289,7 @@ def replace_legacy_contract(path, expected: bytes, replacement: str, *, reason):
         keys=changed or {'status'}
         row=dict(id=str(uuid.uuid4()),path=str(path),actor='legacy-verification-return',reason=reason,
             from_={key:before.get(key) for key in keys},to={key:after.get(key) for key in keys},
-            contract_revision=True,before_sha256=_digest(content),after_sha256=_digest(new),phase='intent')
+            contract_revision=True,return_binding=return_binding,before_sha256=_digest(content),after_sha256=_digest(new),phase='intent')
         _append(log,row)
         with tempfile.NamedTemporaryFile(mode='wb',dir=path.parent,delete=False) as stream:
             temporary=Path(stream.name);stream.write(new);stream.flush();os.fsync(stream.fileno())
@@ -297,6 +297,39 @@ def replace_legacy_contract(path, expected: bytes, replacement: str, *, reason):
         finally:temporary.unlink(missing_ok=True)
         _append(log,dict(row,phase='applied'))
         return True
+
+
+def recover_legacy_contract(path, *, before_sha256, after_sha256, reason, return_binding=None):
+    """Recognize only an exact durable legacy revision, never infer a gate pass."""
+    if os.environ.get('ILK_WORKER_SESSION','').strip():raise TransitionError('workers cannot recover plan contracts')
+    from iteration_context import read_context
+    context=read_context()
+    if context and context.get('worker_sandbox_adapter')=='macos-brokered-shell':
+        raise TransitionError('owned dispatch cannot revise its frozen plan contract')
+    path=Path(path).resolve(strict=True)
+    if context and path not in {Path(row['path']).resolve() for row in context.get('plans',{}).values()}:
+        raise TransitionError('contract recovery is outside frozen registry')
+    log=path.parent/'state-transitions.jsonl'
+    with _lock(path.parent/'.state-transitions.lock'):
+        content=path.read_bytes();_recover(log,path,content)
+        if _digest(content)!=after_sha256:return False
+        if not log.exists():return False
+        pending={};matched=False
+        for line in log.read_text(encoding='utf-8').splitlines():
+            row=json.loads(line)
+            if not isinstance(row,dict):raise TransitionError('invalid state journal record')
+            ident=row.get('id')
+            if row.get('phase')=='intent':pending[ident]=row;continue
+            original=pending.pop(ident,None)
+            if original is None:continue
+            if (row.get('phase') in {'applied','recovered-applied'} and
+                all(row.get(key)==original.get(key) for key in ('path','before_sha256','after_sha256','actor','reason','from_','to','return_binding')) and
+                row.get('path')==str(path) and row.get('contract_revision') is True and
+                row.get('actor')=='legacy-verification-return' and row.get('reason')==reason and
+                row.get('return_binding')==return_binding and
+                row.get('before_sha256')==before_sha256 and row.get('after_sha256')==after_sha256):
+                matched=True
+        return matched
 
 
 def append_findings(path, note, *, reason):

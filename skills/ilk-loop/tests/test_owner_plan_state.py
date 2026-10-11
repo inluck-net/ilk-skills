@@ -221,3 +221,18 @@ def test_legacy_contract_revision_is_journaled_and_preserves_encoding(tmp_path,m
     assert rows[0]['contract_revision'] is True
     assert rows[0]['after_sha256']==_digest(path.read_bytes())
     assert rows[0]['id']==rows[1]['id']
+
+
+def test_contract_recovery_requires_exact_return_binding(tmp_path,monkeypatch):
+    from plan_state import replace_legacy_contract,recover_legacy_contract
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    path=plan(tmp_path,'shipped');before=path.read_bytes()
+    replacement=before.decode().replace('status: shipped','status: in-progress')
+    binding=dict(batch='batch',record_sha256='record',node_ids=['test_a.py::test_one'])
+    replace_legacy_contract(path,before,replacement,reason='explicit return',return_binding=binding)
+    options=dict(before_sha256=_digest(before),after_sha256=_digest(path.read_bytes()),reason='explicit return')
+    assert recover_legacy_contract(path,return_binding=binding,**options)
+    assert not recover_legacy_contract(path,return_binding=dict(binding,node_ids=['test_b.py::test_other']),**options)
+    assert not recover_legacy_contract(path,return_binding=binding,**dict(options,reason='foreign batch'))
+    path.write_bytes(path.read_bytes()+b'\nhuman edit\n')
+    assert not recover_legacy_contract(path,return_binding=binding,**options)

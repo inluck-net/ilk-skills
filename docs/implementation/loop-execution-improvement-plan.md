@@ -3288,3 +3288,19 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
   Multi-plan atomic return and crash recovery of returned-id bookkeeping remain
   open; a journaled plan revision alone does not establish those capabilities.
   Overall estimate about 74% remains a judgment over installed/measured scope.
+
+- B3/C4 legacy return-red crash recovery: focused fault after durable plan
+  replacement but before returned IDs duplicated the authored check/finding on
+  retry (1 failed negative). New per-project return lock serializes the operation;
+  attribution is re-read under it. Private atomic/fsynced intent binds batch,
+  exact plan, original/after hashes, source record hash and exact node IDs. The
+  same binding is journaled with the plan revision. Recovery recognizes only
+  exact current bytes plus matched applied/recovered-applied intent and closes
+  returned-ID bookkeeping without another plan revision. Unknown/changed inputs
+  refuse. Bookkeeping is atomic, fsynced and deduplicated; unsafe owner paths
+  refuse. No-attributed exit 5 remains read-only (initial eager-lock regression
+  detected and corrected). Affected checks 37 passed in 1.15s; three actual
+  injected gaps (before plan, after plan, before applied row) passed in 0.33s.
+  Specific unknown binding/foreign reason/human byte edit cases refuse.
+  Multi-plan atomicity remains open. Legacy authority only; owned Mac frozen
+  contracts still refuse this path. No full suite or live plan edits occurred.

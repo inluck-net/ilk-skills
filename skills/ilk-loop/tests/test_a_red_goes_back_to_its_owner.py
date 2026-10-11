@@ -711,3 +711,32 @@ def test_return_reds_preserves_human_hold_and_plan_bytes(tmp_path):
         base_failing=[],owners={'test_foo.py::test_foo':dict(slug='ours-y',sha=sha,how='point')})
     assert suite_ledger.return_reds(repo,batch='test-batch',plans_dir=plans)==3
     assert path.read_bytes()==before
+
+
+@pytest.mark.parametrize('fault',['after-plan','before-plan','applied-row'])
+def test_return_reds_recovers_plan_commit_before_returned_id_bookkeeping(tmp_path,monkeypatch,fault):
+    import plan_state
+    repo=_make_repo(tmp_path);sha=_git(repo,'rev-parse','HEAD');tree=_git(repo,'rev-parse','HEAD^{tree}')
+    plans=_make_plans_dir(tmp_path,'ours-y');path=plans/'2026-10-03-ours-y.md'
+    _write_verification_record(repo,tree,failing_nodes=['test_foo.py::test_foo'],base_tree=tree,
+        base_failing=[],owners={'test_foo.py::test_foo':dict(slug='ours-y',sha=sha,how='point')})
+    original=plan_state.replace_legacy_contract
+    append=plan_state._append
+    def interrupted(*args,**kwargs):
+        if fault=='before-plan':raise OSError('fixture crash after return intent')
+        original(*args,**kwargs)
+        raise OSError('fixture crash after durable plan revision')
+    if fault=='applied-row':
+        def interrupted_append(log,row):
+            if row['phase']=='applied':raise OSError('fixture crash before applied journal row')
+            return append(log,row)
+        monkeypatch.setattr(plan_state,'_append',interrupted_append)
+    else:monkeypatch.setattr(plan_state,'replace_legacy_contract',interrupted)
+    assert suite_ledger.return_reds(repo,batch='test-batch',plans_dir=plans)==3
+    committed=path.read_bytes()
+    monkeypatch.setattr(plan_state,'replace_legacy_contract',original)
+    monkeypatch.setattr(plan_state,'_append',append)
+    assert suite_ledger.return_reds(repo,batch='test-batch',plans_dir=plans)==0
+    if fault!='before-plan':assert path.read_bytes()==committed
+    assert path.read_text().count('# returned-red')==1
+    assert suite_ledger.return_reds(repo,batch='test-batch',plans_dir=plans)==4

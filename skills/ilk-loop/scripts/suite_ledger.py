@@ -1353,7 +1353,36 @@ def _parse_at_base_table(text: str) -> list[list[str]]:
     return rows[1:] if len(rows) > 1 else []
 
 
+def _write_return_json(path, payload):
+    import tempfile
+    from plan_state import _sync_parent
+    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode='w',dir=path.parent,delete=False,encoding='utf-8') as stream:
+        temporary=Path(stream.name);json.dump(payload,stream,sort_keys=True);stream.write('\n');stream.flush();os.fsync(stream.fileno())
+    try:temporary.chmod(0o600);os.replace(temporary,path);_sync_parent(path)
+    finally:temporary.unlink(missing_ok=True)
+
+
+def _record_returned_ids(directory,slug,ids):
+    path=directory/(slug+'.json')
+    existing=json.loads(path.read_text(encoding='utf-8')) if path.exists() else []
+    if not isinstance(existing,list) or not all(isinstance(node,str) for node in existing):
+        raise ValueError('invalid returned-id inventory')
+    _write_return_json(path,list(dict.fromkeys(existing+ids)))
+
+
 def return_reds(project: Path, *, batch: str, plans_dir: Path) -> int:
+    """Serialize return intents and delegate the explicit legacy operation."""
+    if os.environ.get('ILK_WORKER_SESSION','').strip():
+        print('return-reds: refused in a worker session',file=sys.stderr);return 1
+    from plan_state import TransitionError
+    try:
+        return _return_reds(project,batch=batch,plans_dir=plans_dir)
+    except (TransitionError,OSError,ValueError,TypeError) as exc:
+        print(f'return-reds: refused: {exc}',file=sys.stderr);return 3
+
+
+def _return_reds(project: Path, *, batch: str, plans_dir: Path, _locked=False) -> int:
     """Return attributed red ids to their in-batch owning sub-plans.
 
     Exit codes:
@@ -1404,6 +1433,14 @@ def return_reds(project: Path, *, batch: str, plans_dir: Path) -> int:
         print("return-reds: nothing attributed, nothing returned", file=sys.stderr)
         return 5
 
+    if not _locked:
+        from plan_state import _lock
+        directory=ledger_dir(project)/'returned';directory.mkdir(parents=True,exist_ok=True)
+        with _lock(directory/'.return-reds.lock'):
+            # Re-read attribution after taking the lock; a prior snapshot is
+            # never enough to mutate plans or returned-id bookkeeping.
+            return _return_reds(project,batch=batch,plans_dir=plans_dir,_locked=True)
+
     # Parse Owners table.
     owners = _parse_owners_table(text)
     if not owners:
@@ -1418,6 +1455,8 @@ def return_reds(project: Path, *, batch: str, plans_dir: Path) -> int:
             print(f"return-reds: {nid} has no owner row", file=sys.stderr)
             return 3
         slug = info["slug"]
+        if not isinstance(slug,str) or '/' in slug or '\\' in slug or slug in {'.','..'}:
+            print('return-reds: unsafe owner identity',file=sys.stderr);return 3
         if slug == "—" or not slug:
             print(f"return-reds: {nid} has owner '—'", file=sys.stderr)
             return 3
@@ -1480,6 +1519,27 @@ def return_reds(project: Path, *, batch: str, plans_dir: Path) -> int:
         except (TransitionError,OSError,ValueError) as exc:
             print(f"return-reds: owner {slug} unavailable: {exc}",file=sys.stderr)
             return 3
+
+        import hashlib
+        reason='explicit verification return-reds '+batch
+        record_hash=hashlib.sha256(text.encode('utf-8')).hexdigest()
+        intent_path=returned_dir/('intent-'+hashlib.sha256((batch+'\0'+slug).encode()).hexdigest()+'.json')
+        binding=dict(schema_version=1,batch=batch,slug=slug,plan_path=str(plan_path.resolve()),
+            record_sha256=record_hash,node_ids=ids)
+        if intent_path.exists():
+            from plan_state import recover_legacy_contract
+            intent=json.loads(intent_path.read_text(encoding='utf-8'))
+            if not isinstance(intent,dict) or type(intent.get('schema_version')) is not int or any(intent.get(key)!=value for key,value in binding.items()):
+                print('return-reds: return intent scope changed',file=sys.stderr);return 3
+            current_hash=hashlib.sha256(expected_plan_bytes).hexdigest()
+            if current_hash==intent.get('after_sha256'):
+                if not recover_legacy_contract(plan_path,before_sha256=intent.get('before_sha256'),
+                    after_sha256=intent.get('after_sha256'),reason=reason,return_binding=binding):
+                    print('return-reds: completed revision is not journaled',file=sys.stderr);return 3
+                _record_returned_ids(returned_dir,slug,ids)
+                continue
+            if current_hash!=intent.get('before_sha256'):
+                print('return-reds: plan changed after return intent',file=sys.stderr);return 3
 
         # Read estimated_steps from frontmatter.
         fm_match = _re.match(r"^---\n(.*?)\n---", plan_text, _re.DOTALL)
@@ -1557,28 +1617,21 @@ def return_reds(project: Path, *, batch: str, plans_dir: Path) -> int:
         else:
             plan_text += f"\n## Findings\n{finding_block}\n"
 
+        replacement=plan_text.replace('\r\n','\n')
+        if b'\r\n' in expected_plan_bytes:replacement=replacement.replace('\n','\r\n')
+        after_bytes=replacement.encode('utf-8')
+        if expected_plan_bytes.startswith(b'\xef\xbb\xbf'):after_bytes=b'\xef\xbb\xbf'+after_bytes
+        _write_return_json(intent_path,dict(schema_version=1,batch=batch,slug=slug,plan_path=str(plan_path.resolve()),
+            record_sha256=record_hash,node_ids=ids,before_sha256=hashlib.sha256(expected_plan_bytes).hexdigest(),
+            after_sha256=hashlib.sha256(after_bytes).hexdigest()))
         try:
-            replace_legacy_contract(plan_path,expected_plan_bytes,plan_text,
-                reason='explicit verification return-reds '+batch)
+            replace_legacy_contract(plan_path,expected_plan_bytes,plan_text,reason=reason,return_binding=binding)
         except (TransitionError,OSError,ValueError) as exc:
             print(f"return-reds: owner {slug} revision refused: {exc}",file=sys.stderr)
             return 3
 
-        # Record returned ids.
-        returned_dir.mkdir(parents=True, exist_ok=True)
-        returned_path = returned_dir / f"{slug}.json"
-        existing: list[str] = []
-        if returned_path.is_file():
-            try:
-                existing = json.loads(
-                    returned_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                pass
-        existing.extend(ids)
-        returned_path.write_text(
-            json.dumps(existing, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        # Only exact durable plan revisions reach returned-id bookkeeping.
+        _record_returned_ids(returned_dir,slug,ids)
 
     return 0
 

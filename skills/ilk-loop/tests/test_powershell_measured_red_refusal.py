@@ -20,6 +20,8 @@ def test_powershell_refuses_measured_red_before_runtime_writes(tmp_path):
          'ILK_MEASURED_RED_PROGRESS':'1'}
     for key in ('ILK_DOTSOURCE_ONLY','ILK_WORKER_MODE','ILK_WORKER_TOOLS','ILK_WORKER_THINKING','ILK_ENABLE_UPGRADE_DRAIN'):
         env.pop(key,None)
+    # 20s fixture allowance: portable startup measured below one second.
+    # A healthy cold startup exceeding this falsifies the fixture allowance.
     result=subprocess.run([pwsh,'-NoProfile','-File',str(repo/'skills/ilk-loop/scripts/run_ilk_loop_claude.ps1'),
         '-ProjectPath',str(project),'-LogDir',str(logs),'-JsonlLogPath',str(logs/'summary.jsonl')],
         env=env,capture_output=True,text=True,timeout=20)
