@@ -28,6 +28,7 @@ import json
 import math
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -76,7 +77,7 @@ def _run_test(repo: Path, cmd: str, nodes: list[str]) -> bool | None:
         # so a red sibling in the gate's files does not poison the base check.
         m = re.search(r"(.*pytest)", cmd)
         cmd_base = m.group(1) if m else cmd.split()[0]
-        full_cmd = cmd_base + " " + " ".join(nodes)
+        full_cmd = cmd_base + " " + " ".join(shlex.quote(node) for node in nodes)
     else:
         full_cmd = cmd
     rc, _stdout, _stderr, _timed_out = _bounded_run(
@@ -282,7 +283,7 @@ def _measure_at_base_worktree(
             results: dict[str, str] = {}
             for nid in nodes:
                 rc, stdout, stderr, timed_out = _bounded_run(
-                    f"{runner} {nid}", shell=True, cwd=str(wt), timeout=_remaining(budget_s))
+                    f"{runner} {shlex.quote(nid)}", shell=True, cwd=str(wt), timeout=_remaining(budget_s))
                 results[nid] = 'unmeasured' if timed_out or rc is None else _classify(rc, stdout, stderr)
             return results
         else:

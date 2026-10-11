@@ -2152,3 +2152,19 @@ anchors at the time of inspection and can move as integration changes code.
   worker, pause or plan changed. Current next action is activation of this
   accumulated checked candidate, preserving the old pinned controller, then
   remaining whole-plan work.
+
+### Failed test identifiers are literal arguments
+
+- Both _run_test and at-base node execution inserted IDs unquoted into shell
+  commands. Two actual private fixture probes created an unwanted marker via
+  punctuation in an ID (2 failed in 0.91s). The marker was wholly inside the
+  disposable test directory; no production process/data was targeted.
+- Both paths now quote each ID as one shell argument. Literal-node, focused
+  selection and shared-budget checks passed 8 in 1.56s. No toolkit suite.
+- Separately tested a flags-before-file node-selection concern. The actual
+  two-node fixture selected only the intended node and passed before any
+  parser change (1 passed/1 deselected in 0.61s). Rejected that hypothesized
+  defect on measurement; retained the variant as a regression check, without
+  introducing an unproven replacement parser. More complex parsing remains
+  outside the claimed evidence. Preparation 6081dff0 is superseded by this
+  literal-argument correction before activation.
