@@ -80,3 +80,20 @@ print('one stub turn; actual failed gates; progress accepted; green false')
     assert result.returncode==0,result.stdout+result.stderr
     assert 'green false' in result.stdout
     assert git(root,'rev-list','--count',context['base_commit']+'..HEAD')=='2'
+
+
+def test_frozen_progress_brief_supplies_non_green_semantics_without_gate_authority(tmp_path):
+    from worker_iteration import instructions
+    context,_,_=fixture(tmp_path,'python3 -m pytest -q test_existing.py')
+    context['worker_shell_python']=sys.executable
+    path=tmp_path/'context.json'
+    default=instructions(context,path)
+    assert 'Frozen measured-red progress contract' not in default
+    context['measured_red_progress_protocol']=1
+    brief=instructions(context,path)
+    assert 'Frozen measured-red progress contract' in brief
+    assert 'accepted=false, green_accepted=false' in brief and 'not green verification' in brief
+    assert 'Final verification remains opt-in' in brief
+    assert 'Do not commit, push, change plans/state/proof' in brief
+    context['measured_red_progress_protocol']=True
+    assert 'Frozen measured-red progress contract' not in instructions(context,path)

@@ -41,6 +41,27 @@ def phase(context,name):
     finally:temporary.unlink(missing_ok=True)
 
 
+
+def measured_progress_contract(context):
+    """Pinned protocol facts for an opted-in worker, never a gate outcome."""
+    if type(context.get('measured_red_progress_protocol')) is not int or context['measured_red_progress_protocol']!=1:
+        return ''
+    return (
+        'Frozen measured-red progress contract (driver-owned, not worker authority): '
+        'A completed non-green progress row carries progress_protocol="measured-red-progress-v1", '
+        'progress_accepted=true, driver_progress_accepted=true, accepted=false, green_accepted=false, '
+        'gate_outcome="fail", integrity_passed=false and progress_integrity_passed=true. '
+        'Its record_phase="close", landed=true and owned_children_retired=true describe lifecycle completion, '
+        'not green verification. pre_existing_red carries the recorded failed-node observations; '
+        'green proof remains absent. These field semantics are pinned with this toolkit. '
+        'For a consumer reader task, use this contract and its named implementation/tests first; '
+        'inspect toolkit emitters only for a concrete unresolved contract detail. '
+        'Never treat loop provenance, completed steps, old green rows or these progress flags as permission to publish. '
+        'Worker writes remain limited to the selected step; the driver measures/attributes failures. '
+        'Final verification remains opt-in.'
+    )
+
+
 def instructions(context,path):
     selected=read_dispatch(context)
     inventory=context.get('root_instruction_inventory')
@@ -60,6 +81,7 @@ def instructions(context,path):
         'Follow referenced instructions and any nested instructions relevant to files you edit.',
         'After the required reads, implement this step; no queue or toolkit bootstrap discovery is needed.',
         f"Implement only step {selected['step']}; leave the code diff for driver acceptance.",
+        measured_progress_contract(context),
         'Do not commit, push, change plans/state/proof, or run authoritative gates.',
         'Every Bash tool command MUST use this pinned wrapper. Working example for pwd:',
         canonical_command(context,path,'pwd'),

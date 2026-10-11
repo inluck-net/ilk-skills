@@ -24,7 +24,7 @@ required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: wire candidate measured-red progress into opt-in Mac
 worker/loop, close/result and consumer readers, then finish remaining
-legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview 7a0691b0
+legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview 376f3096
 and consumer compatibility 4f74ae4e are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -3129,3 +3129,33 @@ Actual owned-iteration phase assertion check pending. No installed pointer or
 active controller change for this candidate increment. Next actual-provider
 consumer opt-in measured-red probe, prepared remote delivery, then safe local
 activation of this reader/metrics follow-up.
+
+
+### Actual provider and reader/clock delivery follow-up
+
+Local 376f3096 installed after exact renewed boundary proof: controller 94556
+and all 1,891 protected hashes unchanged, consumer 4f74ae4e idle, scheduler
+restored. Remote private independent toolkit/consumer standbys fast-forwarded
+bb0e7d31→376f3096 / 2cb713ae→4f74ae4e and immutable release prepared; rezmac
+shared repos/services/current remain unchanged v0.9.193. Remote private owned
+iteration/phases/feedback **9 passed / 3 deselected in 8.60s**. Local actual
+owned-iteration phase assertion **1 passed / 3 deselected in 8.93s**.
+
+Actual-provider consumer sample passed 236.018s, one MiMo PRO turn with eight
+hooks/native tools/disabled thinking requests, failed checks retained and
+shipped-unproven. Driver gate 0.809s, attribution 0.763s, commit 0.641s; owned
+worker session 220.158s. First native edit 166.847s after 20 bootstrap-path
+indicators; 29 unique turns / 49 events / 48 tools, three diagnostics 4.998s
+union. Complete model/boundary/overlap limits and exact evidence paths are in
+`docs/verification/loop-measured-progress-consumer-2026-10-12.md`. No speed
+claim, suite, production consumer claim or publication.
+
+Candidate adds a pinned non-green protocol capsule only to the opted-in worker
+brief, to avoid rediscovering emitter field semantics. Expected outcome: exact
+record/lifecycle/green distinctions are available before implementation without
+changing gate authority or default profile. Prompt/caller selection **7 passed
+/ 1 failed / 4 deselected in 21.32s** on new fixture's missing pinned interpreter;
+corrected actual instructions fixture **1 passed / 4 deselected in 0.19s**.
+Legacy summary landing JSON defaults to empty diagnostic object (strict
+progress close still refuses it). Next same-task/model comparison; candidate
+brief not installed until measured. Whole scope remains open; continue here.

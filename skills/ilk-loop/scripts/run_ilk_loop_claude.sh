@@ -8378,7 +8378,7 @@ d = {
   'state_audit': json.loads(os.environ.get('_STATE_AUDIT_JSON') or '{}'),
   'driver_integrity_passed': os.environ['_SHIP_INTEGRITY_PASSED'] == '1',
   'driver_progress_integrity_passed': os.environ['_PROGRESS_INTEGRITY_PASSED'] == '1',
-  'selfmod_landing': json.loads(os.environ['_OWNED_LANDING_JSON']),
+  'selfmod_landing': json.loads(os.environ.get('_OWNED_LANDING_JSON') or '{}'),
   'exit_code': int(os.environ['_EXIT']),
   'new_commits_total': int(os.environ['_NEW_TOTAL']),
 }

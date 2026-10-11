@@ -767,3 +767,23 @@ This is classification of a currently red gate, not §3 outcome reuse. Plan
 prohibits carrying importer-selected outcomes and merging aggregate buckets.
 Those paths remain removed: every current HEAD gate runs, no prior green or
 count is merged, and attribution itself cannot advance a step.
+
+
+## Recorded follow-up: protocol context before implementation
+
+An actual MiMo PRO consumer sample using native tools/eight production hooks
+completed with measured-red progress in 236s, while gate/attribution each took
+less than one second. Native first edit appeared at 167s after 20 bootstrap
+path indicators. Those are this sample's observations, not numeric defaults or
+proof of wasted calls. See `../verification/loop-measured-progress-consumer-2026-10-12.md`
+for models, clock boundaries, overlap and limits.
+
+New candidate `worker_iteration.measured_progress_contract` supplies the pinned
+non-green row semantics in the explicit measured-red profile's worker brief.
+It preserves driver-only writes/gates and opt-in final verification. The
+contract avoids requiring worker discovery of multiple emitter implementations;
+workers may still inspect an emitter for a concrete unresolved contract fact.
+Its performance benefit requires the controlled follow-up measurement. No
+read-call limit, stall-kill threshold, new timeout or default model change is
+introduced. Existing profiles retain their brief. This capsule describes
+protocol fields, never another execution's gate outcomes.
