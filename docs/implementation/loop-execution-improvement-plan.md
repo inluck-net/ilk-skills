@@ -24,7 +24,7 @@ required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: wire candidate measured-red progress into opt-in Mac
 worker/loop, close/result and consumer readers, then finish remaining
-legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview c2345ab0
+legacy-reader/recovery/parity and delivery requirements in this isolated worktree. Toolkit preview 60941f1d
 and consumer compatibility 3987a299 are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -37,7 +37,7 @@ Mac evidence. Actual provider red then green used the same session; a real
 consumer repair passed and a focused-diagnostics comparison is recorded.
 Windows/member/dirty-entry adapters remain open. The controlled shell/native pairing is recorded in docs/verification/loop-tools-comparison-2026-10-12.md.
 Continue here per Chad: “no more handover, until the whole thing done”.
-Overall estimate about 73% is a judgment over the whole installed/measured scope,
+Overall estimate about 74% is a judgment over the whole installed/measured scope,
 not a checkbox count. Do not infer whole completion from capability checks.
 
 Old runs 20261011-102057/130246/212131/215532 and their controller identities
@@ -3269,3 +3269,22 @@ new archived close entry, safe local delivery, then remaining whole-plan work.
   Next: archive public owned entry with this committed candidate, safely deliver
   at fresh idle-services/paused-undispatched controller boundary; continue I2 and
   input provenance migration. No full suite/provider repetition for these checks.
+
+
+- Local delivery 60941f1d: archived native public entry 2 passed / 15 deselected
+  in 32.68s. Fresh idle-service/paused-undispatched boundary proved again;
+  all 1,891 protected hashes and controller 94556 preserved, services restored.
+  Locally installed consumer remains 3987a299. Final verification stays opt-in.
+- C4 legacy return-red writer correction: reproduced automatic reopen of a
+  shipped plan carrying hold: human (1 failed negative). Exact identity now
+  replaces substring-first selection. New narrow plan_state legacy-contract
+  adapter takes original bytes, checks hold/foreign scope, refuses worker and
+  owned Mac frozen-contract revisions, writes intent/atomic replacement/applied
+  under the shared state journal lock, preserving BOM/CRLF. Only status/current
+  pointer may change in frontmatter; this records the existing explicit legacy
+  operation, not permission to rewrite active owned contracts. Adjacent red-owner,
+  file-row and plan-state checks: 28 passed in 0.84s. Stale/hold/owned/worker and
+  journal/encoding checks: 5 passed in 0.05s. All fixture plans disposable.
+  Multi-plan atomic return and crash recovery of returned-id bookkeeping remain
+  open; a journaled plan revision alone does not establish those capabilities.
+  Overall estimate about 74% remains a judgment over installed/measured scope.

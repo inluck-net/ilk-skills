@@ -186,3 +186,38 @@ def test_audit_refuses_rewritten_prefix_and_pending_intent(tmp_path,monkeypatch)
     context['state_journal_cursor']=journal_cursor(tmp_path)
     log.write_text('')
     with pytest.raises(TransitionError,match='prefix'):audit_context(context)
+
+
+@pytest.mark.parametrize('refusal',['stale','hold','owned','worker'])
+def test_legacy_contract_revision_refuses_stale_or_unowned_inputs(tmp_path,monkeypatch,refusal):
+    import iteration_context
+    from plan_state import replace_legacy_contract
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    path=plan(tmp_path,'shipped');expected=path.read_bytes()
+    replacement=expected.decode().replace('status: shipped','status: in-progress')+'\n## Findings\nreturned red\n'
+    if refusal=='stale':path.write_bytes(expected+b'\nhuman edit\n')
+    elif refusal=='hold':
+        path.write_bytes(expected.replace(b'status: shipped',b'status: shipped\nhold: human'));expected=path.read_bytes()
+        replacement=expected.decode().replace('status: shipped','status: in-progress')
+    elif refusal=='owned':monkeypatch.setattr(iteration_context,'read_context',lambda:dict(worker_sandbox_adapter='macos-brokered-shell'))
+    else:monkeypatch.setenv('ILK_WORKER_SESSION','1')
+    before=path.read_bytes()
+    with pytest.raises(TransitionError):replace_legacy_contract(path,expected,replacement,reason='fixture returned red')
+    assert path.read_bytes()==before
+    assert not (tmp_path/'state-transitions.jsonl').exists()
+
+
+def test_legacy_contract_revision_is_journaled_and_preserves_encoding(tmp_path,monkeypatch):
+    from plan_state import replace_legacy_contract
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    path=plan(tmp_path,'shipped')
+    expected=b'\xef\xbb\xbf'+path.read_bytes().replace(b'\n',b'\r\n');path.write_bytes(expected)
+    replacement=expected.decode('utf-8-sig').replace('status: shipped','status: in-progress')+'\r\n## Findings\r\nreturned red\r\n'
+    assert replace_legacy_contract(path,expected,replacement,reason='fixture returned red')
+    assert path.read_bytes().startswith(b'\xef\xbb\xbf')
+    assert b'\n' not in path.read_bytes().replace(b'\r\n',b'')
+    rows=[json.loads(line) for line in (tmp_path/'state-transitions.jsonl').read_text().splitlines()]
+    assert [row['phase'] for row in rows]==['intent','applied']
+    assert rows[0]['contract_revision'] is True
+    assert rows[0]['after_sha256']==_digest(path.read_bytes())
+    assert rows[0]['id']==rows[1]['id']

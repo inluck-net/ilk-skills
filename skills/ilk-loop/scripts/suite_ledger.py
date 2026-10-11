@@ -1421,15 +1421,12 @@ def return_reds(project: Path, *, batch: str, plans_dir: Path) -> int:
         if slug == "—" or not slug:
             print(f"return-reds: {nid} has owner '—'", file=sys.stderr)
             return 3
-        # Check owner sub-plan file exists.
-        found = False
-        for p in plans_dir.iterdir():
-            if p.suffix == ".md" and slug in p.name:
-                found = True
-                break
-        if not found:
-            print(f"return-reds: owner {slug} has no sub-plan file",
-                  file=sys.stderr)
+        # Exact identity refuses absent/duplicate owners instead of a suffix match.
+        from plan_state import resolve_plan,TransitionError
+        try:
+            resolve_plan(plans_dir,slug)
+        except (TransitionError,OSError,ValueError) as exc:
+            print(f"return-reds: owner {slug} unresolved: {exc}",file=sys.stderr)
             return 3
 
     # Check for already-returned ids.
@@ -1475,16 +1472,14 @@ def return_reds(project: Path, *, batch: str, plans_dir: Path) -> int:
 
     # Per owner slug: reopen the sub-plan.
     for slug, ids in by_slug.items():
-        # Find the sub-plan file.
-        plan_path = None
-        for p in plans_dir.iterdir():
-            if p.suffix == ".md" and slug in p.name:
-                plan_path = p
-                break
-        if plan_path is None:
-            continue  # Already checked above.
-
-        plan_text = plan_path.read_text(encoding="utf-8")
+        from plan_state import resolve_plan,replace_legacy_contract,TransitionError
+        try:
+            plan_path=resolve_plan(plans_dir,slug)
+            expected_plan_bytes=plan_path.read_bytes()
+            plan_text=expected_plan_bytes.decode('utf-8-sig').replace('\r\n','\n')
+        except (TransitionError,OSError,ValueError) as exc:
+            print(f"return-reds: owner {slug} unavailable: {exc}",file=sys.stderr)
+            return 3
 
         # Read estimated_steps from frontmatter.
         fm_match = _re.match(r"^---\n(.*?)\n---", plan_text, _re.DOTALL)
@@ -1562,7 +1557,12 @@ def return_reds(project: Path, *, batch: str, plans_dir: Path) -> int:
         else:
             plan_text += f"\n## Findings\n{finding_block}\n"
 
-        plan_path.write_text(plan_text, encoding="utf-8")
+        try:
+            replace_legacy_contract(plan_path,expected_plan_bytes,plan_text,
+                reason='explicit verification return-reds '+batch)
+        except (TransitionError,OSError,ValueError) as exc:
+            print(f"return-reds: owner {slug} revision refused: {exc}",file=sys.stderr)
+            return 3
 
         # Record returned ids.
         returned_dir.mkdir(parents=True, exist_ok=True)

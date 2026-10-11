@@ -255,6 +255,50 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
         return True
 
 
+def replace_legacy_contract(path, expected: bytes, replacement: str, *, reason):
+    """Journal a legacy verification contract revision with exact-byte CAS.
+
+    Owned dispatch never revises its frozen contract. This adapter retains the
+    older explicit return-red operation while preventing stale writes and holds.
+    """
+    if os.environ.get('ILK_WORKER_SESSION','').strip():raise TransitionError('workers cannot revise plan contracts')
+    from iteration_context import read_context
+    context=read_context()
+    if context and context.get('worker_sandbox_adapter')=='macos-brokered-shell':
+        raise TransitionError('owned dispatch cannot revise its frozen plan contract')
+    path=Path(path).resolve(strict=True)
+    if context and path not in {Path(row['path']).resolve() for row in context.get('plans',{}).values()}:
+        raise TransitionError('contract revision is outside frozen registry')
+    if not isinstance(expected,bytes) or not isinstance(replacement,str) or not reason:
+        raise TransitionError('expected bytes, replacement and reason required')
+    if b'\r\n' in expected:replacement=replacement.replace('\r\n','\n').replace('\n','\r\n')
+    new=replacement.encode('utf-8')
+    if expected.startswith(b'\xef\xbb\xbf'):new=b'\xef\xbb\xbf'+new
+    log=path.parent/'state-transitions.jsonl'
+    with _lock(path.parent/'.state-transitions.lock'):
+        content=path.read_bytes();_recover(log,path,content)
+        if content!=expected:raise TransitionError('plan bytes changed before contract revision')
+        before=parse_frontmatter(content.decode('utf-8-sig'))
+        after=parse_frontmatter(new.decode('utf-8-sig'))
+        if before.get('status') in {'draft','parked','blocked'} or before.get('hold')=='human':
+            raise TransitionError('human hold cannot be changed by contract revision')
+        changed={key for key in set(before)|set(after) if before.get(key)!=after.get(key)}
+        if not changed<={'status','current_step'} or not before.get('status'):
+            raise TransitionError('legacy contract revision changed unrelated frontmatter')
+        if new==content:return False
+        keys=changed or {'status'}
+        row=dict(id=str(uuid.uuid4()),path=str(path),actor='legacy-verification-return',reason=reason,
+            from_={key:before.get(key) for key in keys},to={key:after.get(key) for key in keys},
+            contract_revision=True,before_sha256=_digest(content),after_sha256=_digest(new),phase='intent')
+        _append(log,row)
+        with tempfile.NamedTemporaryFile(mode='wb',dir=path.parent,delete=False) as stream:
+            temporary=Path(stream.name);stream.write(new);stream.flush();os.fsync(stream.fileno())
+        try:temporary.chmod(path.stat().st_mode & 0o777);os.replace(temporary,path);_sync_parent(path)
+        finally:temporary.unlink(missing_ok=True)
+        _append(log,dict(row,phase='applied'))
+        return True
+
+
 def append_findings(path, note, *, reason):
     """Append an idempotent driver note without racing a changed plan body."""
     path=Path(path);raw=path.read_bytes();text=raw.decode('utf-8-sig')

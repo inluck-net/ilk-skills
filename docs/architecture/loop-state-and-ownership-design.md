@@ -509,3 +509,18 @@ writer now emits loop-executed/context schema only after owner/close validation.
 These follow-ups await verified idle consumer delivery. No historical ledger
 or active pin is rewritten. The protocol-facts prompt experiment timed out and
 is removed; the previously successful brief remains the working fallback.
+
+
+### Later legacy return-red writer migration (2026-10-12)
+
+`plan_state.replace_legacy_contract` is a new narrow compatibility adapter for
+`suite_ledger.return_reds`: original-byte CAS, shared journal lock, intent,
+atomic replace and applied record, with human-hold, worker and scope checks.
+Owned Mac dispatch refuses this operation because its authored contract is
+frozen. Legacy authority remains explicit; the adapter does not manufacture
+accepted owned transitions. The caller now resolves exact plan identity rather
+than a substring's first file. A real disposable hold negative returned success
+and reopened the plan before correction; the affected checks passed 28 in
+0.84s and specific CAS/encoding checks passed five in 0.05s afterward. No live
+plans were edited, and no final verification requirement changes. Multi-plan
+atomicity and returned-id artifact crash recovery remain unbuilt.

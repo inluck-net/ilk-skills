@@ -700,3 +700,14 @@ class TestAC6RunnerStaticPlacement:
         assert call_pos < ret_pos, (
             "ledger_return_reds must be called before 'return 1'"
         )
+
+def test_return_reds_preserves_human_hold_and_plan_bytes(tmp_path):
+    repo=_make_repo(tmp_path);sha=_git(repo,'rev-parse','HEAD');tree=_git(repo,'rev-parse','HEAD^{tree}')
+    plans=_make_plans_dir(tmp_path,'ours-y')
+    path=plans/'2026-10-03-ours-y.md'
+    path.write_text(path.read_text().replace('status: shipped','status: shipped\nhold: human'))
+    before=path.read_bytes()
+    _write_verification_record(repo,tree,failing_nodes=['test_foo.py::test_foo'],base_tree=tree,
+        base_failing=[],owners={'test_foo.py::test_foo':dict(slug='ours-y',sha=sha,how='point')})
+    assert suite_ledger.return_reds(repo,batch='test-batch',plans_dir=plans)==3
+    assert path.read_bytes()==before
