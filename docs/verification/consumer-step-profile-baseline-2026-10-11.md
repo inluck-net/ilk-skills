@@ -140,3 +140,20 @@ native Edit at 87.640s, CLI worker duration 217.639s, overlapping API duration
 unknown; these clocks overlap and cannot be added or subtracted as a causal split.
 Evidence: controlled-corrected-policy-native-20261011/. Paired shell is unmeasured;
 this establishes accepted completion under the corrected policy, not speed.
+
+## Isolated focused-diagnostics candidate observation
+
+Candidate `7e8f6ccc` accepted the same red consumer baseline `f4468f97` with
+actual MiMo PRO, eight production hooks, native tools and explicit disabled
+thinking. Fixture wall **199.194s**; worker wrapper monotonic interval
+**188.577228s**. One authoritative gate attempt, positive integrity/journal,
+one advance and shipping, unchanged source home and idle registry. No final
+suite. Compared with the earlier corrected-policy sample's 229.799s fixture
+and 218.98511s worker intervals, these are about 13.3% and 13.9% lower.
+This is one unrandomized before/after observation: input checks and the brief
+changed together, host concurrency was uncontrolled, and shell pairing remains
+open. No causal or general batch speed claim follows. Detailed stream cost
+parsing remains open; thinking completion time is unknown. The original
+240s/300s experimental bounds and their judgment basis apply unchanged.
+Evidence: external `controlled-focused-diagnostics-native-20261011/summary.json`.
+Current production installation remains `2ed78097`; this candidate was isolated.

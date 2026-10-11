@@ -30,7 +30,7 @@ DEFAULT_TIMEOUT=30
 # Hard ceiling so a typo'd sub-plan declaration cannot pin a slot forever.
 # Kept in sync with _resolve_effective_window.ILK_MAX_ITERATION_TIMEOUT_MIN.
 ILK_MAX_ITERATION_TIMEOUT_MIN=120
-VALID_ENGINES="claude codex claude-worker claude-manager"
+VALID_ENGINES="claude claude-worker claude-manager"
 # Deliberate: a forgot-the-flag spawn lands on a worker home, never the
 # primary account.  The engine system exists to keep loops OFF the primary
 # (see resolve_engine precedence below); the default must match that intent.
@@ -38,19 +38,18 @@ DEFAULT_ENGINE="claude-worker"
 
 # Runner scripts keyed by engine name
 runner_script_for_engine() {
-  local engine="$1"
+  local engine="$1" runner
   case "$engine" in
-    claude)        echo "${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_claude.sh" ;;
-    claude-worker) echo "${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_claude.sh" ;;
-    # claude-manager (2026-09-20, operator): same runner, but the session
-    # runs under the manager home (~/.claude-manager) — the designated
-    # replacement for paths that previously launched as the PRIMARY
-    # account (--engine claude) and burned the official quota window.
-    # Toolkit stays this checkout's (ILK_SKILL_HOME is NOT redirected).
-    claude-manager) echo "${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_claude.sh" ;;
-    codex)         echo "${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_codex.sh" ;;
-    *)             echo "Error: Unknown engine '$engine'" >&2; exit 1 ;;
+    claude|claude-worker|claude-manager)
+      runner="${_SKILL_ROOT}/ilk-loop/scripts/run_ilk_loop_claude.sh" ;;
+    codex) echo "Error: Engine 'codex' is not packaged in this toolkit." >&2; return 1 ;;
+    *) echo "Error: Unknown engine '$engine'" >&2; return 1 ;;
   esac
+  if [[ ! -f "$runner" ]]; then
+    echo "Error: Engine '$engine' runner is not packaged: $runner" >&2
+    return 1
+  fi
+  echo "$runner"
 }
 
 # CLI overrides (populated by parse_args)
@@ -601,6 +600,10 @@ start_ilk_window() {
   local master_override="${11:-}"
   local run_batch_gate="${12:-false}"
 
+  # Refuse unavailable engines before any launch state or detached process.
+  local loop_script
+  loop_script=$(runner_script_for_engine "$engine") || return 1
+
   # Concurrency guard
   local live_pid
   live_pid=$(test_running_pid "$project_path")
@@ -666,8 +669,6 @@ start_ilk_window() {
   log_file="${log_dir}/${project_key}-${run_id}.log"
 
   # Build runner command — inject worker-home env vars for claude-worker engine.
-  local loop_script
-  loop_script=$(runner_script_for_engine "$engine")
   if [[ -n "$prepared_inputs" ]]; then
     loop_script="${prepared_inputs}/code/skills/ilk-loop/scripts/$(basename "$loop_script")"
     mcp_config_path="${prepared_inputs}/mcp.json"
@@ -880,7 +881,8 @@ Options:
   --all                        Launch every project in projects.json.
   --force                      Legacy scheduling flag; never bypasses busy ownership.
   --dry-run                    Print resolved plan but do not spawn.
-  --engine ENGINE              Worker engine: claude (default) or codex.
+  --engine ENGINE              Worker engine: claude-worker (default), claude,
+                               or claude-manager.
   --worker-home PATH           Override worker home for claude-worker engine
                                (default: ~/.claude-worker; also CLAUDE_WORKER_HOME).
   --master NAME                Pin to a specific MASTER-*.md basename.

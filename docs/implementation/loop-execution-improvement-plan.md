@@ -9,8 +9,9 @@ Keep it updated after each checked increment and before any context handoff.
 1. Read this file and the linked designs. Do not reconstruct scope from chat.
 2. Work in `/Users/chad/Projects/github/inluck-net/ilk-skills-worktrees/owner-loop-performance-20261011`, branch `owner/loop-performance-20261011`.
 3. Inspect source and git status before changes. The shared main checkout has
-   locally installed preview and a retained pause; integrate subsequent code only
-   at a freshly verified quiescent boundary.
+   locally installed preview. Chad reports the running batch is working now:
+   leave its workers, scheduler, pause state, plans and installed inputs alone.
+   Integrate subsequent code only at a freshly verified quiescent boundary.
    Do not stage, revert or overwrite unknown files.
 4. Finish the first unchecked item below. Record actual check output, affected
    paths, remaining limitations, and the next action here. Candidate-tested,
@@ -26,7 +27,7 @@ drain/relaunch has archived native caller evidence; production activation is sti
 inputs now have production-entry candidate evidence. C3 preparation/acceptance/
 repair is wired but remains disabled by default. Actual-base provenance and
 Windows/member/dirty-entry adapters remain open. Continue here per Chad:
-“no more handover, until the whole thing done”. Overall estimate 55% is a
+“no more handover, until the whole thing done”. Overall estimate 58% is a
 judgment against delivered/installed/measured scope, not a checkbox count.
 
 Old run `20261011-102057` timed out by itself. Old run `20261011-130246`
@@ -152,12 +153,46 @@ External evidence directory:
 `/Users/chad/.ilk-data/projects/users-chad-projects-github-inluck-net-ilk-skills-604d727/runtime/analysis/design-revision-20261011/`.
 Contains candidate patch, worker cost report, effort probe and earlier owner
 record. This tracker supersedes that narrow owner record for scope/progress.
-Existing live batch: `MASTER-2026-10-11b-gates-and-recovery-tell-the-truth-execution-plan.md`,
-run `20261011-102057`, iteration 4 observed in agent phase. Plans 3 and 5 overlap
-output/context work; verify current state at the actual landing boundary.
+Known batch: `MASTER-2026-10-11b-gates-and-recovery-tell-the-truth-execution-plan.md`.
+Old run `20261011-102057` and its iteration are historical. Chad reports the
+running batch is working now (latest instruction); do not reuse stale pause/PID
+observations or change its state. Overlap reconciliation remains read-only until
+an actual safe landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- Chad's live-batch warning: keep candidate work isolated; no activation,
+  scheduler changes, pause writes, plan changes or worker interruption while it
+  is progressing. Owner worktree remains independent of installed 2ed78097.
+- Packaged-engine preflight: three functional Bash negatives reproduced the
+  advertised missing Codex runner and late validation. Guard now runs before
+  ownership lookup/state creation; advertised Bash/PowerShell engines exclude
+  unbuilt Codex, missing known runner also refuses. Defaults unchanged.
+  Seven focused checks passed in 0.49s, including real portable PowerShell
+  function execution; Bash syntax and whitespace passed. Not Windows OS proof.
+  Initial negative pytest invocation lacked a private data-root pin; its watcher
+  reported concurrent production-root changes. Test bodies used extracted
+  functions and a failing ownership stub, so never reached state writes. The
+  passing invocation pinned both HOME and ILK_DATA_HOME; do not repeat ambient
+  invocations while the live batch runs.
+- Actual focused-diagnostics candidate 7e8f6ccc accepted the same red consumer
+  repair in 199.194s: one worker, one gate attempt, all-shipped, positive integrity,
+  journal and CAS, idle registry, unchanged source home, eight production hooks,
+  actual MiMo PRO with explicit thinking disabled. Worker monotonic interval
+  188.577228s. Earlier comparable observation was 229.799s fixture/218.98511s
+  worker: about 13.3%/13.9% lower respectively. Single unrandomized observations,
+  changed candidate checks and uncontrolled host concurrency prevent a causal
+  or general speed claim. No additional suite or production activation.
+  Raw evidence: controlled-focused-diagnostics-native-20261011/summary.json.
+
+
+- Progress estimate 58% after actual corrected-policy consumer acceptance,
+  checked named/private code/global input boundaries and remaining registry
+  writer guard. Judgment over the whole installed/measured scope; candidate
+  additions are not yet installed and no checklist completion is inferred.
+  Continue through rollout, lifecycle/caller adapters and controlled comparisons.
+
 
 - 17a18d86 archived normal/native/pending-worktree production callers passed
   3 in 17.49s with complete private code inventory. No suite/model call.

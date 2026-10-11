@@ -96,7 +96,7 @@ param(
   # servers (Gmail / Drive) for the worker.
   [string]$EnableMcp = "",
 
-  # Worker engine: "claude" (default) or "codex". CLI override wins
+  # Worker engine: "claude" (default) or "claude-worker". CLI override wins
   # over .ilk-launch.json's worker_engine. "codex" is not yet supported
   # and will produce a clear error.
   [string]$Engine = "",
@@ -133,17 +133,21 @@ $LauncherDir   = Join-Path $SkillRoot 'ilk-launcher'
 $ProjectsJson  = Join-Path $LauncherDir 'projects.json'
 $DefaultMaxIter = 30
 $DefaultTimeout = 30
-$ValidEngines = @('claude', 'codex', 'claude-worker')
+$ValidEngines = @('claude', 'claude-worker')
 $DefaultEngine = 'claude'
 
 function Get-RunnerScript {
   param([string]$EngineName)
-  switch ($EngineName) {
-    'claude'        { return Join-Path $SkillRoot 'ilk-loop\scripts\run_ilk_loop_claude.ps1' }
-    'claude-worker' { return Join-Path $SkillRoot 'ilk-loop\scripts\run_ilk_loop_claude.ps1' }
-    'codex'         { return Join-Path $SkillRoot 'ilk-loop\scripts\run_ilk_loop_codex.ps1' }
-    default         { throw "Unknown engine '$EngineName'" }
+  $runner = switch ($EngineName) {
+    'claude'        { Join-Path $SkillRoot 'ilk-loop\scripts\run_ilk_loop_claude.ps1' }
+    'claude-worker' { Join-Path $SkillRoot 'ilk-loop\scripts\run_ilk_loop_claude.ps1' }
+    'codex'         { throw "Engine 'codex' is not packaged in this toolkit." }
+    default        { throw "Unknown engine '$EngineName'" }
   }
+  if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) {
+    throw "Engine '$EngineName' runner is not packaged: $runner"
+  }
+  return $runner
 }
 
 $LoopScript = Get-RunnerScript -EngineName 'claude'
@@ -644,6 +648,8 @@ function Start-ilkWindow {
     [Nullable[bool]]$RunLocalChecksValue = $null
   )
 
+  # Validate before creating launch state or a detached process.
+  $runnerScript = Get-RunnerScript -EngineName $EngineName
   $livePid = Test-RunningPid -ProjectPath $ProjectPath
   if ($livePid -and -not $Force) {
     Write-Host "[$ProjectName] already running (PID $livePid). Use -Force to launch anyway, or stop.ps1 to kill it." -ForegroundColor Yellow
@@ -678,7 +684,6 @@ function Start-ilkWindow {
   Write-ToolkitStalenessNotice
 
   $title = "ilk: $ProjectName"
-  $runnerScript = Get-RunnerScript -EngineName $EngineName
 
   # Resolve worker-home routing for claude-worker engine.
   # Precedence: -WorkerHome flag > $env:CLAUDE_WORKER_HOME > default ~/.claude-worker.
