@@ -22,7 +22,7 @@ def _rule(verb,operation,path):
     return f'({verb} {operation} (subpath {json.dumps(str(path))}))'
 
 
-def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnostic_log: Path=None, shell=False) -> str:
+def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnostic_log: Path=None, shell=False, deadline=None) -> str:
     if sys.platform!='darwin': raise ContextError('worker sandbox host adapter unavailable')
     root=Path(context['exec_tree']).resolve(strict=True)
     temporary=Path(temporary).resolve(strict=True)
@@ -48,11 +48,25 @@ def profile(context: dict, *, temporary: Path, private_home: Path=None, diagnost
     # Git commands may read metadata, but workers may not mutate it.
     protected.extend([root/'.ilk-remote-type',root/'.ilk/findings.md',root/'.ilk-merge-deferred'])
     protected.append(root/'.git')
-    common=subprocess.run(['git','-C',str(root),'rev-parse','--git-common-dir'],capture_output=True,text=True)
+    git_limits={}
+    if deadline is None:
+        from run_registry import driver_authority
+        deadline=(driver_authority(context) or {}).get('iteration_deadline_monotonic')
+    if deadline is not None:
+        import math
+        from iteration_clock import monotonic
+        if isinstance(deadline,bool) or not math.isfinite(deadline) or deadline<=monotonic():
+            raise ContextError('sandbox metadata deadline unavailable')
+        git_limits['timeout']=deadline-monotonic()
+    common=subprocess.run(['git','-C',str(root),'rev-parse','--git-common-dir'],capture_output=True,text=True,**git_limits)
     if common.returncode==0:
         raw=Path(common.stdout.strip());protected.append(raw.resolve() if raw.is_absolute() else (root/raw).resolve())
     rules=['(version 1)','(allow default)','(deny file-write*)',
            _rule('allow','file-write*',root),_rule('allow','file-write*',temporary),
+           # Moving the entire root into writable scratch would move its
+           # protected metadata/instructions away from their frozen paths.
+           f'(deny file-write-unlink (literal {json.dumps(str(root))}))',
+           f'(deny file-write-create (literal {json.dumps(str(root))}))',
            # CLI shell setup and ordinary redirection need the null device;
            # this grants no writes to filesystem/control-plane artifacts.
            '(allow file-write-data (literal "/dev/null"))','(deny signal)',

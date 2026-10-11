@@ -378,3 +378,35 @@ no range. It never substitutes current mutable Git observations. Additive
 fallback; that fallback no longer invents a run base from `HEAD^`. This is a
 selected I2 reader migration, not completion of all legacy consumers or an
 independent gate/ship proof. Final verification stays opt-in.
+
+
+### Disposable base samples for measured red progress (planned adapter)
+
+The next owned pre-existing-red adapter must keep two decisions distinct:
+progress acceptance may discharge one exact step after measured non-owned
+failures, while green acceptance and shipment proof remain false. Original
+raw exits, complete failed selectors and named unproven reasons survive CAS,
+recovery, landing and close/result projection. A declaration is not evidence.
+The current owned path remains strict raw-green until these callers are wired
+and checked; the transaction adapter is not built yet.
+
+Its first prerequisite is an enforced sample boundary. Before this increment,
+red_owner._measure_at_base_worktree created/restored a disposable detached
+worktree, but its test child lacked the owned gate sandbox; a registered-driver
+fixture reproduced overwriting its control plan. New candidate
+red_owner._run_base_sample uses that exact helper-created root as an
+ephemeral observation role, retains the original driver/registry authority,
+protects plans/data/pinned inputs/source trees/Git metadata, and uses separate
+gate scratch. It must not replace the frozen dispatch root or worker inputs.
+Node failures need actual matching FAILED evidence; unavailable runners,
+wrong selectors and fixture ERROR-only output stay unmeasured. The local
+tracker records the checked classification primitive and delivery states.
+
+Every base sample stays inside the original iteration deadline and the
+existing shared attribution cap. No baseline suite or cached gate outcome is
+introduced. worker_sandbox.profile now accepts an explicit deadline or the frozen
+driver authority deadline for its metadata query. Expired metadata starts no
+Git subprocess. Unknown registered child cleanup retains scratch/sample instead
+of deleting their worktree. These selected Mac sample/metadata changes are
+checked candidates; complete attribution cleanup bounds and unproven-progress
+transaction wiring remain open. This is not Windows/member or timeout entry support.

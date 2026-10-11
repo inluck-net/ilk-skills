@@ -125,3 +125,13 @@ def test_native_and_shell_cannot_rewrite_nested_instructions(tmp_path):
         scratch=temporary/'CLAUDE.md'
         assert run(policy,'/usr/bin/python3','-c','from pathlib import Path;import sys;Path(sys.argv[1]).write_text("test fixture")',str(scratch)).returncode==0
         assert scratch.read_text()=='test fixture'
+
+
+def test_execution_root_cannot_move_into_writable_scratch(tmp_path):
+    ctx,scratch,_=fixture(tmp_path);root=Path(ctx['exec_tree'])
+    moved=scratch/'moved-execution';policy=profile(ctx,temporary=scratch,shell=True)
+    try:
+        result=run(policy,'/bin/mv',str(root),str(moved))
+        assert result.returncode!=0 and root.exists() and not moved.exists()
+    finally:
+        if moved.exists() and not root.exists():moved.rename(root)  # Own fixture only.

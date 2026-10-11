@@ -23,7 +23,7 @@ request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
 Current next action: close remaining legacy reader/recovery/parity requirements
-and delivery documentation in this isolated worktree. Toolkit preview 18454a64
+and delivery documentation in this isolated worktree. Toolkit preview 2991c82a
 and consumer compatibility 2cb713ae are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -2730,3 +2730,54 @@ anchors at the time of inspection and can move as integration changes code.
 - This correction supersedes 18454a64's binary interpretation, not the ban
   on unknown final-gate proof. Base-node classification f4d42baa is also
   checked and ready for the next safe local activation.
+
+
+### Tri-state correction activated at unchanged idle boundary
+
+- Local immutable 2991c82a includes the exact-base-node measurement and
+  unknown-integrity no-proof/no-rollback correction. Fresh activation
+  preserved exact paused/undispatched controller 94556 and all 1,891
+  protected hashes; idle scheduler restored. Evidence:
+  toolkit-delivery-preview-20261012k/installed.json. No active worker,
+  plan, pause or private input changed. No public release or push.
+- Remote standby still 18454a64, installed v0.9.193. Supersede that private
+  standby before remote activation; it lacks this tri-state correction.
+- Next by-hand implementation: new measured pre-existing-red progress adapter
+  must separate progress acceptance from green acceptance; measure exact
+  failed nodes at both frozen bases under the original cap, retain raw fail
+  evidence, and carry explicitly unproven receipts through CAS, recovery,
+  landing, result, close proof and terminal consumer readers. Until all these
+  callers are checked, strict owned raw-green acceptance remains active.
+
+
+### Owned disposable base samples keep their write scope
+
+- Real registered-driver base sample reproduced overwriting its control plan
+  (1 failed in 0.89s). This is measured missing protection, not a hypothetical
+  warning. New red_owner._run_base_sample executes only the helper-created
+  sample through the existing Mac sandbox, with separate scratch, sanitized
+  gate env and original registered child authority. Frozen context bytes and
+  dispatch root are unchanged; source/control/Git metadata remain denied.
+- worker_sandbox.profile now bounds metadata discovery by an explicit or
+  available frozen driver deadline; expired metadata starts no Git query.
+  Unknown registered child cleanup retains scratch/sample rather than
+  force-removing their directories. No new production numeric cap.
+- Real scoped sample/pytest positives and sandbox negatives: 15 passed in
+  3.44s. Sample metadata, recovery scratch, dispatch and driver acceptance
+  callers: 23 passed in 23.16s. No model or full suite.
+- This prerequisite is candidate only; installed local remains 2991c82a and
+  remote standby 18454a64. Before enabling owned unproven progress, finish
+  whole-attribution cleanup bounds, durable baseline captures and all
+  transaction/terminal callers. Legacy non-owned calls keep their existing
+  sample adapter. Native Windows/member adapters remain open.
+
+### Sample root move protection checked
+
+- Actual sandbox fixture moved its execution root into writable scratch before
+  the fix (1 failed in 0.10s). Deny unlink/create of the exact root itself;
+  ordinary sample output remains writable. The test restores only its own
+  fixture on reproduction. Combined root/sample/recovery focused selection:
+  14 passed in 3.00s. No agent/model or full suite.
+- Next: cleanup must share attribution's existing deadline and preserve
+  uncertain samples. These checked sample primitives do not yet enable
+  pre-existing-red progress acceptance or establish Windows/member parity.

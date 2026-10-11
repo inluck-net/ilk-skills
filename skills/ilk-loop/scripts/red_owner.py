@@ -135,6 +135,47 @@ def _sample_unchanged(wt,expected_head):
     return head.returncode==0 and head.stdout.strip()==expected_head and diff.returncode==0
 
 
+def _run_base_sample(command,wt,cap):
+    """Enforce the existing owned gate boundary on this helper's sample root.
+
+    The frozen dispatch stays unchanged; only the sandbox's ephemeral write
+    root differs. bounded_run retains original registered driver authority.
+    """
+    from iteration_context import read_context,ContextError
+    from run_registry import require_driver,driver_authority,RegistryError
+    context=read_context()
+    env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1')
+    if not context or context.get('worker_sandbox_adapter')!='macos-brokered-shell' or not context.get('run_registry_dir'):
+        return _bounded_run(command,shell=True,cwd=str(wt),timeout=_remaining(cap),env=env)
+    require_driver(context)
+    from iteration_clock import monotonic
+    from worker_sandbox import profile
+    deadline=driver_authority(context).get('iteration_deadline_monotonic')
+    if isinstance(deadline,bool) or not isinstance(deadline,(int,float)) or not math.isfinite(deadline):
+        raise ContextError('owned base sample deadline unavailable')
+    deadline=min(deadline,monotonic()+_remaining(cap))
+    if deadline<=monotonic():raise ContextError('owned base sample deadline reached')
+    scratch=Path(tempfile.mkdtemp(prefix='ilk-base-gate-'))
+    retain=False
+    try:
+        # Only called after this helper creates/restores its detached sample.
+        sample_context=dict(context,exec_tree=str(wt.resolve()),mode='selfmod')
+        policy=profile(sample_context,temporary=scratch,shell=True,deadline=deadline)
+        child_env={key:value for key,value in env.items() if not key.startswith('ANTHROPIC_')}
+        child_env.update(TMPDIR=str(scratch),ILK_GATE_CHILD='1',ILK_ITER_RECORD_STAGE='')
+        limit=min(_remaining(cap),deadline-monotonic())
+        if limit<=0:raise ContextError('owned base sample deadline reached')
+        return _bounded_run(['/usr/bin/sandbox-exec','-p',policy,'/bin/sh','-c',command],
+            shell=False,cwd=str(wt),timeout=limit,env=child_env)
+    except RegistryError:
+        retain=True
+        raise
+    finally:
+        if not retain:
+            import shutil
+            shutil.rmtree(scratch,ignore_errors=True)
+
+
 def _bisect_red_owner(
     repo: Path,
     base: str,
@@ -277,6 +318,7 @@ def _measure_at_base_worktree(
     import shutil
     tmp = Path(tempfile.mkdtemp(prefix="red-owner-attrib-"))
     wt = tmp / "wt"
+    retain=False
     try:
         add = subprocess.run(
             ["git", "worktree", "add", "--detach", str(wt), base_sha],
@@ -323,24 +365,25 @@ def _measure_at_base_worktree(
             results: dict[str, str] = {}
             for nid in nodes:
                 sample_head=_prepare_sample(wt,base_sha)
-                rc, stdout, stderr, timed_out = _bounded_run(
-                    f"{runner} {shlex.quote(nid)}", shell=True, cwd=str(wt), timeout=_remaining(budget_s),
-                    env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1'))
+                rc, stdout, stderr, timed_out = _run_base_sample(f"{runner} {shlex.quote(nid)}",wt,budget_s)
                 results[nid] = 'unmeasured' if timed_out or rc is None or not _sample_unchanged(wt,sample_head) else _classify(rc, stdout, stderr, nid)
             return results
         else:
             sample_head=_prepare_sample(wt,base_sha)
-            rc, stdout, stderr, timed_out = _bounded_run(
-                runner, shell=True, cwd=str(wt), timeout=_remaining(budget_s),
-                env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1'))
+            rc, stdout, stderr, timed_out = _run_base_sample(runner,wt,budget_s)
             return {"_command": 'unmeasured' if timed_out or rc is None or not _sample_unchanged(wt,sample_head) else _classify(rc, stdout, stderr)}
+    except Exception as error:
+        from run_registry import RegistryError
+        if isinstance(error,RegistryError):retain=True
+        raise
     finally:
-        subprocess.run(
-            ["git", "worktree", "remove", "--force", str(wt)],
-            cwd=repo, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=30,
-        )
-        shutil.rmtree(tmp, ignore_errors=True)
+        if not retain:
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", str(wt)],
+                cwd=repo, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=30,
+            )
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _extract_plan_slug(commit_msg: str) -> str | None:
