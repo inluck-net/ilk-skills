@@ -216,8 +216,7 @@ def _recover_acceptance(context):
     if (result.get('accepted') is not True or not result.get('proof_provisional') or not attempt.get('all_passed')
             or not attempt.get('gate_tree_unchanged') or result.get('tree')!=attempt.get('working_tree')):
         raise ContextError('acceptance recovery has no exact green attempt')
-    if git(root,'rev-parse','HEAD')!=result['head_commit'] or git(root,'rev-parse','HEAD^{tree}')!=result['tree'] or working_tree(root)!=result['tree']:
-        raise ContextError('acceptance recovery tree changed')
+    _transaction_head(context,result)
     for capture in row['captures']:
         if hashlib.sha256(Path(capture['path']).read_bytes()).hexdigest()!=capture['sha256']:
             raise ContextError('acceptance recovery capture changed')
@@ -228,12 +227,28 @@ def _recover_acceptance(context):
         transition(path,{'current_step':state['current_step'],'status':state.get('status')},
             {'current_step':selected['step']+1,'status':'in-progress'},actor='driver',
             reason='recover exact gated acceptance transaction',guards=guards)
-    elif state.get('current_step')!=str(selected['step']+1) or state.get('status')!='in-progress' or state.get('hold')=='human':
+    elif state.get('current_step')!=str(selected['step']+1) or state.get('status') not in {'in-progress','shipped'} or state.get('hold')=='human':
         raise ContextError('acceptance recovery pointer or hold changed')
     from plan_state import audit_context
     if not audit_context(context)['explained']:raise ContextError('acceptance recovery state is unexplained')
     _save_acceptance(context,result,'advanced')
     return dict(result,recovered_acceptance=True)
+
+
+def _transaction_head(context,result):
+    """Only this transaction's empty ship markers may follow accepted code."""
+    root=Path(context['exec_tree']);head=git(root,'rev-parse','HEAD')
+    if git(root,'rev-parse','HEAD^{tree}')!=result['tree'] or working_tree(root)!=result['tree']:
+        raise ContextError('acceptance recovery tree changed')
+    if head==result['head_commit']:return head
+    git(root,'merge-base','--is-ancestor',result['head_commit'],head)
+    selected=read_dispatch(context);needle=f"[plan:{selected['slug']}#ship]"
+    for commit in git(root,'rev-list',result['head_commit']+'..'+head).splitlines():
+        parents=git(root,'rev-list','--parents','-n','1',commit).split()
+        if (len(parents)!=2 or needle not in git(root,'show','-s','--format=%B',commit)
+                or git(root,'rev-parse',commit+'^{tree}')!=result['tree']):
+            raise ContextError('acceptance recovery has unrelated follow-on commits')
+    return head
 
 
 def _accept_step(context,*,default_timeout):
@@ -283,7 +298,7 @@ def _accept_step(context,*,default_timeout):
     return result # Integrity, landing and close-record projection remain caller-owned.
 
 
-def project_result(result,context):
+def project_result(result,context,*,allow_transaction_marker=False):
     """Adapt this transaction to existing gate readers without rerunning gates."""
     from emit_jsonl_record import build_record,extract_failing_check
     selected=read_dispatch(context)
@@ -295,7 +310,9 @@ def project_result(result,context):
         if not attempts or not attempts[-1].get('all_passed') or not attempts[-1].get('gate_tree_unchanged'):
             raise ContextError('accepted result lacks an exact green gate')
         root=Path(context['exec_tree'])
-        if (result.get('head_commit')!=git(root,'rev-parse','HEAD') or result.get('tree')!=git(root,'rev-parse','HEAD^{tree}')
+        if allow_transaction_marker:
+            _transaction_head(context,result)
+        if ((not allow_transaction_marker and result.get('head_commit')!=git(root,'rev-parse','HEAD')) or result.get('tree')!=git(root,'rev-parse','HEAD^{tree}')
                 or result['tree']!=attempts[-1]['working_tree'] or working_tree(root)!=result['tree']):
             raise ContextError('accepted tree changed before projection')
     checks=attempts[-1]['check_observations'] if attempts else []

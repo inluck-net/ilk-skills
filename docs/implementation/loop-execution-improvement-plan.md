@@ -153,6 +153,16 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- 2026-10-11 B3/C3 recovery continuation: actual archived startup at `6538f49f`
+  passed all three ordinary-consumer/hold/pending-advance cases (11.41s).
+  Recovery now permits only the original accepted tree's own empty ship marker,
+  closes its original run once, and completes its exact master only after all
+  registered ships have closed proof. Positive authored-step integrity replaces
+  the legacy fail-open helper in this new path. Fourteen focused recovery checks
+  passed in 6.02s, including parser-error refusal and unrelated-commit refusal.
+  No install or production worker change. Earlier commit crash gaps, selfmod,
+  member/dirty entry and owner-death cleanup remain open.
+
 - 2026-10-11: Created complete manual tracker and resume pointer after Chad's
   full authorization. Prior candidate evidence recorded; implementation remains
   isolated. Next: A1 exact identity and missing additive observations.

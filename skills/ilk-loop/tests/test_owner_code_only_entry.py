@@ -101,6 +101,7 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
             assert terminal['state']=='already-shipped',(terminal,stdout[-4500:],stderr[-4500:])
             assert process.returncode==0
             assert 'status: shipped' in plan.read_text()
+            assert 'status: shipped' in master.read_text()
             assert not list(runs.glob('*/iter-*.log.jsonl')) # zero provider dispatches
             records=[json.loads(line) for line in (world['data_home']/'projects'/world['key']/'logs/.ilk-loop.log').read_text().splitlines()]
             recovered=[row for row in records if row.get('acceptance_recovered_by_driver')]
