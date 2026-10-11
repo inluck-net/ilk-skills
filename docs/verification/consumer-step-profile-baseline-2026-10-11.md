@@ -177,3 +177,28 @@ has two adjusted bootstrap indicators (three in v5); focused-diagnostics now has
 instead of eleven. Timing, acceptance and tool/message counts are unchanged.
 CSV v6 rows are reparses of the same runs, not new independent samples. These
 indicators still do not establish wasted work. No provider or suite was rerun.
+
+## Small eligible toolkit exercise after the consumer
+
+Candidate `24190e78` drove a real MiMo PRO reporter repair in a disposable
+ilk-skills clone. Baseline `ab55826c` had six passing reporter tests and the
+exact-root regression red. Native tools, explicit disabled thinking, eight
+production hook copies; same experimental 240s/300s judgment bounds. The
+worker changed only tools/loop-performance/report.py. All seven focused tests
+passed under driver authority; one gate attempt, accepted commit, one advance,
+shipping, positive integrity/journal, unchanged source settings and idle registry.
+Fixture wall **97.725s**, CLI result **80.060s**, actual worker wrapper
+**81.925503s**, API overlapping **75.954s**, nine unique root messages and tools,
+one adjusted bootstrap indicator, diagnostic intervals **2.499s**. Thinking
+completion remains unknown. Mode `none`, landing not applicable: this is not
+selfmod-landing evidence. Separate prior caller tests cover that path.
+
+The clone was independent of the progressing production batch, which is
+recorded as uncontrolled host concurrency. This is a capability/accepted-diff
+exercise, not a paired performance comparison or public release. Raw evidence:
+external `controlled-toolkit-reporter-native-20261011-v2/`, with summary, original
+stream/renderer, parser-v6 report, phase observation and concurrency inventory.
+The earlier preflight correctly produced the regression red but its fixture
+assertion expected the literal exception class absent from pytest's short
+output. It stopped before any model call; the corrected fresh fixture checks
+the failing test name/count. Original preflight evidence remains retained.

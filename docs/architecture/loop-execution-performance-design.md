@@ -340,8 +340,9 @@ park/stop, and installing a release does not change an already-loaded shell.
 
 Every runner change is kernel-tier work: use a supervised owner build.
 Templates/report tools are non-kernel under `safety-kernel.json`; do not
-unnecessarily subject them to the kernel freeze. Current enforcement allows
-session-planned kernel edits (`safety_kernel.py:282,341-350`). Chad confirmed on 2026-10-11 that the freeze covers every loop-built kernel
+unnecessarily subject them to the kernel freeze. The historical review snapshot allowed
+session-planned kernel edits (`safety_kernel.py:282,341-350`); current new-base
+owner-only policy is described in the later implementation notes. Chad confirmed on 2026-10-11 that the freeze covers every loop-built kernel
 change, including session-planned work, and the expanded landing paths.
 Implementation uses a separate supervised owner checkout. Existing dispatched
 work is not interrupted or rewritten; enforcement migration is separate from
@@ -379,11 +380,14 @@ can print-mode resume retain context under these hooks, and can independent
 reads be grouped? Resolve with isolated experiments before depending on them.
 Do not change worker defaults based solely on CLI flag acceptance.
 
-**Readiness:** ready for review of the narrowed measurement/brief design.
-Not ready to implement outcome reuse (removed), stall termination (observation
-only), driver-only gates (write-scope/resume dependencies), or drain activation
-(complete pinning and consumer mapping pending).
-
+**Readiness at review:** narrowed measurement/brief design was ready;
+write-scope/resume and complete pinning/consumer mapping were dependencies.
+The later owner candidate now has checked supported Mac capabilities for these
+paths. Current rollout readiness is the durable tracker, with production
+integration pending the progressing batch's normal boundary. Outcome reuse
+remains removed and stall termination remains out of scope. Unsupported
+Windows/member/dirty owned adapters must refuse or use their explicit legacy
+fallback; they do not acquire Mac enforcement evidence.
 
 ## 9. Owner candidate and evidence (2026-10-11)
 

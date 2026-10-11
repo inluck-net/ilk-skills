@@ -140,7 +140,7 @@ Designs:
   effort settings and model choice separately. Preserve acceptance quality.
 - [ ] E2 Complete remaining all-attempt verdict/actual-base attribution policy
   and consumer hermeticity enforcement. Unknown/inconclusive is not green.
-- [ ] E3 Consumer batch then small eligible toolkit batch: durable resume from
+- [x] E3 Disposable consumer batch then small eligible toolkit batch: durable resume from
   records/plan, truthful phases, accepted steps, safe recovery/upgrade and
   measured costs. Record comparable speed/reliability results.
 - [ ] E4 All accepted design requirements mapped to implementation/evidence;
@@ -166,6 +166,23 @@ an actual safe landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- E3 actual small eligible toolkit exercise passed 97.725s with candidate
+  24190e78: actual MiMo PRO, native tools, explicit thinking disabled, eight
+  production hooks, seven focused reporter checks, one authoritative gate,
+  accepted commit/CAS/shipping, positive integrity/journal, unchanged source
+  settings and idle registry. Reviewed accepted diff changes only reporter's
+  exact-root normalization, preserving version/subpaths/outside paths.
+  CLI result 80.060s, wrapper 81.925503s, API overlapping 75.954s, nine unique
+  root messages/tools, one bootstrap indicator, diagnostic intervals 2.499s.
+  Ordinary cloned toolkit mode none/landing N/A, not selfmod evidence; prior
+  archived native callers cover landing. Production batch stayed running.
+  No paired/general speed claim. Original preflight had the intended red but
+  fixture expected a literal AssertionError that pytest short output omits;
+  corrected fresh fixture verifies exact failing test/count before model call.
+  Full raw/phase/concurrency evidence retained under controlled-toolkit-reporter-
+  native-20261011-v2. Consumer-then-toolkit capability sequence is complete;
+  rollout and representative comparisons remain separate open requirements.
 
 - Consumer owner candidate 2cb713ae closes verifier pin parsing/quoting and
   hermetic toolkit integration fixtures. The canary-lint negative read a
