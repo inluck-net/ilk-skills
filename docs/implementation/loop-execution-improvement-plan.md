@@ -498,3 +498,13 @@ No completion/ship/proof markers are inferred from this human tracker.
   provisional proof/ship integration and accepted-tree attempt projection are
   still open. Do not enable code-only prompts globally until those callers
   are complete. No I3/I5/production-completion claim.
+
+- D1 additive registry candidate: `run_registry.py` reserves launching state
+  with explicit finite expiry, binds exact POSIX PID/start/PGID, refuses corrupt
+  or contradictory records, detects PID reuse/moved groups, signals only fresh
+  matching recorded groups and refuses caller group, then removes only matching
+  identities. Legacy artifact paths/shapes are untouched. Six focused checks
+  passed in 0.07s, including an actual disposable owned-process capture/stop.
+  Fixture ten-second expiry/wait are test judgments for subsecond startup; a
+  slow valid host falsifies them. Launch/runner/readers, broker identity, Windows
+  adapter, orphan reconciliation and drain activation remain open. No I4 claim.

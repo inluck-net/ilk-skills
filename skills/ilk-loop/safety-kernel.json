@@ -34,6 +34,11 @@
       "path": "skills/ilk-loop/scripts/driver_step.py",
       "guard": "owner",
       "why": "driver gate, accepted commit and pointer authority"
+    },
+    {
+      "path": "skills/ilk-loop/scripts/run_registry.py",
+      "guard": "owner",
+      "why": "run identity, verified process groups and lifecycle authority"
     }
   ],
   "kernel": [
