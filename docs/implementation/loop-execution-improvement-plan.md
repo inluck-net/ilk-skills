@@ -17,8 +17,8 @@ Keep it updated after each checked increment and before any context handoff.
    landed, installed and consumer-measured are distinct states.
 5. Continue by hand; do not delegate kernel work to an autonomous ilk batch.
 
-Current next action: prepare safe first-increment integration/installation;
-finish remaining lifecycle and caller adapters without replacing active inputs.
+Current next action: finish consumer compatibility activation and controlled
+installed-profile comparisons, then remaining lifecycle/caller adapters.
 Fresh-base selfmod normal and zero-provider recovery have archived Mac evidence. One actual native-tool consumer step now
 has closed acceptance and a completed zero-model recovery; controlled comparisons
 and production install remain open. Prepared-pin
@@ -33,8 +33,9 @@ Old run `20261011-102057` timed out by itself. Old run `20261011-130246`
 was freshly observed at handoff with PID 1016, PGID 958, start Oct 11 13:02:46,
 and a sleep child; the pause flag remains. Watchdog PID 354 is no longer present;
 a detached scheduler PID 27687 exists. Re-check all identities before activation.
-Owner checkpoints preserve main `5081038b` WIP prose ancestry. No new install,
-consumer benchmark, full suite, or production enforcement has occurred.
+Owner checkpoints preserve main `5081038b` WIP prose ancestry. First local preview installation is recorded below. No published release or
+global code-only enforcement has occurred; controlled consumer comparisons and
+remaining adapters are open.
 
 ## Authorization and invariants
 
@@ -71,8 +72,10 @@ Designs:
 - [ ] A2 Focused caller/production-entry checks; reconcile the running batch's
   overlapping output/context requirements without rewriting a dispatched step.
   Add PowerShell parity for the new dispatch/observation contract.
-- [ ] A3 Land and safely install the first increment after a verified safe
-  boundary. Active old runner must exit before its replacement launches.
+- [x] A3 First usable increment landed locally and installed as an immutable
+  local preview at 2c3b4039. Old idle controllers exited at a verified boundary;
+  scheduler restored, source settings and pause preserved. No published release
+  or globally enabled code-only/native/thinking profile is implied.
 - [ ] A4 Representative baseline/brief comparison with the same task, model,
   provider, settings/hooks, fixtures and focused gates. Record acceptance,
   elapsed, turns/thinking, discovery, reds and host concurrency; no unsupported
@@ -155,6 +158,25 @@ output/context work; verify current state at the actual landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- A3 delivered first increment: verified idle PGIDs 958 and 27687 had only
+  their known shells/sleep children and no worker/phase/iteration stream.
+  Scheduler was booted out; exact idle loop group received TERM and both
+  groups exited in the readiness bound. Pause and queued plans untouched.
+  Shared main fast-forwarded 5081038b → 2c3b4039 after preserving six WIP files
+  externally and stash 68f43c7a5339fc7b886df9ecfabb188417c0635e.
+  Immutable local preview ~/.ilk/releases/owner-loop-performance-20261011-2c3b4039
+  installed through existing current/previous pointers; v0.9.193 retained for
+  rollback, no tag/publication/push or pruning. Codex and worker skill links
+  resolve the preview. Exact installed preparation pinned 9 production hooks;
+  source settings hash unchanged, model/thinking/tool defaults unchanged,
+  scope observation only and zero provider calls. Scheduler restored using
+  byte-identical original plist, PID 94747.
+  Installed-release actual Bash acceptance/close caller (stub provider,
+  private disposable consumer): 1 passed in 6.97s. This is installed wiring
+  evidence, not a real-provider speed result. External preservation manifest,
+  ownership snapshots, landing/install and input-smoke records retained under
+  integration-preservation-20261011. Whole design remains active.
 
 - `55abfb59` archived normal selfmod entry after early-root refusal passed
   1 in 12.37s. First-increment integration prepared: all six shared main WIP
