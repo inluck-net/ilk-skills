@@ -165,7 +165,7 @@ an explicit owned-profile refusal does not prove an unbuilt adapter.
 
 | Requirement | Implemented mechanism / source anchor | Evidence and delivery limit |
 |---|---|---|
-| Exact target and roots (A1/B1/I1) | iteration_context.py:186 resolves canonical roles before snapshots; :67 validates declared worktree binding. dispatch_target resolves pinned master identity. | Normal/declared/selfmod archived callers passed. Member and dirty owned entry refuse; legacy remains. |
+| Exact target and roots (A1/B1/I1) | iteration_context.py:186 resolves canonical roles before snapshots; :67 validates declared worktree binding. dispatch_target resolves pinned master identity. | Normal/declared/selfmod archived callers passed. Member and arbitrary/timeout dirty owned entry refuse; exact closed-red re-entry is checked below; legacy remains. |
 | Durable open/close (B2/I2) | Bash and PowerShell existing JSONL open/close; iteration_context.py:151 captures execution; iteration_record.py:11 finalizes provisional proof. | Close checks require positive integrity/state/landing on owned Mac path; no inferred open-only proof. Full legacy reader migration remains open. |
 | Recovery (B3/C5) | recovery.py:112 transcript salvage; acceptance_recovery.py:81 original transaction recovery; worker_iteration preserves same-session diagnostics. | Actual provider red→repair→green, archived commit/staged/selfmod/worktree recovery; salvage is diagnostic only. PowerShell retry parity remains open. |
 | Kernel freeze (C1) | safety_kernel.py:203 admission and :293 frozen-base range policy; safety-kernel.json owner-only new bases. | Focused kernel/sandbox checks; historical bases retain their own policy. Supported runtime-tier loop changes remain eligible. |
@@ -175,8 +175,8 @@ an explicit owned-profile refusal does not prove an unbuilt adapter.
 | Input pinning (D2/I6) | run_inputs private code/settings/hooks/MCP/inventory; instruction_inputs.py:9 named inputs; provider_provenance.py configured origin. | Actual provider with eight copied hooks, immutable homes and sanitized records. Managed settings, system libraries and arbitrary external imports require explicit coordination/adapters. |
 | Consumer compatibility (D3) | gh-resolve claim readers installed at 8472771f; installed 2cb713ae adds hermetic explicit toolkit fixture and quoted runtime pin rendering/probe. | Consumer negative ambient poison reproduced; 7 pin/integration checks and 8 adjacent focused checks passed. Installed consumer/toolkit 4de pair: 4 focused checks passed in 0.91s; rezmac unchanged. |
 | Upgrade (D4) | upgrade_drain.py:18 positive accepted boundary, :92 activation, :150 consume. | Archived real launcher preserves limits/master/budget/holds, refuses live old children and tampering. Global opt-in remains off. Production local activation separate below. |
-| All-attempt verdicts (E2/I5) | driver_step.attempt_verdict groups same frozen input tree and scope/command; driver history retained before commit. | Same-tree red→pass flaky leaves HEAD/pointer unchanged; changed repaired tree green. Conservative owned refusal does not implement legacy flaky escalation/baseline-red advancement/strike attribution. |
-| Measurements (A4/E1/E3) | report.py parser v6 and phase_observation driver clocks. | Same MiMo consumer task 230s vs 199s; eligible toolkit repair 98s. One pair, uncontrolled concurrency, no causal/default-model speed claim. Shell/native representative pairing remains open. |
+| All-attempt verdicts (E2/I5) | driver_step.attempt_verdict groups same frozen input tree and scope/command; driver history retained before commit. | Same-tree red→pass flaky leaves HEAD/pointer unchanged; changed repaired tree green. Legacy rolling flaky history and measured strike reader are now checked below; PowerShell actual-base adapter and owned baseline-red advancement remain incomplete. |
+| Measurements (A4/E1/E3) | report.py parser v6 and phase_observation driver clocks. | Same MiMo consumer task 230s vs 199s; eligible toolkit repair 98s. One pair, uncontrolled concurrency, no causal/default-model speed claim. Shell/native pairing is recorded below with one failed shell arm; no accepted-work speed ratio is justified. |
 | Hermeticity (I7) | Private HOME + both data variables; consumer fixture explicit committed toolkit snapshot, isolated parser processes; fixture identity-loss spawn seam. | Focused checks above. Missing integration input is explicitly unknown/skip, strict full-coverage existing guard rejects it; no full suite run. Whole-repository lint eligibility audit remains open. |
 
 Open unsupported adapters remain on the entire checklist. This map is evidence,
@@ -2214,3 +2214,22 @@ anchors at the time of inspection and can move as integration changes code.
   the owner tree; local installed main remains f40c8aaa pending safe activation.
 - Timeout/unknown audit retention is deliberately still unsupported; this
   candidate does not finish B1 or the entire delivery checklist.
+
+
+### Committed retained-red production measurement
+
+- Archived HEAD 68d3e76e, actual Bash entry and sandboxed native provider stub:
+  two launches passed in 14.95s. First launch stopped `local_checks_failed`
+  with HEAD/pointer unchanged and retained red code; second launch admitted
+  the exact diff, repaired it, ran a fresh attempt, committed once, advanced
+  once and closed with positive integrity. Both registries released. Final
+  verification was not opted in or run. This establishes the supported Mac
+  retained-red adapter, not timeout ownership or all-platform recovery.
+- Operator guide now states these exact requirements and fallback limits.
+  Installed toolkit remains f40c8aaa; prepare and activate the checked candidate
+  only after a fresh live-boundary check. Existing pinned run remains untouched.
+
+- Adjacent acceptance invariants: 5 passed/11 deselected in 1.13s (hold/dirty
+  refusal, same-tree flaky history, restart, changed input, corrupt history).
+  Additional retained-entry negatives including live registered child and
+  changed toolkit identity: 9 passed/1 deselected in 2.19s.

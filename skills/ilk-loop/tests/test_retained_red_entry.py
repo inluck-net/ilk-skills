@@ -45,7 +45,7 @@ def test_exact_red_diff_resumes_but_runs_fresh_gates(tmp_path,monkeypatch):
     assert len(green['commits'])==1
 
 
-@pytest.mark.parametrize('change',['extra-diff','timeout','unknown-state','changed-plan','live-owner','missing-children','green'])
+@pytest.mark.parametrize('change',['extra-diff','timeout','unknown-state','changed-plan','live-owner','missing-children','live-child','changed-input','green'])
 def test_unknown_or_changed_retained_work_refuses(tmp_path,monkeypatch,change):
     context,root,plan,close,log=retained(tmp_path,monkeypatch)
     if change=='extra-diff':(root/'unknown.txt').write_text('unowned edit')
@@ -54,6 +54,10 @@ def test_unknown_or_changed_retained_work_refuses(tmp_path,monkeypatch,change):
     elif change=='changed-plan':context['plans']={}
     elif change=='live-owner':close['context']['runner_owner_pid']=os.getpid()
     elif change=='missing-children':(Path(close['context']['run_registry_dir'])/'child-events.jsonl').unlink()
+    elif change=='live-child':
+        events=Path(close['context']['run_registry_dir'])/'child-events.jsonl'
+        events.write_text(json.dumps(dict(event='registered',run_id=close['context']['run_id'],identity={'pid':os.getpid(),'pgid':os.getpgrp(),'lstart':'live fixture'}))+'\n')
+    elif change=='changed-input':context['toolkit_sha']='f'*40
     elif change=='green':close['driver_acceptance']['attempts'][-1]['verdict']='green'
     log.write_text(json.dumps(close)+'\n')
     with pytest.raises(ContextError):driver_step.admit_retained_red_entry(context)

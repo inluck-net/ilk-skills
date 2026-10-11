@@ -5,7 +5,7 @@ This is a local preview, not a published release. The durable
 installed commit, checked consumer version, measurements and remaining work.
 The supported owned profile is macOS with a clean entry in one repository,
 including checked fresh selfmod and declared-worktree acceptance. Windows,
-member-repository and dirty-entry owned adapters remain unavailable; use the
+member-repository and arbitrary/timeout dirty-entry owned adapters remain unavailable; use the
 existing legacy workflow for those cases. Legacy fallback retains legacy
 worker authority.
 
@@ -79,3 +79,16 @@ a general speed improvement. Retained failed runs remain failed.
 This preview does not implement gate-outcome reuse or automatic stall killing.
 Broader legacy verdict/ownership migration and platform rollout remain tracked;
 supported Mac evidence does not establish whole-design completion.
+
+
+An exact retained red diff can resume on the owned Mac profile after a prior
+`local_checks_failed` launch. This is new local-preview behavior checked on
+2026-10-12, not a public release. The latest durable close must show a known red
+gate on the exact unchanged diff, positive state audit, unchanged base/input
+identity and plan state, and no live prior runner or registered child group.
+Preparation checks this before starting a provider. The context retains a
+diagnostic ownership receipt; fresh gates still run and retry counts persist.
+An additional hand edit, changed toolkit/input, missing close, timeout with
+unobserved work, or unknown state requires owner handling and cannot silently
+be attributed to the previous worker. Accepted-transaction recovery continues
+to use its separate original transaction adapter.
