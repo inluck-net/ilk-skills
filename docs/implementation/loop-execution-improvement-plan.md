@@ -153,6 +153,18 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- 2026-10-11 D1/C5 native cleanup candidate: CLI, broker shells and driver
+  gate/Git children register their own group before exec, avoiding fast-child
+  parent-probe races. The broker's native owner-exit notification now closes
+  freshly verified sibling groups; normal broker closure also closes siblings.
+  Reused/unknown identities are retained and never signaled. Actual native
+  runner-death fixture killed both registered worker and gate groups and left
+  the registry idle. Eight broker/dispatch/native checks passed in 4.35s before
+  adding normal-close cleanup; broader focused result recorded next.
+  Independent accepted-history audit: 12 focused checks passed in 8.32s;
+  archived two-subplan Bash entry at `69ab8388` passed in 10.19s.
+  Leaderless descendant groups and non-Mac lifecycle adapters remain open.
+
 - 2026-10-11 B2/E2 measured multi-subplan refusal: two actual driver
   transactions reproduced first-step `stale_head` after a later independent
   accepted commit (1.41s focused reproduction). Added exact-base identities to

@@ -4,6 +4,24 @@ import pytest
 from run_registry import reserve,bind_running,scan,signal_run,finish,RegistryError,read
 
 
+def test_owner_exit_cleanup_refuses_reuse_and_never_signals_its_observer(tmp_path,monkeypatch):
+    import run_registry as rr
+    runtime,owner=fixture(tmp_path)
+    rr.bind_running(runtime,'fixture',pid=owner['pid'],probe=lambda _:owner,now=150)
+    path=runtime/'runs/fixture.json';row=read(path)
+    row['children']=[dict(pid=501,pgid=501,lstart='worker'),dict(pid=502,pgid=502,lstart='gate'),
+                     dict(pid=503,pgid=503,lstart='broker')]
+    path.write_text(json.dumps(row));sent=[]
+    monkeypatch.setattr(rr.os,'getpgrp',lambda:503)
+    monkeypatch.setattr(rr,'group_exists',lambda _:False)
+    observed={501:row['children'][0],502:dict(row['children'][1],lstart='reused')}
+    refused=rr.cleanup_children_after_owner_exit(runtime,'fixture',owner=owner,
+        probe=lambda pid:observed.get(pid),send=lambda *args:sent.append(args))
+    assert refused==[502] and sent==[(501,rr.signal.SIGKILL)]
+    with pytest.raises(RegistryError,match='vanished'):
+        rr.cleanup_children_after_owner_exit(runtime,'fixture',owner=owner,probe=lambda _:owner)
+
+
 def fixture(tmp_path):
     runtime=tmp_path/'launcher';identity={'pid':271,'pgid':271,'lstart':'fixed start token'}
     reserve(runtime,run_id='fixture',project_key='consumer',clone=tmp_path/'clone',exec_tree=tmp_path/'work',

@@ -79,10 +79,11 @@ def worker_turn(context,path,prompt,*,claude,model,budget,mcp,session=None):
     if mcp:args+=['--mcp-config',str(mcp),'--strict-mcp-config']
     if session:args+=['--resume',session]
     args.append(prompt)
-    env=dict(os.environ,ILK_WORKER_SESSION='1',ILK_ITER_RECORD_STAGE='',TMPDIR=bound['worker_tmp_dir'],
+    env=dict(os.environ,ILK_WORKER_SESSION='',ILK_ITER_RECORD_STAGE='',TMPDIR=bound['worker_tmp_dir'],
              CLAUDE_CODE_TMPDIR=bound['worker_tmp_dir'],CLAUDE_TMPDIR=bound['worker_tmp_dir'])
     cli_started=monotonic()
-    process=subprocess.Popen(['/usr/bin/sandbox-exec','-f',bound['sandbox_path'],*args],
+    from owned_command import wrap_command
+    process=subprocess.Popen(wrap_command(['/usr/bin/sandbox-exec','-f',bound['sandbox_path'],*args],context,worker=True),
         cwd=context['exec_tree'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=True)
     events=[];read_errors=[]
     def copy(stream,target,collect):
@@ -99,7 +100,6 @@ def worker_turn(context,path,prompt,*,claude,model,budget,mcp,session=None):
     def interrupted(sig,_):
         raise ContextError('worker iteration interrupted by signal '+str(sig))
     try:
-        register_child(Path(context['run_registry_dir']),context['run_id'],pid=process.pid,owner_pid=context['runner_owner_pid'])
         for sig in (signal.SIGTERM,signal.SIGINT):
             handlers[sig]=signal.signal(sig,interrupted)
         for thread in threads:thread.start()

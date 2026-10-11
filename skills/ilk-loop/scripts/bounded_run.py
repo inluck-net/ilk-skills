@@ -94,6 +94,12 @@ def _run_posix(
         env=env,
         start_new_session=True,  # own process group
     )
+    from iteration_context import read_context
+    context=read_context()
+    if context and context.get('worker_sandbox_adapter')=='macos-brokered-shell':
+        from owned_command import wrap_command
+        argv_or_cmd=wrap_command(['/bin/sh','-c',argv_or_cmd] if shell else argv_or_cmd,context)
+        shell=False
     if shell:
         kwargs["shell"] = True
     else:

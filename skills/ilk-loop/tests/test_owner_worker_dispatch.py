@@ -82,7 +82,8 @@ cp=subprocess.run([sys.executable,str(Path(frozen['code_root'])/'skills/ilk-loop
     env=env,capture_output=True,text=True)
 assert cp.returncode==0,cp.stderr
 assert ctx.read_bytes()==original
-rows=scan(registry);assert len(rows[0]['children'])==5
+rows=scan(registry);assert len(rows[0]['children'])>=5
+assert all(child['pid']==child['pgid'] and child['lstart'] for child in rows[0]['children'])
 accepted=json.loads((ctx.parent/(ctx.stem+'-acceptance.json')).read_text())
 assert accepted['accepted'] and len(accepted['attempts'])==2
 assert not accepted['attempts'][0]['all_passed'] and accepted['attempts'][1]['all_passed']
@@ -102,7 +103,7 @@ result.write_text(json.dumps({'accepted':accepted['accepted'],'children':len(row
     cp=subprocess.run([sys.executable,'-c',script,str(request),str(ctx),str(inputs),str(registry),str(result),str(provider)],
                       env=env,capture_output=True,text=True,start_new_session=True,timeout=20)
     assert cp.returncode==0,cp.stderr
-    row=json.loads(result.read_text());assert row['accepted'] and row['children']==5
+    row=json.loads(result.read_text());assert row['accepted'] and row['children']>=5
     assert ctx.stat().st_mode & 0o222==0
     assert 'current_step: 1' in plan.read_text()
     assert '> ## Keep this diagnostic heading quoted' in plan.read_text()

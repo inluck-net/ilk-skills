@@ -76,27 +76,21 @@ class ShellBroker:
                    ILK_DATA_DIR=context['data_root'],TMPDIR=context['worker_tmp_dir'])
         if context.get('private_worker_home'):env['HOME']=context['private_worker_home']
         env.update(GIT_CONFIG_GLOBAL='/dev/null',GIT_CONFIG_NOSYSTEM='1')
+        command_args=['/usr/bin/sandbox-exec','-p',policy,'/bin/bash','-c',command]
+        if context.get('run_registry_dir'):
+            from owned_command import wrap_command
+            command_args=wrap_command(command_args,context,worker=True)
+            env['ILK_WORKER_SESSION']=''
         started=monotonic();timed_out=False
         with stdout_path.open('wb') as stdout,stderr_path.open('wb') as stderr:
             stdout_path.chmod(0o600);stderr_path.chmod(0o600)
             with self._guard:
                 if self._closed.is_set():return {'exit_code':124,'error':'broker closed'}
-                process=subprocess.Popen(['/usr/bin/sandbox-exec','-p',policy,'/bin/bash','-c',command],
+                process=subprocess.Popen(command_args,
                     cwd=context['exec_tree'],env=env,stdout=stdout,stderr=stderr,start_new_session=True)
                 self._active=process
-            # A separate shell session must remain discoverable even if the
-            # broker itself dies. Register it under the same verified runner.
-            if context.get('run_registry_dir'):
-                from run_registry import register_child
-                try:
-                    register_child(Path(context['run_registry_dir']),context['run_id'],
-                                   pid=process.pid,owner_pid=context['runner_owner_pid'])
-                except Exception:
-                    try:os.killpg(process.pid,signal.SIGKILL)
-                    except ProcessLookupError:pass
-                    process.wait()
-                    with self._guard:self._active=None
-                    raise
+            # The pre-exec wrapper registers even a very fast shell before
+            # its command starts; no parent probe races a finished leader.
             self.command_started.set()
             try:code=process.wait(timeout=max(self.deadline-monotonic(),0))
             except subprocess.TimeoutExpired:
@@ -180,7 +174,11 @@ def main():
         if stopped.is_set() or not owned():return 1
         with ShellBroker(context,deadline=args.deadline,path=context['shell_broker_path'],
                          nonce=context['shell_broker_nonce'],on_closed=wake) as broker:
-            queue.control(None,1,max(args.deadline-monotonic(),0))
+            events=queue.control(None,1,max(args.deadline-monotonic(),0))
+        owner_exited=any(event.filter==select.KQ_FILTER_PROC and event.ident==owner['pid'] for event in events)
+        from run_registry import cleanup_children
+        refused=cleanup_children(Path(context['run_registry_dir']),context['run_id'],owner=owner,owner_exited=owner_exited)
+        if refused:raise ContextError('broker-close child identity unavailable: '+str(refused))
     finally:
         queue.close();os.close(wake_read);os.close(wake_write)
         if context.get('scratch_disposable'):

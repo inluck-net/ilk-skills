@@ -348,4 +348,35 @@ def register_child(runtime,run_id,*,pid,owner_pid,probe=process_identity):
     return child
 
 
+def cleanup_children(runtime,run_id,*,owner,owner_exited=False,probe=process_identity,send=os.killpg):
+    """An owned observer closes only freshly verified sibling groups.
+
+    No parent signal, own-group signal, argv search or PID reuse inference.
+    Unknown groups remain recorded and block a new launch.
+    """
+    _owner();path=_path(runtime,run_id)
+    with _lock(path.parent/'.registry.lock'):
+        row=read(path)
+        if {key:row[key] for key in ('pid','pgid','lstart')}!=owner:
+            raise RegistryError('owner-exit identity differs from registered run')
+        observed_owner=probe(owner['pid'])
+        if (owner_exited and observed_owner is not None) or (not owner_exited and observed_owner!=owner):
+            raise RegistryError('child cleanup requires live exact owner or verified vanished owner')
+        children=list(row.get('children',[]))
+    refused=[]
+    for child in children:
+        if child['pgid']==os.getpgrp():continue # the observer exits itself
+        observed=probe(child['pid'])
+        if observed=={key:child[key] for key in ('pid','pgid','lstart')}:
+            try:send(child['pgid'],signal.SIGKILL)
+            except ProcessLookupError:pass
+        elif observed is not None or group_exists(child['pgid']):
+            refused.append(child['pid'])
+    return refused
+
+
+def cleanup_children_after_owner_exit(runtime,run_id,*,owner,probe=process_identity,send=os.killpg):
+    return cleanup_children(runtime,run_id,owner=owner,owner_exited=True,probe=probe,send=send)
+
+
 if __name__=='__main__':raise SystemExit(main())
