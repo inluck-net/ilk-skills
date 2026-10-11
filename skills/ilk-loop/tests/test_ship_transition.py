@@ -68,6 +68,24 @@ def _make_repo(tmp_path: Path) -> Path:
     return repo
 
 
+def test_unmerged_marker_does_not_complete_current_tree(tmp_path):
+    repo=_make_repo(tmp_path);base=_git(repo,'rev-parse','HEAD')
+    _git(repo,'checkout','-qb','unmerged')
+    _git(repo,'commit','--allow-empty','-qm','fixture [plan:branch-only#ship]')
+    assert _mod().find_marker_commit(repo,'branch-only') is not None
+    _git(repo,'checkout','-q','--detach',base)
+    assert _mod().find_marker_commit(repo,'branch-only') is None
+
+
+def test_duplicate_ship_identity_refuses_first_match(tmp_path,monkeypatch):
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    plans=tmp_path/'plans';plans.mkdir()
+    for name in ('first.md','second.md'):
+        (plans/name).write_text('---\nplan: duplicate\nstatus: pending\n---\n')
+    with pytest.raises(_mod().ShipTransitionError,match='ambiguous'):
+        _mod().find_subplan(plans,'duplicate')
+
+
 SUBPLAN_TEMPLATE = """---
 plan: {slug}
 status: {status}

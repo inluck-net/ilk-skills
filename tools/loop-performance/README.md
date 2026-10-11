@@ -15,6 +15,11 @@ path matches are indicators, not an estimate of waste. Thinking uses completed
 renderer blocks, excluding progress lines. Compaction duration comes from CLI
 metadata. API/parallel/thinking clocks overlap: never subtract them to invent
 "tool time" or sum them into elapsed. Interrupted results remain incomplete.
+Parser v4 removes the known broker envelope from command/path indicators so
+its context and toolkit paths do not count every Bash call as bootstrap.
+First-edit observation uses native Edit/Write/MultiEdit calls only; Bash-only
+editing leaves that observation false and its timing unknown. Accepted driver
+diffs establish that code changed; shell syntax is not inferred as edit proof.
 
 The reporter emits counts/identities, not raw tool commands, code or credentials.
 A broad command-pattern match is an observation, not proof that tests executed

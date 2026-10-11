@@ -79,3 +79,21 @@ def test_bootstrap_retries_and_children_have_explicit_denominators(tmp_path):
     assert r['child_assistant_events']==1
     assert r['explicit_api_retry_delay_seconds']==1.74
     assert r['explicit_api_retry_events']==2
+
+
+def test_broker_paths_do_not_turn_every_shell_call_into_bootstrap(tmp_path):
+    import shlex
+    p=tmp_path/'iter.log.jsonl'
+    commands=['cat plans/selected.md','printf changed > code.py','pytest targeted.py']
+    rows=[]
+    for i,command in enumerate(commands):
+        wrapped=shlex.join(['/usr/bin/python3','/private/.ilk-data/inputs/code/worker_shell.py',
+            '--context','/private/.ilk-data/logs/ctx.json','--command',command])
+        rows.append({'type':'assistant','message':{'id':str(i),'content':[
+            {'type':'tool_use','id':str(i),'name':'Bash','input':{'command':wrapped}}]}})
+    p.write_text('\n'.join(json.dumps(row) for row in rows))
+    report=mod.report(p)
+    assert report['bootstrap_path_indicator_calls']==1
+    assert report['foreground_test_calls']==1
+    assert not report['first_edit_observed']
+    assert 'Bash edits are not inferred' in report['first_edit_observation_basis']

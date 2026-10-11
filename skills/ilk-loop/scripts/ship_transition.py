@@ -188,11 +188,10 @@ def _is_reverted(slug: str, marker_commit: str | None, plans_dir: Path) -> bool:
 def find_marker_commit(repo: Path, slug: str) -> str | None:
     """Return the abbreviated sha of *slug*'s ship marker commit, or None.
 
-    Searches ``--all`` over the full message (subject **and** body), matching
-    ``ship_audit.check_step_commits`` so the two readers cannot disagree about
-    whether a marker exists.
+    Searches current HEAD ancestry over the full message (subject and body).
+    An unmerged branch's marker cannot complete this execution tree's ship.
     """
-    out = _git(repo, "log", "--all", "--format=%H%x1f%s%n%b%x1e", check=False)
+    out = _git(repo, "log", "HEAD", "--format=%H%x1f%s%n%b%x1e", check=False)
     needle = marker_trailer(slug)
     for record in out.split("\x1e"):
         record = record.strip("\n")
@@ -236,13 +235,23 @@ def find_subplan(plans_dir: Path, slug: str) -> Path:
     Matches on the front-matter value, never on the filename: the filename
     carries a date prefix the trailer does not.
     """
-    for path in _subplan_files(plans_dir):
+    from iteration_context import read_context
+    context=read_context()
+    if context:
+        if Path(context['plans_dir']).resolve()!=Path(plans_dir).resolve():
+            raise ShipTransitionError('ship plans root contradicts frozen context')
+        paths=[Path(row['path']) for row in context.get('plans',{}).values()]
+    else:paths=_subplan_files(plans_dir)
+    matches=[]
+    for path in paths:
         try:
             _, fm = _read_subplan(path)
         except OSError:
             continue
         if fm.get("plan", "") == slug:
-            return path
+            matches.append(path)
+    if len(matches)==1:return matches[0]
+    if len(matches)>1:raise ShipTransitionError('ambiguous ship sub-plan identity: '+slug)
     raise ShipTransitionError(
         f"no sub-plan in {plans_dir} declares plan: {slug!r} "
         f"(candidates: {[p.name for p in _subplan_files(plans_dir)]})"

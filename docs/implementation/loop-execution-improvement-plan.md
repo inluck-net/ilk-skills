@@ -763,3 +763,19 @@ No completion/ship/proof markers are inferred from this human tracker.
   of that original transaction and earlier commit/receipt crash gaps remain
   open; do not activate until caller recovery is complete. Overall 44% is a
   judgment over delivered/installed/measured scope. Continue here by hand.
+- Cost parser v4 removes known broker envelope paths before classifying
+  command-content bootstrap/test indicators; native first-edit observation
+  explicitly does not infer Bash edits. 5 focused reporter checks passed in
+  0.02s. Re-read the successful actual-provider stream: 5 root turns, 7 tool
+  calls, 46.7s completed thinking, 85.584s CLI-reported duration; clocks overlap
+  and are not additive. Six inner commands still match bootstrap paths because
+  this fixture lives under `.ilk-data`; that is an indicator, not wasted time.
+  Native first-edit timing is unknown for this Bash-only path. Retained v3
+  report and wrote separate `cost-report-v4.json`; raw streams unchanged.
+- Ship transition now accepts markers only on HEAD ancestry; an unmerged
+  branch's marker cannot complete this tree. It resolves subplans within a
+  frozen registry when present and refuses ambiguous legacy identities rather
+  than taking the first match. 28 focused transition checks passed in 2.32s,
+  including off-branch marker and duplicate-slug regressions. Next: full Bash
+  caller check at committed receipt/report/ship checkpoint, then cross-launch
+  recovery and remaining caller/readers before activation.

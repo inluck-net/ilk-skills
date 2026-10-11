@@ -13,14 +13,31 @@ import argparse
 import json
 import math
 import re
+import shlex
 from datetime import datetime
 from pathlib import Path
 
-PARSER_VERSION = 3
+PARSER_VERSION = 4
 BOOTSTRAP = re.compile(r'\.claude[^/\s]*/|\.ilk-data|\.ilk/|plans/|MASTER-|loop_status|find ~')
 TEST = re.compile(r'\b(?:pytest|unittest|vitest|jest|playwright)\b|\bnpm\s+(?:run\s+)?test\b')
 THINK = re.compile(r'\[thinking\] \d+ chars in ([\d.]+)s')
 STAMP = re.compile(r'^\[(\d\d):(\d\d):(\d\d)\]')
+
+
+def observed_input(tool):
+    """Exclude broker infrastructure paths from command-content indicators.
+
+    Parse the known six-argument envelope only; never execute shell input.
+    Malformed/unknown wrappers retain the original observation unchanged.
+    """
+    payload=tool.get('input',{})
+    if tool.get('name')!='Bash':return payload
+    raw=payload.get('command','')
+    try:tokens=shlex.split(raw)
+    except (TypeError,ValueError):return payload
+    if len(tokens)==6 and Path(tokens[1]).name=='worker_shell.py' and tokens[2]=='--context' and tokens[4]=='--command':
+        return dict(payload,command=tokens[5])
+    return payload
 
 
 def report(path: Path) -> dict:
@@ -110,7 +127,7 @@ def report(path: Path) -> dict:
         complete=bool(results) and len(valid)==len(values) and len(results)>=root_initializations
         return sum(valid)/1000 if complete else None
     bootstrap_ids = {identity for identity, tool in tools.items()
-                     if BOOTSTRAP.search(json.dumps(tool.get('input', {})))}
+                     if BOOTSTRAP.search(json.dumps(observed_input(tool)))}
     bootstrap = len(bootstrap_ids)
     first_edit = next((identity for identity in root_tool_order
                        if tools[identity].get('name') in {'Edit', 'Write', 'MultiEdit'}), None)
@@ -119,7 +136,7 @@ def report(path: Path) -> dict:
     first_stamp = next((starts[x] for x in root_tool_order if starts.get(x) is not None), None)
     edit_stamp = starts.get(first_edit)
     tests = [t for t in tools.values() if t.get('name') == 'Bash' and
-             TEST.search(str(t.get('input', {}).get('command', ''))) and
+             TEST.search(str(observed_input(t).get('command', ''))) and
              not t.get('input', {}).get('run_in_background')]
     intervals = []
     unmatched = 0
@@ -145,6 +162,7 @@ def report(path: Path) -> dict:
         'root_tool_calls': len(tools), 'bootstrap_path_indicator_calls': bootstrap,
         'bootstrap_indicator_before_first_edit': before_edit,
         'first_edit_observed': first_edit is not None,
+        'first_edit_observation_basis': 'native Edit/Write/MultiEdit tool use only; Bash edits are not inferred',
         'root_tool_span_before_first_edit_seconds': round(edit_stamp-first_stamp,3) if edit_stamp is not None and first_stamp is not None and edit_stamp >= first_stamp else None,
         'child_tool_calls': len(child_tools), 'child_assistant_events': child_messages,
         'explicit_api_retry_events': len(retry_delays),
@@ -169,6 +187,7 @@ def report(path: Path) -> dict:
                    'API, thinking and background-agent clocks overlap; do not sum or subtract.',
                    'Sequential resume invocations are summed within each clock; driver gate/commit time is recorded separately.',
                    'Bootstrap paths and foreground test calls are indicators, not wasted-time attribution.',
+                   'Known broker envelopes are removed from path/command indicators; Bash-only edits leave native first-edit observation false.',
                    'Test seconds are the union of timestamped foreground tool intervals, including shell overhead; missing intervals remain null.'],
     }
 
