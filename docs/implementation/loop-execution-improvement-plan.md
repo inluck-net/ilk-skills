@@ -2918,3 +2918,27 @@ Stable-source transaction/allowance/inventory selection: 5 passed in 26.40s
 checks passed. Commit/CAS recovery candidate is ready for projection/landing
 adapters, not installed or enabled in the loop. Original running controller,
 plans, pause and private dispatched inputs remain unchanged.
+
+### Progress projection and selfmod landing candidates
+
+- New progress_projection.project validates the exact advanced receipt, live
+  tree, CAS state and durable evidence. It keeps outcome=fail, actual raw
+  check failures, accepted=false, green_accepted=false and accepted_tree=null.
+  Additive progress fields and pre_existing_red list give the existing audit
+  a named unproven reason. Legacy blocking readers stay red; no silent green
+  conversion. New loop/close/consumer callers remain unwired.
+- Actual transaction/projection/green-forgery refusal and read-only hypothetical
+  shipped audit: 1 passed in 5.45s. Initial fixture omitted the frozen master
+  required by the audit (failed in 5.34s, then nonexistent key in 5.39s);
+  corrected to an actual master-scoped fixture instead of weakening refusal.
+- selfmod_landing.land_progress is a separate new candidate adapter using the
+  exact progress receipt and original deadline. Existing land remains strictly
+  green-only. Fresh shared-store base/branch, clean source, locks/ownership and
+  unchanged transaction remain required; worktree retained through close.
+  Progress landing reports accepted_tree=null/green_accepted=false.
+- Actual fresh-base unproven landing, repeat idempotence and strict-green
+  adapter refusal: 1 passed in 12.34s. Existing green selfmod recovery plus
+  dirty/moved/branch/historical-base/receipt/tree negatives: 7 passed in 3.85s.
+  No model/full suite or real toolkit/source worker mutation. Diff check
+  passed. Not installed. Next close/ledger/result/consumer adapters and only
+  then opt-in runtime integration. Windows/member/timeout entry still open.

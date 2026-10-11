@@ -18,6 +18,15 @@ def run_case(tmp_path,case,transaction='none'):
     git(root,'commit','--allow-empty','-qm','iteration fixture')
     context.update(base_commit=git(root,'rev-parse','HEAD'),base_tree=git(root,'rev-parse','HEAD^{tree}'))
     context['dispatch']['batch_base_sha']=batch
+    if transaction in {'projection','landing'}:
+        from iteration_context import plan_snapshot
+        master=plan.parent/'MASTER-progress.md'
+        master.write_text('---\nmaster_plan: progress\nstatus: active\n---\n[plan](./'+plan.name+')\n')
+        context['dispatch']['master_path']=str(master)
+        context['master_snapshot']=plan_snapshot(master)
+    if transaction=='landing':
+        clone=Path(context['clone']);git(clone,'merge','--ff-only',context['base_commit'])
+        context.update(clone_base_commit=git(clone,'rev-parse','HEAD'),clone_entry_dirty=False)
     (root/'counter.py').write_text('def f(value): return value + 2\n')
     request=tmp_path/'request.json';request.write_text(json.dumps(context))
     before=plan.read_bytes();head=git(root,'rev-parse','HEAD')
@@ -78,6 +87,35 @@ if sys.argv[3]!='none':
         assert original_git(Path(ctx['exec_tree']),'rev-list','--count',ctx['base_commit']+'..HEAD')=='1'
         again=tx.recover(ctx,deadline=ctx['iteration_deadline_monotonic'])
         assert again['head_commit']==row['head_commit'] and again['accepted'] is False
+        if mode=='landing':
+            from selfmod_landing import land,land_progress
+            from iteration_context import ContextError
+            try:land(ctx,row,deadline=ctx['iteration_deadline_monotonic'])
+            except ContextError:pass
+            else:raise AssertionError('legacy green landing accepted raw-red transaction')
+            landed=land_progress(ctx,row,deadline=ctx['iteration_deadline_monotonic'])
+            assert landed['outcome']=='merged' and landed['green_accepted'] is False and landed['accepted_tree'] is None,landed
+            assert original_git(Path(ctx['clone']),'rev-parse','HEAD')==row['head_commit']
+            assert land_progress(ctx,row,deadline=ctx['iteration_deadline_monotonic'])['head_after']==row['head_commit']
+            assert Path(ctx['exec_tree']).is_dir()
+        if mode=='projection':
+            from progress_projection import project
+            from iteration_context import ContextError
+            projected=project(ctx,row,deadline=ctx['iteration_deadline_monotonic'])
+            assert projected['outcome']=='fail' and projected['progress_accepted'] is True
+            assert projected['accepted'] is False and projected['green_accepted'] is False
+            assert projected['accepted_tree'] is None and projected['pre_existing_red']
+            assert any(check['outcome']=='fail' for check in projected['check_observations'])
+            try:project(ctx,dict(row,accepted=True),deadline=ctx['iteration_deadline_monotonic'])
+            except ContextError:pass
+            else:raise AssertionError('green projection accepted')
+            from ship_audit import audit_ship
+            # Read-only hypothetical shipped projection: never change the plan.
+            audit=audit_ship('shipped',Path(selected['subplan_path']).read_text(),
+                [{'command':projected['command']}],'false',selected['slug'],
+                cwd=Path(ctx['exec_tree']),ledger_records=[projected],subplan_path=Path(selected['subplan_path']),master_path=Path(selected['master_path']))
+            assert audit['proven'] is False and any('pre-existing red' in reason for reason in audit['reasons']),audit
+
 finish(registry,ctx['run_id'],identity=process_identity(os.getpid()))
 print(json.dumps(row))
 '''
@@ -100,6 +138,6 @@ def test_real_gate_and_bases_keep_distinct_decisions(tmp_path,case):
     run_case(tmp_path,case)
 
 
-@pytest.mark.parametrize('phase',['normal','commit-intent','committed','prepared','advanced','changed-output','hook-changed','hook-committed','forged-observation'])
+@pytest.mark.parametrize('phase',['normal','commit-intent','committed','prepared','advanced','changed-output','hook-changed','hook-committed','forged-observation','projection','landing'])
 def test_progress_transaction_recovers_without_green_or_duplicate_commit(tmp_path,phase):
     run_case(tmp_path,'pre-existing',phase)

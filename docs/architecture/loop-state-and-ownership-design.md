@@ -432,3 +432,12 @@ unavailable-runner cases are checked on Mac. This API leaves HEAD and the plan
 pointer unchanged. Candidate progress_transaction.accept/recover perform
 commit/CAS intent and exact recovery with accepted=false and
 progress_accepted=true; landing and terminal wiring remain required before enabling measured-red progress in running loops.
+
+New candidate progress_projection.project keeps raw failed gate outcomes and
+adds the existing audit's pre_existing_red list with exact-base receipts;
+legacy blocking readers remain red. selfmod_landing.land_progress validates
+the separate durable progress transaction and lands only a fresh shared-store
+base, reporting green_accepted=false/accepted_tree=null. Existing land stays
+green-only. Actual fixture landing, idempotence, strict-green refusal and
+existing green/changed-source callers are checked on Mac. These APIs still
+need close/ledger/result/consumer and opt-in runtime caller integration.

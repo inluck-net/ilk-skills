@@ -37,6 +37,17 @@ def _merge_lock(context,deadline):
 
 
 def land(context,accepted,*,deadline):
+    return _land(context,accepted,deadline=deadline,progress=False)
+
+
+def land_progress(context,accepted,*,deadline):
+    """Candidate adapter: land exact measured-red progress without green proof."""
+    from progress_transaction import _authority
+    with _authority(context,deadline):
+        return _land(context,accepted,deadline=driver_step._deadline.get(),progress=True)
+
+
+def _land(context,accepted,*,deadline,progress):
     token=driver_step._deadline.set(deadline)
     owner_token=driver_step._operation_context.set(context)
     try:
@@ -54,8 +65,14 @@ def land(context,accepted,*,deadline):
             raw=Path(git(tree,'rev-parse','--git-common-dir'))
             return raw.resolve() if raw.is_absolute() else (tree/raw).resolve()
         if common(clone)!=common(root):raise ContextError('selfmod trees do not share the frozen Git store')
-        if accepted.get('accepted') is not True:raise ContextError('selfmod landing needs an accepted transaction')
-        verified=driver_step.recover_acceptance(context,deadline=deadline)
+        if progress:
+            if accepted.get('progress_accepted') is not True or accepted.get('accepted') is not False or accepted.get('green_accepted') is not False:
+                raise ContextError('selfmod progress landing needs an exact unproven transaction')
+            from progress_transaction import recover
+            verified=recover(context,deadline=deadline)
+        else:
+            if accepted.get('accepted') is not True:raise ContextError('selfmod landing needs an accepted transaction')
+            verified=driver_step.recover_acceptance(context,deadline=deadline)
         if not verified or any(accepted.get(key)!=verified.get(key) for key in ('tree','head_commit','commits')):
             raise ContextError('selfmod landing differs from durable accepted receipt')
         target=driver_step._transaction_head(context,verified)
@@ -90,8 +107,10 @@ def land(context,accepted,*,deadline):
                 require_driver(context);marker.unlink()
                 from plan_state import _sync_parent
                 _sync_parent(marker)
-            return dict(outcome='merged',clone=str(clone),head_before=before,head_after=target,
-                        accepted_tree=accepted['tree'],execution_worktree_retained=True)
+            result=dict(outcome='merged',clone=str(clone),head_before=before,head_after=target,
+                        accepted_tree=accepted['tree'] if not progress else None,execution_worktree_retained=True)
+            if progress:result.update(progress_accepted=True,green_accepted=False,progress_tree=accepted['tree'])
+            return result
     finally:
         driver_step._operation_context.reset(owner_token);driver_step._deadline.reset(token)
 
