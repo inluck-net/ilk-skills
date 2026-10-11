@@ -26,7 +26,7 @@ drain/relaunch has archived native caller evidence; production activation is sti
 inputs now have production-entry candidate evidence. C3 preparation/acceptance/
 repair is wired but remains disabled by default. Actual-base provenance and
 Windows/member/dirty-entry adapters remain open. Continue here per Chad:
-“no more handover, until the whole thing done”. Overall estimate 52% is a
+“no more handover, until the whole thing done”. Overall estimate 55% is a
 judgment against delivered/installed/measured scope, not a checkbox count.
 
 Old run `20261011-102057` timed out by itself. Old run `20261011-130246`
@@ -158,6 +158,27 @@ output/context work; verify current state at the actual landing boundary.
 No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
+
+- Next toolkit preview locally installed at 2ed78097: preserved pause, freshly
+  verified undispatched controllers 1848/1853/1869 with sleep-only descendants,
+  scheduler unloaded at boundary, exact controller groups exited, main clean
+  fast-forward 876685b5 → 2ed78097, immutable current/previous flip, unchanged
+  scheduler restored. No active worker interrupted; no global owned profile
+  enabled or public release. Evidence toolkit-next-preview-20261011/.
+- Fresh installed gate-first consumer check PASSED in 6.051s: independently
+  reviewed/adopted prior worker repair as a separate fixture baseline; authored
+  focused gates green, one advance, shipped, integrity/journal positive,
+  registry idle and production source settings unchanged. Eight copied hooks;
+  forbidden-provider stub confirms zero calls, worker turns empty, zero code
+  commits. Evidence gate-first-adopted-consumer-step-policy-20261011/summary.json.
+  It is a pre-existing-behavior check, not recovery of the failed 226s native
+  run, and not a paired model speed result. Earlier fresh fixture misplaced
+  gate_first in frontmatter, so attempted a forbidden stub worker and FAILED
+  in 3.746s; corrected fresh fixture uses supported step YAML. Both retained.
+- Overall estimate now 55%, a judgment reflecting local toolkit/consumer
+  installation and actual installed zero-model verification, with substantial
+  remaining platform/lifecycle/input/measurement work. Whole plan stays active.
+
 
 - PowerShell observation now receives canonical execution root. Direct entry
   explicitly refuses code-only/native/disabled-thinking/drain profiles before

@@ -112,3 +112,17 @@ Authored gates remain mandatory. Original frozen contracts/evidence stay unchang
 No repeated paid comparison is justified against the known refusal. No speed or
 quality claim follows from this unmatched sample. The 240s/300s fixture bounds
 remain experimental judgment calls, not production defaults.
+
+## Fresh installed gate-first experiment
+
+Installed `2ed78097` checked a separately owner-reviewed pre-existing repair on
+new consumer baseline `03135304fb434f70847bdcae0714505e3b6e98d1`. A forbidden-provider
+stub confirmed **zero model calls**. The real Bash driver passed the focused
+consumer gate, advanced once, shipped, closed positive integrity/journal and
+released its registry in **6.051s**. Eight production hooks were copied; source
+settings stayed unchanged. This illustrates avoiding a new worker session when
+explicit step-YAML `gate_first` already proves the selected behavior. The
+original failed native run remains failed. New baseline has no changed files,
+so this does not test the earlier 87-file mention scope or establish paired
+model speed/quality. A prior fresh fixture put the option in frontmatter,
+attempted a forbidden worker and failed in 3.746s; it remains recorded separately.
