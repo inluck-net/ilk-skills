@@ -159,6 +159,13 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- Misplaced gate_first guard: negative reproduced silent frontmatter ignore
+  (1 failed in 0.20s); driver preparation now refuses with exact step-YAML
+  guidance before launching a worker. All 11 focused driver checks passed in
+  5.75s. This small preflight prevents the wasted session observed in the
+  first fresh gate-first fixture; supported step-YAML behavior is unchanged.
+
+
 - Next toolkit preview locally installed at 2ed78097: preserved pause, freshly
   verified undispatched controllers 1848/1853/1869 with sleep-only descendants,
   scheduler unloaded at boundary, exact controller groups exited, main clean

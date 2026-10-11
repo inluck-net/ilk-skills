@@ -91,6 +91,8 @@ def gate_contract(root,path,selected):
     from run_local_checks import (split_frontmatter,parse_local_checks_block,extract_step_local_checks,
         count_local_checks_items,count_step_local_checks_items,step_gate_fence)
     fm,body=split_frontmatter(path.read_text())
+    if 'gate_first' in parse_frontmatter(path.read_text()):
+        raise ContextError('gate_first belongs in selected step YAML, not frontmatter')
     sub=parse_local_checks_block(fm);step=extract_step_local_checks(body,selected['step'])
     if count_local_checks_items(fm)>len(sub) or count_step_local_checks_items(body,selected['step'])>len(step):
         raise ContextError('malformed declared gate')

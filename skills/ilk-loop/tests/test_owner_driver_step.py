@@ -162,3 +162,11 @@ def test_bounded_mention_policy_keeps_declared_gate_and_records_omissions(tmp_pa
     assert len(attempt['mention_inventory']['omitted_files'])==_MENTION_GATE_CAP+1
     assert len(attempt['check_observations'])==1 and attempt['check_observations'][0]['passed']
     assert 'current_step: 1' in plan.read_text()
+
+
+def test_misplaced_gate_first_refuses_before_worker_instead_of_ignoring_option(tmp_path):
+    from driver_step import gate_contract
+    context,root,plan=fixture(tmp_path)
+    plan.write_text(plan.read_text().replace('status: pending','status: pending\ngate_first: true'))
+    with pytest.raises(ContextError,match='step YAML'):
+        gate_contract(root,plan,context['dispatch'])
