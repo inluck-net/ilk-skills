@@ -246,3 +246,39 @@ def test_worker_cannot_change_recovery_history(tmp_path,monkeypatch,writer):
         elif writer=='notice':save_notice(context,'step',0,source)
         else:salvage_transcript(context,source,target)
     assert not target.exists()
+
+
+@pytest.mark.parametrize('writer',['retry','notice','salvage'])
+def test_driver_loss_after_fsync_cannot_replace_history(tmp_path,monkeypatch,writer):
+    import os,subprocess,sys,time,json
+    import recovery
+    from run_registry import reserve,bind_running,as_driver,RegistryError
+    monkeypatch.delenv('ILK_ITER_CONTEXT',raising=False)
+    owner=subprocess.Popen([sys.executable,'-u','-c',
+        'import threading;print("ready",flush=True);threading.Event().wait()'],
+        stdout=subprocess.PIPE,text=True,start_new_session=True)
+    try:
+        assert owner.stdout.readline().strip()=='ready'
+        registry=tmp_path/'registry'
+        reserve(registry,run_id='history-loss',project_key='fixture',clone=tmp_path,
+                exec_tree=tmp_path,toolkit_sha='fixture',expires_at=time.time()+30)
+        bind_running(registry,'history-loss',pid=owner.pid)
+        context=dict(run_registry_dir=str(registry),runner_owner_pid=owner.pid,
+                     run_id='history-loss',iteration=1,recovery_dir=str(tmp_path/'recovery'))
+        source=tmp_path/'source';source.write_text('{}\n')
+        target=(recovery.notice_path(context,'step',0) if writer=='notice' else tmp_path/'history')
+        target.parent.mkdir(parents=True,exist_ok=True);target.write_text('{"step:0":2}')
+        before=target.read_bytes();real=os.fsync
+        def lose_owner(descriptor):
+            real(descriptor)
+            if owner.poll() is None:owner.kill();owner.wait()
+        monkeypatch.setattr(recovery.os,'fsync',lose_owner)
+        with as_driver(context):
+            with pytest.raises(RegistryError,match='no longer live'):
+                if writer=='retry':recovery.update_retry_state(target,'step:0','count')
+                elif writer=='notice':recovery.save_notice(context,'step',0,source)
+                else:recovery.salvage_transcript(context,source,target)
+        assert target.read_bytes()==before
+        assert set(target.parent.iterdir()) <= {target,target.with_name(target.name+'.lock'),registry,source}
+    finally:
+        if owner.poll() is None:owner.kill();owner.wait()

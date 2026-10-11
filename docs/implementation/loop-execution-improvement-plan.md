@@ -153,6 +153,17 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- Opt-in native tools at `8c884dc1`: exact archived native + default entry
+  checks passed 2 in 12.73s; native provider stub edits code directly inside
+  the CLI OS profile and cannot forge plan/Git metadata. Separate existing
+  OS boundary negatives passed 8 in 0.77s (not the accidentally filtered
+  first invocation). Actual consumer provider check is running separately;
+  no native/default/profile speed conclusion yet.
+- Recovery history owner-exit faults: 3 passed in 0.14s. Actual registered
+  owner is killed after temporary-file fsync; counters, notices and salvage
+  cannot replace prior bytes and leave no temporary file. These establish
+  driver-death refusal at the write boundary, not just a mocked worker flag.
+
 - `3afefdf1` archived normal/interrupted-commit acceptance: 2 passed in
   9.18s. Fresh recovery history ownership does not change frozen transactions,
   duplicate commits or pointer semantics; installed runner unchanged.

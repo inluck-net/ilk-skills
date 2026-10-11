@@ -456,9 +456,12 @@ This strengthens the thinking/serial-investigation problem statement without
 promising savings from brief delivery alone.
 
 Actual MiMo PRO tools-disabled session resume retained its session and opaque
-prior context. Production-hook red recovery remains unverified; driver-only
-gates are not activated. Kernel admission and journaled CAS step advancement
-are candidate authority changes, not proof of completed ownership migration.
+prior context. Subsequent full-entry opt-in thinking-control red recovery passed
+with production hooks (55.559s wall, same session, two turns/gates, one commit/CAS).
+This is a synthetic recovery capability sample; representative consumer quality
+and speed remain unestablished. Driver-only gates are not activated on installed
+hosts. Kernel admission and journaled CAS step advancement are candidate authority
+changes, not proof of completed ownership migration.
 No full suite, deployment, measured consumer improvement or gate-outcome reuse
 is claimed. The watchdog restarted the old installed runner; it is waiting at
 the existing pause flag. Activation still requires fresh lifecycle checks.
@@ -473,9 +476,10 @@ keeps shell execution outside the CLI sandbox and accepts only shell requests;
 Actual composition fixtures deny plan writes, network and foreign signals.
 The observer admits exact wrapper quoting and binds context/mode explicitly.
 Per-context settings are additive; the prepared base home stays immutable.
-This exists in the owner candidate, not the installed runner. Lifecycle
-registry, background descendant cleanup, actual CLI enforcement and interrupted
-resume are still prerequisites for rollout. No batch speed claim follows from
+This exists in the owner candidate, not the installed runner. Subsequent
+POSIX registry, descendant cleanup, actual CLI enforcement and scoped interruption
+checks are recorded in the manual tracker. Remaining adapters and consumer
+validation are prerequisites for rollout. No batch speed claim follows from
 these fixtures. Test process bounds of ten seconds are judgment calls based
 on subsecond fixtures; a valid slow host would show the bound is wrong.
 
@@ -557,3 +561,41 @@ would justify a measured shorter interval. Neither creates a new run timeout.
 The 120s fixture deadline stays unchanged; valid slower completion falsifies
 that experiment bound, not the production run cap. Final verification remains
 opt-in; this work invokes no routine suite.
+
+
+### Prepared-pin activation and tool-profile experiments (owner candidate)
+
+`upgrade_drain.py:1` and the ordinary launcher now implement opt-in accepted-step
+request validation, a drained terminal record and prepared-pin relaunch after
+verified old PID/children/lock exit. Frozen master/contracts, gates, iteration
+limits and budget are retained; an invalid request refuses an old-pin restart.
+The owner must first install compatible consumer readers and attest that fact.
+That attestation is a trust boundary, not automated compatibility proof.
+Archived Mac launcher checks include live old PID, human hold and request tamper
+refusals, actual distinct new pin/run and original limits despite caller overrides.
+No installed host has activated this protocol; Windows activation remains unbuilt.
+
+The isolated consumer candidate treats both `upgrade-drained` and
+`upgrade_request_invalid` as unfinished work. Reap, claim release, reconciliation
+and GC preserve it through failed activation; unknown states retain their previous
+policy. Exact shared-key worktree inventory supports cleanup readers without a
+master argument. A malformed upgrade master identity retains a known worktree;
+a valid different absolute master still excludes it. There is no TTL release.
+
+Production-hook MiMo PRO consumer samples with explicit thinking disabled
+failed at 120s (two samples: 123.071s and 123.226s wall), and 240s (243.227s
+wall). The latter made 38 calls and preserved a partial edit as an unaccepted WIP
+commit, with zero authoritative gate/advance/ship. Root-role instructions reduced
+toolkit discovery but did not demonstrate speed. The 240s fixture bound was a
+judgment after measured discovery falsified 120s; neither changed production
+limits or renewed an existing run. Failed shell-wrapper quoting and attempts to
+place patch scripts under protected run logs are observed costs, not API stalls.
+
+New opt-in `worker_tools=native` in `run_inputs.py` / `worker_iteration.py`
+allows native Read/Grep/Glob/Edit/Write inside the existing Mac CLI OS boundary,
+with mandatory scope hooks. Bash still uses the exact broker entry. Tool profile
+is frozen in context and checked against prepared inputs before each turn.
+Shell-only remains default. Native tools do not gain plan/data/proof/Git/kernel
+write authority, commit or shipping authority. Native entry checks pass ordinary
+code edits while refusing plan/Git writes; actual consumer feasibility and
+controlled speed/quality comparison remain required before selecting a default.
