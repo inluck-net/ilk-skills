@@ -2861,3 +2861,24 @@ anchors at the time of inspection and can move as integration changes code.
   rezmac-preview-20261012/release-prepared-bb0e7d31.json.
 - Next: typed measured-red progress decision plus transaction/recovery/close
   adapters. Strict owned raw-green acceptance remains installed.
+
+### Typed measured-red assessment checked, transaction wiring next
+
+- New measured_progress.assess validates a persisted exact head attempt,
+  unchanged working tree/frozen input fingerprint, complete output artifacts,
+  all-attempt verdict inventory and actual exits. Flaky/incomplete/unknown
+  rows cannot qualify. Only complete FAILED selectors are sampled; fixture
+  ERROR output and non-pytest/compound runners do not widen into a suite.
+- Eligible observations require every exact failed node measured red at both
+  frozen bases, unchanged sample identities, actual assertion exit 1 and
+  validated durable output/receipt hashes. The entire check inventory shares
+  the existing caller attribution allowance. No strikes or old receipt lookup.
+- Actual registered head/base pytest cases: pre-existing red eligible, newly
+  introduced regression rejected, unavailable runner rejected; 3 passed in
+  5.28s. Every result keeps accepted=false/green_accepted=false and every
+  plan pointer and HEAD unchanged. Model: none; no full suite.
+- This is a decision API, not an enabled transaction. Next commit/CAS intent,
+  recovery, hook-changed-tree gate, landing, close/result/consumer adapters
+  must carry progress_accepted separately from accepted/green proof.
+  Installed bb0e7d31 remains strict raw-green; artifacts/assessment candidate
+  39242117 plus this increment are not installed.

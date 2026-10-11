@@ -421,3 +421,11 @@ subset; compound/custom runners explicitly refuse instead of widening a gate.
 The typed progress decision and transaction callers remain unbuilt. Selected
 real Mac checks and local/remote delivery states are in the implementation
 tracker; these APIs do not establish native Windows or general hermeticity.
+
+New candidate measured_progress.assess binds the persisted complete head gate
+to fresh exact-node observations at both bases, and keeps progress_eligible
+separate from accepted/green_accepted. Unknown, runner/fixture error, input
+change and flaky inventory refuse. The actual pre-existing/new-regression/
+unavailable-runner cases are checked on Mac. This API leaves HEAD and the plan
+pointer unchanged; commit/CAS intent, recovery, landing and terminal wiring
+remain required before enabling measured-red progress in running loops.
