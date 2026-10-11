@@ -1026,7 +1026,7 @@ def main() -> int:
 
     # Re-read masters for the queue banner (text mode only).
     masters = sorted(plans_dir.glob("MASTER-*.md"))
-    master, queue_view = pick_active_master(masters)
+    master, queue_view = pick_active_master(masters, pinned_master=plans_dir / data['master'])
 
     print(f"Plans dir: {plans_dir}")
     print(f"Master:    {master.name}")

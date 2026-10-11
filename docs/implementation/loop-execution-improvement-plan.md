@@ -2598,3 +2598,18 @@ anchors at the time of inspection and can move as integration changes code.
   other caller passes above remain evidence; no suite was repeated. Local
   fixture validation dispatches no model. Commit before archived production
   validation; installed local/remote standby stay d95493d6 until that check.
+
+
+### Audit production entry and consistent text status
+
+- Committed 12097352 archived two-plan and declared-worktree entries: 2
+  passed/13 deselected in 46.74s. Strict audit identity accepts actual driver
+  contexts, advances the same master and proves the declared execution root.
+- Text status reselected its banner master despite frozen JSON identity. A
+  CLI fixture with a competing ambient pin reproduced MASTER-other in the
+  banner (1 failed/2 deselected in 0.06s). First fixture expected exit 0 for
+  an intentionally empty master; corrected that expectation to existing 2
+  before measuring the wrong-banner assertion. No queue policy changed.
+- Text banner now uses the already-resolved master. Status/text/JSON callers:
+  17 passed in 0.49s. This display-only correction does not require repeating
+  the archived audit entries. No model or routine suite.

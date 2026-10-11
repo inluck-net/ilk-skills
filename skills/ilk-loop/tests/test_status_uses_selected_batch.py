@@ -4,6 +4,7 @@ import batch_gate
 import loop_status
 import ship_audit
 import json
+import sys
 
 
 def test_status_does_not_switch_to_higher_priority_queued_proof(tmp_path,monkeypatch):
@@ -33,7 +34,7 @@ def test_status_does_not_switch_to_higher_priority_queued_proof(tmp_path,monkeyp
     assert Path(calls[0]['master_path']).name=='MASTER-alpha.md'
 
 
-def test_status_uses_frozen_roots_and_master(tmp_path,monkeypatch):
+def test_status_uses_frozen_roots_and_master(tmp_path,monkeypatch,capsys):
     plans=tmp_path/'frozen-plans';plans.mkdir()
     master=plans/'MASTER-frozen.md'
     master.write_text('---\nmaster_plan: frozen\nstatus: active\n---\n')
@@ -49,6 +50,10 @@ def test_status_uses_frozen_roots_and_master(tmp_path,monkeypatch):
     status=loop_status.resolve_status(tmp_path,json_mode=True)
     assert status['master']==master.name
     assert status['plans_dir']==str(plans)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys,'argv',['loop_status.py'])
+    assert loop_status.main()==2  # Deliberately empty master has no subplans.
+    assert 'Master:    MASTER-frozen.md' in capsys.readouterr().out
 
 
 def test_invalid_frozen_context_does_not_fall_back(tmp_path,monkeypatch):
