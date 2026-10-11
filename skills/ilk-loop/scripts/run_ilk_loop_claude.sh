@@ -8060,6 +8060,9 @@ print(json.dumps(capture_execution(json.loads(Path(sys.argv[2]).read_text()))))
             --context "$ILK_ITER_CONTEXT" --accepted "$_driver_acceptance_file" 2>&1) || merge_rc=$?
           if [[ "$merge_rc" -eq 0 ]]; then
             echo "[selfmod] exact accepted landing: $_owned_landing_output"
+            # Terminal selection keeps the source project identity; current
+            # integrity/close reads retain the frozen execution mapping.
+            PROJECT_PATH="$SELFMOD_ORIGINAL_PROJECT_PATH"
           else
             echo "[selfmod] owned landing refused: $_owned_landing_output" >&2
           fi

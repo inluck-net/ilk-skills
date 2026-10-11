@@ -155,6 +155,14 @@ No completion/ship/proof markers are inferred from this human tracker.
 
 ## Work log
 
+- `b580f423` strict baseline-presence driver checks passed 8 in 4.87s.
+  Archived selfmod recovery passed with zero provider dispatches; normal entry
+  accepted and exactly landed but ended max-iterations because terminal status
+  still used the worktree project key (1 failed, 1 passed in 16.49s). Retained
+  fixture output independently confirmed landing and shipped plan. Normal
+  landing now restores source PROJECT_PATH for terminal selection while frozen
+  execution observations remain available through close. Caller recheck pending.
+
 - Fresh-base selfmod landing/recovery candidate: exact accepted receipt and
   transaction, clean frozen source branch/base, registered Git children and
   existing deadline; worktree retained through close. Dirty/moved/changed
