@@ -276,8 +276,16 @@ def main():
     try:
         result=run(context,args.context,args.prompt,claude=args.claude,model=args.model,budget=args.budget,
                    mcp=args.mcp,gate_timeout=args.gate_timeout)
+    except subprocess.TimeoutExpired:
+        # communicate's bound is the remaining original iteration deadline.
+        # Its exception includes the entire provider argv/prompt; retain a
+        # diagnostic without copying that content into the acceptance record.
+        result=dict(accepted=False,stop_reason='timeout',
+                    error='TimeoutExpired: worker reached the original iteration deadline')
     except Exception as exc:
-        result=dict(accepted=False,stop_reason='code_only_acceptance_failed',error=type(exc).__name__+': '+str(exc))
+        expired=monotonic()>=context['iteration_deadline_monotonic']
+        result=dict(accepted=False,stop_reason='timeout' if expired else 'code_only_acceptance_failed',
+                    error=type(exc).__name__+': '+str(exc))
     result.update(run_id=context['run_id'],iteration=context['iteration'])
     with destination.open('x') as stream:
         json.dump(result,stream);stream.write('\n');stream.flush();os.fsync(stream.fileno())
