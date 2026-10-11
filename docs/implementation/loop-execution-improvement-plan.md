@@ -389,3 +389,16 @@ No completion/ship/proof markers are inferred from this human tracker.
   the stronger shell boundary and consumer report-first validation before
   claiming/enabling enforcement. Scope/API checks: 22 passed in 0.42s, including
   actual hook CLI observe/deny and no target mutation. Hook is kernel-protected.
+
+- Run-input preparation candidate: `run_inputs.prepare` snapshots a committed
+  toolkit revision and copies configured hook scripts into a new private home,
+  rewriting settings away from active-home hook paths. Settings credentials
+  are provisioned only in a private 0600 copy; manifest stores names/hashes and
+  requested model, not credential values. Hook source changes during preparation
+  refuse; unknown shell wrappers/auth-helper provisioning refuse rather than
+  following live commands. Observation hook can be included in this private
+  home without altering production settings. Focused source-change/private-
+  credential/interpreter/wrapper checks: 3 passed in 0.19s.
+  Not full D2: launcher wiring, resolved CLI model/effort, MCP/plan-script
+  adapters, hook dependencies and host runtime provenance remain open. No
+  prepared home has yet been activated on a real batch.
