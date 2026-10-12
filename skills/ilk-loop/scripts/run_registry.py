@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from contextvars import ContextVar
@@ -93,11 +94,60 @@ def group_identity(pid):
 def _process_identity(pid,*,include_zombie):
     if os.name=='nt':raise RegistryError('Windows process identity adapter not built')
     if isinstance(pid,bool) or not isinstance(pid,int) or pid<=0:raise RegistryError('invalid process PID')
-    cp=subprocess.run(['ps','-p',str(pid),'-o','pid=','-o','pgid=','-o','stat=','-o','lstart='],capture_output=True,text=True,env=dict(os.environ,LC_ALL='C'))
+    try:
+        cp=subprocess.run(['ps','-p',str(pid),'-o','pid=','-o','pgid=','-o','stat=','-o','lstart='],capture_output=True,text=True,env=dict(os.environ,LC_ALL='C'))
+    except PermissionError:
+        # macOS refuses setuid /bin/ps under seatbelt, even with allow-default.
+        # Read the same identity through libproc; keep all sandbox restrictions.
+        if sys.platform!='darwin':raise
+        return _darwin_process_identity(pid,include_zombie=include_zombie)
     if cp.returncode:return None
     fields=cp.stdout.strip().split(None,3)
     if len(fields)!=4 or fields[2].startswith('X') or (not include_zombie and fields[2].startswith('Z')):return None
     return {'pid':int(fields[0]),'pgid':int(fields[1]),'lstart':fields[3]}
+
+
+def _darwin_process_identity(pid,*,include_zombie):
+    """Read PROC_PIDTBSDINFO; unknown/denied probes never mean a dead owner.
+
+    Layout/constants: macOS SDK sys/proc_info.h, struct proc_bsdinfo and
+    PROC_PIDTBSDINFO (3); proc states are defined in sys/proc.h.
+    Preserve ps's C-locale, local-time lstart format for frozen registries.
+    """
+    import ctypes
+    import errno
+    if pid>2**31-1:raise RegistryError('PID outside Darwin pid_t ABI')
+    class BSDInfo(ctypes.Structure):
+        _fields_=[(name,ctypes.c_uint32) for name in (
+            'pbi_flags','pbi_status','pbi_xstatus','pbi_pid','pbi_ppid',
+            'pbi_uid','pbi_gid','pbi_ruid','pbi_rgid','pbi_svuid','pbi_svgid','rfu_1')]+[
+            ('pbi_comm',ctypes.c_char*16),('pbi_name',ctypes.c_char*32)]+[
+            (name,ctypes.c_uint32) for name in
+            ('pbi_nfiles','pbi_pgid','pbi_pjobc','e_tdev','e_tpgid')]+[
+            ('pbi_nice',ctypes.c_int32),('pbi_start_tvsec',ctypes.c_uint64),
+            ('pbi_start_tvusec',ctypes.c_uint64)]
+    try:
+        query=ctypes.CDLL('/usr/lib/libproc.dylib',use_errno=True).proc_pidinfo
+        query.argtypes=[ctypes.c_int,ctypes.c_int,ctypes.c_uint64,ctypes.c_void_p,ctypes.c_int]
+        query.restype=ctypes.c_int
+        info=BSDInfo();ctypes.set_errno(0)
+        size=query(pid,3,0,ctypes.byref(info),ctypes.sizeof(info))
+    except (OSError,AttributeError) as exc:
+        raise RegistryError('native process identity probe unavailable') from exc
+    if size!=ctypes.sizeof(info):
+        if size==0 and ctypes.get_errno()==errno.ESRCH:return None
+        raise RegistryError('native process identity probe denied or incomplete')
+    if info.pbi_pid!=pid or info.pbi_pgid<=0 or info.pbi_start_tvsec<=0:
+        raise RegistryError('native process identity contradicts PID/start/group')
+    if info.pbi_status not in (1,2,3,4,5):
+        raise RegistryError('native process state unknown')
+    if info.pbi_status==5 and not include_zombie:return None
+    start=time.localtime(info.pbi_start_tvsec)
+    # Avoid the caller's locale: old ps probes explicitly used LC_ALL=C.
+    weekday=('Mon','Tue','Wed','Thu','Fri','Sat','Sun')[start.tm_wday]
+    month=('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec')[start.tm_mon-1]
+    lstart=f'{weekday} {month} {start.tm_mday:2d} {start.tm_hour:02d}:{start.tm_min:02d}:{start.tm_sec:02d} {start.tm_year}'
+    return {'pid':pid,'pgid':info.pbi_pgid,'lstart':lstart}
 
 
 def _path(runtime,run_id):
