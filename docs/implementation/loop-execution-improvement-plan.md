@@ -43,7 +43,7 @@ Rezmac gh-resolve8d079263→3987a299 activated while idle; doctor exit0, host-co
 ## Worker time/context diagnosis
 
 All measured runs actually use mimo-v2.6-pro. Old11b thinking1798.06s+reportedTTFT993.74s; old10c1779.56s+TTFT917.37s; code-only1917.74s+TTFT676.87s. Discovery-intent calls93/27/88 respectively. Code-only1230.25s explicitly reported thinking before first native edit1895s after launch. Synchronous discovery replies23.762s total. Tool/TTFT/thinking clocks have limits; async/network/text time remains unallocated. Raw models and classification are in worker-time-*.json.
-Old runs auto-compacted~167k. New11b processed211548input tokens without compaction; full1Mcapacity is still unmeasured. Three localMiMo homes nowdeclare1000000; six rezmac homes already did. Active pins unchanged. Judgment basis: documented model capacity and eliminated early threshold; latency/context errors/renewed early compaction falsify usefulness. Continue observing init/context/compaction events.
+Old runs auto-compacted~167k. New11b processed211548input tokens without compaction; CLI result now reports contextWindow1000000;238148 actual input tokens observed with no compaction. Backend handling a full1Minput remains unmeasured. Three localMiMo homes nowdeclare1000000; six rezmac homes already did. Active pins unchanged. Judgment basis: documented model capacity and eliminated early threshold; latency/context errors/renewed early compaction falsify usefulness. Continue observing init/context/compaction events.
 Original code-only trial085944 timed out3603s,0/2accepted,0driver gates. Extra scheduler replay100903 stopped/held, work preserved, never counted as code-only qualification. New trial not launched before D1.
 
 ## D3 priority order (owner judgment, no priority field on filed rows)
@@ -68,3 +68,9 @@ Default-path correctness first, then execution coverage, then bookkeeping. Reord
 2026-10-12 11:15:10c first accepted step verified; independent owner repairs tested/committed as above. Context declaration applied/verified across worker homes. Next:finish base-trap diagnosis and first11b acceptance, then D1shipment.
 
 2026-10-12 11:29:both first accepted steps confirmed;11b plan2driver-shipped.10c baseline traps reduced to2actual fixture reds; side refe555971f,25+9focused checks passed. Runtime next-iteration evidence queued, no frozen plan edits. Continue D1.
+
+2026-10-12 11:36:11b and10c dispatched their next iterations. CLI result confirms11b window1000000;10c old pin still200000. Measured integrity phases50.06s(ilk),65.65s(gh); hundreds of foreign shipped plans were parsed before scope rejection. Side optimization skips them before Python readers; failing startup-count regression reproduced,8focused checks passed+1existing skip22.92s. No live pin/gate/state edits.
+
+2026-10-12 11:46:next11b gate base traps verified.3529ee25 fixes optional registry/taxonomy;15no-installed-home checks green. Measured-green red rejection fixture:old control fails,new7checks pass21.27s. Next-iteration evidence queued; live plans unchanged. Continue D1.
+
+2026-10-12 11:49:remaining31existing gate-file selection closes on side tree:317passed,1existing xfail22.55s. Future feature tests remain absent, so not feature acceptance. D1workers progressing; continue.
