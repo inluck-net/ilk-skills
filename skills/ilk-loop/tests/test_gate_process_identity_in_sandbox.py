@@ -124,7 +124,7 @@ def test_nested_red_gates_keep_their_authority_and_scratch_in_gate_sandbox(tmp_p
         'test_red_gate_ends_the_run_as_a_ship_integrity_violation',
         'test_a_rejected_gate_clears_the_intent_for_its_own_slug')]
     # Existing project pytest bound is 60s; these three local stub fixtures
-    # normally finish in <20s. No production timeout is raised.
+    # measured 48s in this sandbox replay. No production timeout is raised.
     process = subprocess.Popen(
         ['/usr/bin/sandbox-exec', '-p', profile(context, temporary=scratch, shell=True),
          sys.executable, '-m', 'pytest', *nodes, '-q', '--timeout-method=signal'],
