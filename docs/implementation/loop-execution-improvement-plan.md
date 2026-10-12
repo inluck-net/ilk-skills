@@ -16,14 +16,14 @@ Next current-pointer flip is step 2's release. Leave worker homes, plan Markdown
 pause and LaunchAgent plists unchanged until their authorized readiness step.
 Code-only and final verification remain opt-in.
 
-Current next action: finish focused caller checks for the six defects, commit
-on the side ref, report step 1, then publish/install the direct release.
+Current next action: publish/install direct release v0.9.194 from the side ref.
+Step 1 reported complete; main and batch Markdown remain unchanged.
 Progress about 20% is a judgment over these five steps, not the old checklist.
 The former 76% was written-mechanism coverage, not default-path delivery.
 
 ## Five steps, in order
 
-- [ ] 1. Fix the six defects with failing-then-passing focused tests; side ref only.
+- [x] 1. Fix the six defects with failing-then-passing focused tests; side ref only.
 - [ ] 2. Publish next free v0.9.x directly, honest annotated tag; install/bounce/
   verify both hosts. Activate consumer 3987a299 on rezmac after peer check.
 - [ ] 3. Release gh-resolve 10c and re-plan ilk-skills 11b before lifting pause.
@@ -36,12 +36,12 @@ The former 76% was written-mechanism coverage, not default-path delivery.
 
 | Defect | Mechanism / policy | Regression evidence / status |
 |---|---|---|
-| Autoplan human actor/hold bypass | Dedicated autoplan actor; queue only its own stamped unheld draft. Human hold, parked/blocked/paused/completed, foreign run and worker refuse. | 3 failures in 0.06s before fix (including metadata); focused closure below. Candidate. |
-| Unlocked post-CAS rewrites | Parking status+progress note one journal replacement (33b45c86). Triage findings use shared guarded CAS (e5fbbc49/ae7873ce/33b45c86), now shared append_findings API. Autoplan metadata uses journaled byte CAS. | Parking 2 failures in 0.05s then 44 checks in 0.92s; triage append 3 failures then 33 checks in 0.19s; metadata regression included above. New API adoption candidate. |
-| First-match runner slug lookups | Frozen path preferred; legacy exact unique identity; both re-entry/integrity owner lookups refuse ambiguity. | Old-source actual call sites: 2 failures in 0.17s; helper negative included 6-failure run below; passing focused run below. Candidate. |
-| Non-tmux master lost | Quoted argv array carries exact master to launcher. | Real command extraction failed before fix; exact name containing spaces passes. Candidate. |
-| Process probe fails open | pgrep timeout/missing/error is unknown; normal rc=1 no-match is empty. Existing quiet waiter refuses unknown. | Timeout/missing/error failed before fix; probe+quiet fleet 12 passed in 0.09s. Candidate. |
-| Failed brief differs by runner | Both refuse dispatch. Bash logs error; existing PowerShell throw retained. | Actual Bash prompt formerly dispatched on failure; now refusal. Portable PowerShell/Bash target checks 5 passed in 0.83s. Candidate. |
+| Autoplan human actor/hold bypass | Dedicated autoplan actor; queue only its own stamped unheld draft. Human hold, parked/blocked/paused/completed, foreign run and worker refuse. | 3 failures in 0.06s before fix (including metadata); focused closure below. Committed in 4010e7e2. |
+| Unlocked post-CAS rewrites | Parking status+progress note one journal replacement (33b45c86). Triage findings use shared guarded CAS (e5fbbc49/ae7873ce/33b45c86), now shared append_findings API. Autoplan metadata uses journaled byte CAS. | Parking 2 failures in 0.05s then 44 checks in 0.92s; triage append 3 failures then 33 checks in 0.19s; metadata regression included above. API adoption committed in 4010e7e2. |
+| First-match runner slug lookups | Frozen path preferred; legacy exact unique identity; both re-entry/integrity owner lookups refuse ambiguity. | Old-source actual call sites: 2 failures in 0.17s; helper negative included 6-failure run below; passing focused run below. Committed in 4010e7e2. |
+| Non-tmux master lost | Quoted argv array carries exact master to launcher. | Real command extraction failed before fix; exact name containing spaces passes. Committed in 4010e7e2. |
+| Process probe fails open | pgrep timeout/missing/error is unknown; normal rc=1 no-match is empty. Existing quiet waiter refuses unknown. | Timeout/missing/error failed before fix; probe+quiet fleet 12 passed in 0.09s. Committed in 4010e7e2. |
+| Failed brief differs by runner | Both refuse dispatch. Bash logs error; existing PowerShell throw retained. | Actual Bash prompt formerly dispatched on failure; now refusal. Portable PowerShell/Bash target checks 5 passed in 0.83s. Committed in 4010e7e2. |
 
 Focused closure: 103 state/autoplan/triage/parking tests passed in 1.51s.
 Default-path negatives: 6 failed, 1 passed in 0.36s before fix.
