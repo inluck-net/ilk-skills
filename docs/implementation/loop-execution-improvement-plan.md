@@ -69,3 +69,9 @@ Additional side repairs ready: b34859e3 early integrity scope (8passed/1existing
 2026-10-12:first accepted steps confirmed for both projects;11b plan2shipped.10c step2timeout/rejection remains unaccepted,3856s worker/4382s driver;iteration4recovery started automatically.11b postmortemstep0 retry ongoing. No hand progress edits.
 
 2026-10-12 12:53:private child also inherited code-only mode, reproducing iteration_context_invalid. Same boundary isolation now clears mode for this legacy red-rejection fixture; parent stays restricted. Single regression passed7.10s. No production semantics changed; no full suite. Continue D1driver gates, then release/D2/D3.
+
+2026-10-12 13:33:11b run130438 ended local_checks_failed_no_commits. Model result was an upstream high-risk refusal, CLIis_error=false,747.046s/62turns; no accepted commit. Live private fixture had7passed29.38s. Scheduler relaunched133021automatically. Recovery limited to synthetic fixture inputs/sanitized assertions; ordinary assigned-worker commits remain authorized. No approval bypass and no plan-state edits.10c iteration4nowdriver gate; continue D1.
+
+2026-10-12 13:40:10c plan4step2driveraccepted, gatepass,2965s driverelapsed. Prior failed4382s retained. Ordinary worker fixture/golden repairs committed43f474ca, no owner main commit. Check driver ship transition, continue remaining6/7/8.11b scheduler run133021active;passing fixture WIP preserved, no accepted postmortem step yet. Continue D1.
+
+2026-10-12 14:03:11b postmortemstep0driveraccepted at13:59:10,915s driverelapsed. Working-tree/HEAD prerequisite blocker resolved by ordinary worker commit, not owner main edit. Previousfailed attempts/refusal retained in metrics. Iteration3step1dispatched automatically.10c plan4driver-shipped;remaining work continues. Continue D1; release after toolkit batch boundary, no full suite.
