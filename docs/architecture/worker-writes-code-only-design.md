@@ -331,9 +331,9 @@ sample checks passed; this is a new candidate, with archived caller/activation
 pending in the durable tracker. Full test eligibility, arbitrary runner adapters,
 process-table isolation and native Windows support remain separate accepted gaps.
 
-### Prepared managed Mac default — conditional on D2 qualification
+### Managed Mac default — D2 qualified on 2026-10-12
 
-This side-ref candidate is not activated by v0.9.196. The launcher selects
+v0.9.196 remains opt-in; the direct v0.9.197 release activates this qualified default. The launcher selects
 code-only/native by default for managed Mac `claude-worker` launches; the core
 runner independently selects code-only for an unset mode with frozen launch
 inputs on Mac. Explicit `ILK_WORKER_MODE=legacy` (or the historical explicit
@@ -354,3 +354,5 @@ Activation requires the real D2 qualification first, then a direct release
 on both hosts with exact scheduler-head/fresh-decision/deploy verification,
 and one live accepted step on that released default. Entry-point stub tests
 are technical controls, not qualification or live-batch proof.
+
+The real trial accepted driver commits `bb8b46c3` and `460c03d0` unattended. Failed attempt1 (3602s) plus attempt2 (4130s) yields 7732s/2 = 64.43 minutes per accepted step, versus the predeclared default9377s/2 =78.14 minutes. These are measured MiMo-v2.6-pro/default-thinking clocks, not numeric defaults or a causal speedup claim. Authored gate commands match; independent test counts and derived inventories differ. Native Grep/Glob replaces shell filesystem search; default also used one Skill bootstrap call. Those tool inventories are not identical. Both-host rollout and a genuine live accepted step remain pending at release preparation. Full1M capacity is unproven despite observed input+cache above200k.
