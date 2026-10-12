@@ -68,8 +68,8 @@ def _git(repo: Path, *args: str) -> None:
 def _build_world(root: Path) -> dict:
     """A project + isolated data home + a stub `claude`, ready for one iteration.
 
-    The sub-plan is already at ``status: shipped`` with a gate that always
-    fails, and the stub agent lands a commit carrying the
+    The gate is green at the declared batch base. The stub introduces a
+    tracked regression and self-ships, carrying the
     ``[plan:<slug>#step-0]`` trailer the gate discovery reads.  That is the
     field scenario reduced to its smallest form.
     """
@@ -79,6 +79,10 @@ def _build_world(root: Path) -> dict:
     (project / "README.md").write_text("x\n", encoding="utf-8")
     _git(project, "add", "-A")
     _git(project, "commit", "-q", "-m", "init")
+    base_sha = subprocess.run(
+        ["git", "-C", str(project), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
 
     data_home = root / ".ilk-data"
     sys.path.insert(0, str(RUNNER.parent))
@@ -93,6 +97,7 @@ def _build_world(root: Path) -> dict:
         "master_plan: 2026-08-29-execution\n"
         "batch_date: 2026-08-29\n"
         "status: active\n"
+        f"base_sha: {base_sha}\n"
         "supervised_only: false\n"
         "---\n\n"
         "# MASTER\n\n## Sub-plan registry\n\n"
@@ -105,12 +110,13 @@ def _build_world(root: Path) -> dict:
         "status: in-progress\n"
         "current_step: 0\n"
         "estimated_steps: 1\n"
+        "scope_paths: [regression.txt]\n"
         "---\n\n"
         f"# {SLUG}\n\n"
         "### Step 0 — do the thing\n\n"
         "```yaml\n"
         "local_checks:\n"
-        "  - command: \"python3 -c 'raise SystemExit(1)'\"\n"
+        "  - command: \"test ! -f regression.txt\"\n"
         "    timeout: 60\n"
         "```\n\n"
         "Body.\n",
@@ -134,8 +140,10 @@ def _build_world(root: Path) -> dict:
         "b = re.sub(r'^current_step: 0', 'current_step: 1', b, count=1, flags=re.M)\n"
         "p.write_text(b)\n"
         "EOP\n"
+        "echo introduced > regression.txt\n"
+        "git add regression.txt\n"
         "git -c user.email=t@example.com -c user.name=t commit -q "
-        f"--allow-empty -m 'feat: the work [plan:{SLUG}#step-0]'\n"
+        f"-m 'feat: the work [plan:{SLUG}#step-0]'\n"
         "echo 'stub agent done'\n",
         encoding="utf-8",
     )
@@ -409,3 +417,30 @@ def test_the_revert_also_moves_current_step_back(
         "the red step is never revalidated.\n"
         f"last 30 lines:\n{tail}"
     )
+
+
+def test_red_gate_fixture_has_a_measured_green_base(tmp_path):
+    """Rejection tests must introduce a red, not inherit an always-red command."""
+    from run_local_checks import extract_step_local_checks
+
+    world = _build_world(tmp_path)
+    plan = world["plans"] / f"{STEM}.md"
+    gate = extract_step_local_checks(plan.read_text(), 0)[0]["command"]
+    measured = subprocess.run(["bash", "-c", gate], cwd=world["project"])
+    assert measured.returncode == 0, "rejection fixture must start at a green gate"
+    master = (world["plans"] / "MASTER-2026-08-29-execution-plan.md").read_text()
+    base = subprocess.run(
+        ["git", "-C", str(world["project"]), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert f"base_sha: {base}" in master
+    env = {**os.environ, "HOME": str(tmp_path), "ILK_DATA_HOME": str(world["data_home"]),
+           "ILK_DATA_DIR": str(world["data_home"])}
+    subprocess.run([str(world["bin"] / "claude")], cwd=world["project"], env=env, check=True)
+    measured = subprocess.run(["bash", "-c", gate], cwd=world["project"])
+    assert measured.returncode == 1, "stub must introduce an actual red"
+    parent = subprocess.run(
+        ["git", "-C", str(world["project"]), "rev-parse", "HEAD^"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert parent == base
