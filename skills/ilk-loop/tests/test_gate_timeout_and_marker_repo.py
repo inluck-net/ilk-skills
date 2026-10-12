@@ -79,7 +79,12 @@ def test_declared_timeouts_are_summed_under_system_awk(tmp_path: Path):
         f"import json; print(json.dumps({{'resolved_plans_dir': '{plans_dir}'}}))"
     )
     # Symlink to the real run_local_checks.py (needed after step 1).
+    # iteration_clock must ride along: run_local_checks imports it at module
+    # scope BEFORE it appends its own real directory to sys.path, so a fake
+    # skill root that holds only run_local_checks.py fails the import and the
+    # bash function's `|| echo 0` turns that into a silent 0.
     (sk / "run_local_checks.py").symlink_to(_SCRIPTS / "run_local_checks.py")
+    (sk / "iteration_clock.py").symlink_to(_SCRIPTS / "iteration_clock.py")
 
     # Write a plan with two timeout declarations.
     plan = plans_dir / "x.md"
@@ -110,6 +115,7 @@ def test_timeoutless_gate_sums_to_zero(tmp_path: Path):
         f"import json; print(json.dumps({{'resolved_plans_dir': '{plans_dir}'}}))"
     )
     (sk / "run_local_checks.py").symlink_to(_SCRIPTS / "run_local_checks.py")
+    (sk / "iteration_clock.py").symlink_to(_SCRIPTS / "iteration_clock.py")
 
     plan = plans_dir / "x.md"
     plan.write_text(
