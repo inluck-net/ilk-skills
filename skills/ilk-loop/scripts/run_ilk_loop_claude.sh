@@ -5785,7 +5785,10 @@ print(fm.get('status', ''))
 # so an improvement batch can tune it (backlog 8db6cca8: a worker ran no test
 # until call 131 of 206 in a 90-min red iteration).  The invariants below stay
 # here, in the kernel, and are always appended: a template edit cannot drop
-# them.  A missing or empty template falls back to the built-in workflow text.
+# them.  The last invariant is the post-commit regeneration rule — the driver
+# rebuilds the canonical inventory from the committed tree and enforces it,
+# so a worker report never replaces driver authority (handoff §3).
+# A missing or empty template falls back to the built-in workflow text.
 build_worker_gate_notice() {
   local gate_cmds="$1" step="$2"
   local tpl="${_SKILL_ROOT}/ilk-loop/templates/worker-gate-notice.md"
@@ -5804,14 +5807,16 @@ ${indented}
 
 Rules:
 - Run every command above after your commit.
+- Before claiming green, run the canonical inventory entry (\`run_local_checks.py --print-gate-inventory --project <project> --slug <slug> --step <step>\`) and run every check it names — it is the driver's inventory, including synthesized mention partitions, not just the declared gate above.
 - While any is red: fix the code (or fix a test-infra fault), commit with 'test-infra:' in the body if fixing a test, then rerun.
 - End your turn ONLY when all are green.
 - If green is not reachable, end your turn with the failing ids written to the sub-plan's Findings section."
   fi
-  printf '%s\n%s\n%s\n%s\n' "$workflow" \
+  printf '%s\n%s\n%s\n%s\n%s\n' "$workflow" \
     "- Never weaken or delete an assertion. Never add a deselect or baseline_red entry." \
     "- When green: bump current_step from ${step} to the next step (exactly +1), commit that bump, and END YOUR TURN." \
-    "- Do not start the next step in this turn. Never write the sub-plan's status: field."
+    "- Do not start the next step in this turn. Never write the sub-plan's status: field." \
+    "- After your commit the driver regenerates its gate inventory from the committed tree and enforces it. Your report never replaces the driver's inventory."
 }
 
 # Compact observations from the already selected target; no new state owner.

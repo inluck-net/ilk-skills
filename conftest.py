@@ -461,6 +461,28 @@ def _describe_argv(args: object) -> str:
 
 
 @pytest.fixture(autouse=True)
+def _clear_ambient_iter_context(monkeypatch):
+    """Drop the runner's frozen-dispatch env before each test.
+
+    ``ILK_ITER_CONTEXT`` is set by ``run_ilk_loop_claude.sh`` for the worker
+    process and inherited by anything it spawns — including a pytest invoked
+    from inside an iteration.  Under it, ``find_subplan`` treats the frozen
+    registry as authoritative and refuses any project outside the root map
+    (``ContextError('gate project outside frozen root map')``).  That is a
+    correct production guard, and it is not the subject of a suite that
+    builds hermetic temporary projects.
+
+    Measured 2026-10-12 under a live dispatch: 14 of 14 of
+    ``test_a_gate_cannot_pass_empty.py`` pass with the variable cleared and
+    1 fails with it set.  Every other production-entry test in this repo
+    already does this per-test (``monkeypatch.delenv('ILK_ITER_CONTEXT',
+    raising=False)``); doing it once here keeps the suite hermetic even when
+    a file forgets.  A test that needs a frozen context sets it explicitly.
+    """
+    monkeypatch.delenv("ILK_ITER_CONTEXT", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _host_guard_active(request: pytest.FixtureRequest, tmp_path_factory):
     """Patch ``subprocess.Popen`` and prepend a deny-shim to PATH.
 

@@ -136,6 +136,12 @@ def _pin_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("ILK_DATA_DIR", str(data))
     if _REAL_USER_SITE and os.path.isdir(_REAL_USER_SITE):
         monkeypatch.setenv("PYTHONPATH", _REAL_USER_SITE)
+    # An ambient frozen dispatch is not this test's subject.  With
+    # ILK_ITER_CONTEXT set, find_subplan treats the registry as authoritative
+    # and refuses these temporary projects ("gate project outside frozen root
+    # map") — a correct production guard firing on the wrong subject.  Clear
+    # it the way every other production-entry test in this repo does.
+    monkeypatch.delenv("ILK_ITER_CONTEXT", raising=False)
 
 
 def _setup_repo(
@@ -680,3 +686,187 @@ class TestMentionPolicy:
         for chk in inventory:
             bases = [os.path.basename(f) for f in chk["files"]]
             assert len(bases) == len(set(bases)), chk
+
+
+# ── Step 1: the worker is given the canonical gate inventory ─────────────────
+#
+# Handoff §3 defect: the worker reported its DECLARED gate green and advanced
+# current_step; the driver then failed its SYNTHESIZED mention gate and
+# restored the pointer.  The worker never saw the checks the driver adds.
+# AC: worker and driver name the same checks for the same committed tree;
+# driver-only failures are observable to the worker without a wasted next
+# dispatch; driver enforcement stays authoritative.
+
+
+def _run_inventory_cli(repo: Path, slug: str = "alpha", step: int = 1) -> dict:
+    """Stub worker's production entry: the canonical gate inventory."""
+    old_stdout = sys.stdout
+    sys.stdout = StringIO()
+    try:
+        rlc.main([
+            "--print-gate-inventory",
+            "--project", str(repo), "--slug", slug, "--step", str(step),
+        ])
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+    return json.loads(output)
+
+
+def _identity(check: dict) -> tuple:
+    """The check identity both sides must name the same way."""
+    return (
+        check.get("command"),
+        check.get("scope"),
+        check.get("timeout"),
+        tuple(check.get("files") or ()),
+        check.get("partition_index"),
+        check.get("partition_count"),
+        check.get("tree_sha"),
+    )
+
+
+RUNNER = SCRIPTS_DIR / "run_ilk_loop_claude.sh"
+
+
+class TestWorkerAndDriverNameTheSameChecks:
+    """Step 1 — the canonical inventory is wired to worker and driver."""
+
+    def test_stub_worker_and_driver_name_the_same_checks(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Same committed tree ⇒ identical check identities, both sides.
+
+        The stub worker goes through the production inventory entry after the
+        step commit; the driver goes through the production gate entry.  A
+        divergence here is exactly the handoff §3 defect.
+        """
+        _pin_env(monkeypatch, tmp_path)
+        repo = _twin_repo(
+            tmp_path,
+            live_body="def test_live(): assert True\n",
+            pin_body="def test_pin(): assert True\n",
+        )
+
+        worker_view = _run_inventory_cli(repo)
+        driver_result = _run_cli(repo)
+
+        assert "error" not in worker_view, worker_view
+        assert worker_view["mention_check_count"] == 2, worker_view
+        assert worker_view["tree_sha"], worker_view
+
+        driver_checks = _mention_results(driver_result)
+        assert driver_result["mention_check_count"] == 2, driver_result
+
+        worker_ids = sorted(_identity(c) for c in worker_view["checks"])
+        driver_ids = sorted(_identity(c) for c in driver_checks)
+        assert worker_ids == driver_ids, (
+            f"worker and driver disagree on the same committed tree\n"
+            f"worker: {worker_ids}\ndriver: {driver_ids}"
+        )
+        assert all(t[6] == worker_view["tree_sha"] for t in worker_ids)
+
+    def test_a_worker_report_cannot_replace_driver_authority(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A stub worker claiming green does not make a red partition pass.
+
+        Authoritative driver rejection when EITHER partition fails — the
+        worker's report is not an input to the verdict.
+        """
+        for red_in in ("pin", "live"):
+            case_tmp = tmp_path / red_in
+            case_tmp.mkdir(parents=True, exist_ok=True)
+            _pin_env(monkeypatch, case_tmp)
+            live_body = (
+                "def test_live(): assert False, 'deliberate'\n"
+                if red_in == "live" else "def test_live(): assert True\n"
+            )
+            pin_body = (
+                "def test_pin(): assert False, 'deliberate'\n"
+                if red_in == "pin" else "def test_pin(): assert True\n"
+            )
+            repo = _twin_repo(case_tmp, live_body=live_body, pin_body=pin_body)
+
+            # Stub worker: sees the same inventory and reports green anyway.
+            worker_view = _run_inventory_cli(repo)
+            assert worker_view["mention_check_count"] == 2, worker_view
+            worker_report = {"claim": "green", "checks_ran": worker_view["checks"]}
+
+            driver_result = _run_cli(repo)
+            assert worker_report["claim"] == "green"  # the lie is on the record
+            assert driver_result["all_passed"] is False, (
+                f"driver accepted a worker green with the {red_in} partition red: "
+                f"{driver_result}"
+            )
+            assert driver_result["outcome"] == "fail", driver_result
+            mentions = _mention_results(driver_result)
+            failed = [c for c in mentions if c.get("passed") is False]
+            assert len(failed) == 1, mentions
+            expected_file = _PIN_TWIN if red_in == "pin" else _LIVE_TWIN
+            assert failed[0].get("files") == [expected_file], failed[0]
+
+    def test_post_commit_regeneration_names_the_new_tree(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A later commit regenerates the inventory from the new committed tree.
+
+        The post-commit regeneration rule: the driver rebuilds from what is
+        committed, so a worker report tied to an older tree cannot describe
+        what will ship.
+        """
+        _pin_env(monkeypatch, tmp_path)
+        repo = _twin_repo(
+            tmp_path,
+            live_body="def test_live(): assert True\n",
+            pin_body="def test_pin(): assert True\n",
+        )
+        before = _run_inventory_cli(repo)
+        assert before["checks"], before
+
+        (repo / _SRC).write_text("def add(a, b): return a + b + 1\n", encoding="utf-8")
+        _git(repo, "add", _SRC)
+        _git(repo, "commit", "-m", "feat(x): regenerate [plan:alpha#step-1]")
+
+        after = _run_inventory_cli(repo)
+        assert after["tree_sha"] != before["tree_sha"], (
+            "the inventory did not follow the committed tree"
+        )
+        assert all(c["tree_sha"] == after["tree_sha"] for c in after["checks"])
+        # The driver's own entry sees the same regenerated identity.
+        driver_checks = _mention_results(_run_cli(repo))
+        assert sorted(_identity(c) for c in after["checks"]) == sorted(
+            _identity(c) for c in driver_checks
+        )
+
+    def test_the_worker_notice_names_the_entry_and_the_regeneration_rule(
+        self, tmp_path: Path,
+    ) -> None:
+        """Worker instructions carry the inventory entry and the regeneration rule."""
+        tpl_dir = tmp_path / "skills" / "ilk-loop" / "templates"
+        tpl_dir.mkdir(parents=True)
+        (tpl_dir / "worker-gate-notice.md").write_text(
+            Path(SCRIPTS_DIR.parent / "templates" / "worker-gate-notice.md").read_text(
+                encoding="utf-8"
+            ),
+            encoding="utf-8",
+        )
+        script = (
+            f"export ILK_DOTSOURCE_ONLY=1; source '{RUNNER}'; "
+            f"_SKILL_ROOT='{tmp_path / 'skills'}'; "
+            f"build_worker_gate_notice \"$1\" 1"
+        )
+        r = subprocess.run(
+            ["bash", "-c", script, "x", "python3 -m pytest tests/test_a.py -q"],
+            capture_output=True, text=True, timeout=60,
+            env={"ILK_DOTSOURCE_ONLY": "1", "HOME": str(tmp_path),
+                 "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"},
+        )
+        assert r.returncode == 0, r.stderr
+        out = r.stdout
+        assert "--print-gate-inventory" in out, out
+        assert (
+            "the driver regenerates its gate inventory from the committed tree "
+            "and enforces it"
+        ) in out, out
+        assert "never replaces the driver's inventory" in out, out

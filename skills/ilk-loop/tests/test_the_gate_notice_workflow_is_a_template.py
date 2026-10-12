@@ -7,8 +7,13 @@ build_worker_gate_notice now reads the workflow part from
 templates/worker-gate-notice.md (not kernel) and always appends the invariants
 itself, so a template edit can tune the workflow but never drop a safety rule.
 
-AC-1: the shipped template renders the same lines as the old inline notice.
-AC-2: a template that drops every rule still yields all three invariants.
+AC-1: the shipped template renders the same lines as the pinned notice
+      (OLD_NOTICE).  That pin is additive: step 1 of
+      workers-and-drivers-run-the-same-gates extended the workflow with the
+      canonical-inventory rule and the kernel with the post-commit
+      regeneration rule, so OLD_NOTICE/INVARIANTS grow with them rather than
+      freezing a pre-defect notice forever.
+AC-2: a template that drops every rule still yields all four invariants.
 AC-3: a missing template falls back to the built-in workflow, plus invariants.
 """
 from __future__ import annotations
@@ -25,6 +30,7 @@ INVARIANTS = [
     "- Never weaken or delete an assertion. Never add a deselect or baseline_red entry.",
     "- When green: bump current_step from 2 to the next step (exactly +1), commit that bump, and END YOUR TURN.",
     "- Do not start the next step in this turn. Never write the sub-plan's status: field.",
+    "- After your commit the driver regenerates its gate inventory from the committed tree and enforces it. Your report never replaces the driver's inventory.",
 ]
 
 OLD_NOTICE = """AFTER your step commit, run the declared gate and iterate until green:
@@ -33,12 +39,14 @@ OLD_NOTICE = """AFTER your step commit, run the declared gate and iterate until 
 
 Rules:
 - Run every command above after your commit.
+- Before claiming green, run the canonical inventory entry (`run_local_checks.py --print-gate-inventory --project <project> --slug <slug> --step <step>`) and run every check it names — it is the driver's inventory, including synthesized mention partitions, not just the declared gate above.
 - While any is red: fix the code (or fix a test-infra fault), commit with 'test-infra:' in the body if fixing a test, then rerun.
 - End your turn ONLY when all are green.
 - Never weaken or delete an assertion. Never add a deselect or baseline_red entry.
 - If green is not reachable, end your turn with the failing ids written to the sub-plan's Findings section.
 - When green: bump current_step from 2 to the next step (exactly +1), commit that bump, and END YOUR TURN.
-- Do not start the next step in this turn. Never write the sub-plan's status: field."""
+- Do not start the next step in this turn. Never write the sub-plan's status: field.
+- After your commit the driver regenerates its gate inventory from the committed tree and enforces it. Your report never replaces the driver's inventory."""
 
 
 def _notice(tmp_path: Path, template: str | None) -> str:
