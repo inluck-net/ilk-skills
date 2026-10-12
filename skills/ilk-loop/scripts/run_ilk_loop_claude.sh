@@ -2920,7 +2920,7 @@ raise SystemExit(4 if step_gate_fence(body, n).declares_local_checks else 3)
 
   local green=0 results_file="" tf=""
   if [[ "$decl_rc" -eq 0 ]]; then
-    tf=$(mktemp); results_file=$(mktemp)
+    tf=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX"); results_file=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX")
     echo "$slug $last_step" > "$tf"
     invoke_local_checks "$(selfmod_effective_repo "$PROJECT_PATH")" "$tf" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$results_file" "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
     gate_first_results_are_green "$results_file" 2>/dev/null && green=1
@@ -3091,7 +3091,7 @@ attempt_gate_first_fast_path() {
       local reason="${stale_out:-record stale}"
       echo "[gate-first] $slug: $reason — re-running step 0 before step $step"
       local tf0
-      tf0=$(mktemp)
+      tf0=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX")
       printf '%s %s\n' "$slug" 0 > "$tf0"
       invoke_local_checks "$(selfmod_effective_repo "$PROJECT_PATH")" "$tf0" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$results_file" "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
       rm -f "$tf0"
@@ -3101,7 +3101,7 @@ attempt_gate_first_fast_path() {
   fi
 
   local tf
-  tf=$(mktemp)
+  tf=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX")
   printf '%s %s\n' "$slug" "$step" > "$tf"
   invoke_local_checks "$(selfmod_effective_repo "$PROJECT_PATH")" "$tf" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$results_file" "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
   rm -f "$tf"
@@ -3472,8 +3472,8 @@ invoke_local_checks() {
     fi
 
     local tmp_out tmp_err
-    tmp_out=$(mktemp)
-    tmp_err=$(mktemp)
+    tmp_out=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX")
+    tmp_err=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX")
 
     local check_exit=0
     # Capture stdout and stderr separately: run_local_checks.py may print
@@ -4932,7 +4932,13 @@ for k, v in sorted(d.get("env", {}).items()):
   # Record the PGID so the signal trap and amendment watcher can TERM
   # the whole group.  For a multi-process pipeline (A | B | C &),
   # $! is the PID of C but the PGID is the PID of A — resolve it.
-  _ILK_AGENT_PGID=$(ps -o pgid= -p "$_pipeline_pid" 2>/dev/null | tr -d ' ') || _ILK_AGENT_PGID="$_pipeline_pid"
+  _ILK_AGENT_PGID=$(ps -o pgid= -p "$_pipeline_pid" 2>/dev/null | tr -d ' ') || _ILK_AGENT_PGID=""
+  # macOS seatbelt cannot execute setuid /bin/ps. Query the exact owned
+  # pipeline PID through the native getpgid syscall, not a process scan.
+  if [[ -z "$_ILK_AGENT_PGID" ]]; then
+    _ILK_AGENT_PGID=$(python3 -c 'import os,sys; print(os.getpgid(int(sys.argv[1])))' "$_pipeline_pid" 2>/dev/null) || _ILK_AGENT_PGID=""
+  fi
+  [[ -n "$_ILK_AGENT_PGID" ]] || _ILK_AGENT_PGID="$_pipeline_pid"
   if [[ -n "${_RUN_REGISTRY_DIR:-}" ]]; then
     if ! python3 "${_ILK_SCRIPT_DIR}/run_registry.py" child --runtime "$_RUN_REGISTRY_DIR" --run-id "$RUN_ID" \
        --owner-pid "$$" --pid "$_ILK_AGENT_PGID" >/dev/null; then
@@ -5352,7 +5358,7 @@ preserve_dirty_tree_on_timeout() {
       local _use_snapshot=0
       local _changed_paths_file=""
       if [[ -n "$_snapshot" ]]; then
-        _changed_paths_file=$(mktemp 2>/dev/null) || _changed_paths_file=""
+        _changed_paths_file=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX" 2>/dev/null) || _changed_paths_file=""
         if [[ -n "$_changed_paths_file" ]]; then
           python3 "${_SKILL_ROOT}/ilk-loop/scripts/iteration_snapshot.py" changed-since \
             "$repo" --snapshot "$_snapshot" > "$_changed_paths_file" 2>/dev/null
@@ -5882,6 +5888,21 @@ PYBRIEF
 
 main() {
   parse_args "$@"
+
+  # Managed Mac launches have frozen inputs and the checked owned adapter.
+  # Direct unpinned callers retain their legacy compatibility path. An
+  # explicit empty/legacy selection is an opt-out, never an inherited default.
+  if [[ -z "${ILK_WORKER_MODE+x}" ]]; then
+    if [[ "$(uname -s)" == Darwin && -n "${ILK_RUN_INPUTS:-}" ]]; then
+      export ILK_WORKER_MODE=code-only
+    else
+      export ILK_WORKER_MODE=legacy
+    fi
+  fi
+  case "$ILK_WORKER_MODE" in
+    ""|legacy|code-only) ;;
+    *) echo "Unsupported worker mode: $ILK_WORKER_MODE" >&2; return 2 ;;
+  esac
 
   # --- Single-instance lock (per-project) ----------------------------------
   # Acquire an exclusive flock via ilk_run_lock.py and re-exec ourselves under
@@ -6903,7 +6924,7 @@ print(json.dumps(d))
     # to 0.
     local gate_first_results=""
     if [[ "$RUN_LOCAL_CHECKS" == true && "${ILK_WORKER_MODE:-}" != "code-only" ]]; then
-      gate_first_results=$(mktemp)
+      gate_first_results=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX")
       if attempt_gate_first_fast_path "$gate_first_results"; then
         GATE_FIRST_GREEN=1
         echo "[gate-first] green -- advancing without invoking the agent"
@@ -7187,7 +7208,7 @@ print(json.dumps(d))
     # Compute new commits per repo
     local total_new=0
     local new_commits_file
-    new_commits_file=$(mktemp)
+    new_commits_file=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX")
     local r
     for r in "${REPOS[@]}"; do
       local count
@@ -7323,7 +7344,7 @@ print(json.dumps(d))
         _GATE_RESOLUTION="pre_iter"
       else
       local all_targets_file
-      all_targets_file=$(mktemp)
+      all_targets_file=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX")
       for r in "${REPOS[@]}"; do
         local before after
         before=$(grep -F "$r=" "$heads_before_file" 2>/dev/null | sed 's/^[^=]*=//' | head -n1)
@@ -7388,13 +7409,13 @@ print(json.dumps(d))
 
       # Merge by slug: verify sub-plans keep all steps; others keep max step.
       local merged_targets_file
-      merged_targets_file=$(mktemp)
+      merged_targets_file=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX")
       if [[ -s "$all_targets_file" ]]; then
         # Keep every slug+step pair (deduplicated).  The old merge collapsed
         # non-verify slugs to their max step; since get_ledger_check_targets
         # now emits all intermediate steps, the merge must keep them all.
         sort -t' ' -k1,1 -k2,2n -u "$all_targets_file" > "$merged_targets_file"
-        local_checks_results=$(mktemp)
+        local_checks_results=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX")
         invoke_local_checks "$(selfmod_effective_repo "$PROJECT_PATH")" "$merged_targets_file" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$local_checks_results" "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
       fi
       rm -f "$all_targets_file" "$merged_targets_file"
@@ -7426,13 +7447,13 @@ print(json.dumps(d))
           # reds (pytest passed but exit non-zero) — their verdict cannot
           # change, so a re-run is pointless.
           local blocking_targets
-          blocking_targets=$(mktemp)
+          blocking_targets=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX")
           python3 "$blocking_checks_script" "$local_checks_results" --rerun-targets \
             > "$blocking_targets" 2>/dev/null
 
           # Log skipped deterministic/environment checks
           local _skipped_targets
-          _skipped_targets=$(mktemp)
+          _skipped_targets=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX")
           python3 "$blocking_checks_script" "$local_checks_results" --targets \
             > "$_skipped_targets" 2>/dev/null
           if [[ -s "$_skipped_targets" && -s "$blocking_targets" ]]; then
@@ -7445,7 +7466,7 @@ print(json.dumps(d))
           rm -f "$_skipped_targets"
 
           local rerun_results
-          rerun_results=$(mktemp)
+          rerun_results=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX")
           if [[ -s "$blocking_targets" ]]; then
             invoke_local_checks "$(selfmod_effective_repo "$PROJECT_PATH")" "$blocking_targets" "$LOCAL_CHECKS_SCRIPT" "$LOCAL_CHECKS_TIMEOUT_SEC" "$rerun_results" "${SELFMOD_ORIGINAL_PROJECT_PATH:-$PROJECT_PATH}"
           fi
@@ -7569,7 +7590,7 @@ if m:
                 if [[ -n "$_b_stdout_path" ]]; then
                   _stdout_file="$_b_stdout_path"
                 elif [[ -n "$_b_stdout_tail" ]]; then
-                  _stdout_file=$(mktemp)
+                  _stdout_file=$(mktemp "${TMPDIR:-/tmp}/ilk-scratch-XXXXXX")
                   _stdout_temp=1
                   printf '%s' "$_b_stdout_tail" > "$_stdout_file"
                 fi

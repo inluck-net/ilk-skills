@@ -614,7 +614,7 @@ args=["bash",sys.argv[9],"--project-path",sys.argv[10],"--max-iterations",sys.ar
 if sys.argv[16]=="true":args.append("--run-local-checks")
 if sys.argv[17]=="true":args.append("--run-batch-gate")
 mode,drain=sys.argv[18:20]
-if mode not in ("", "code-only") or drain not in ("", "0", "1"):
+if mode not in ("", "legacy", "code-only") or drain not in ("", "0", "1"):
     raise SystemExit("unsupported detached worker profile")
 if drain=="1" and mode!="code-only":
     raise SystemExit("upgrade drain requires owned code-only dispatch")
@@ -636,6 +636,26 @@ start_ilk_window() {
   local run_local_checks="${10:-false}"
   local master_override="${11:-}"
   local run_batch_gate="${12:-false}"
+
+  # Resolve the future owned default per launch, without leaking one
+  # project's profile into the next project in an --all invocation.
+  local selected_mode selected_tools
+  if [[ -n "${ILK_WORKER_MODE+x}" ]]; then
+    selected_mode="$ILK_WORKER_MODE"
+  elif [[ "$(uname -s)" == Darwin && "$engine" == claude-worker ]]; then
+    selected_mode=code-only
+  else
+    selected_mode=legacy
+  fi
+  if [[ -n "${ILK_WORKER_TOOLS+x}" ]]; then
+    selected_tools="$ILK_WORKER_TOOLS"
+  elif [[ "$selected_mode" == code-only ]]; then
+    selected_tools=native
+  else
+    selected_tools=shell
+  fi
+  local ILK_WORKER_MODE="$selected_mode" ILK_WORKER_TOOLS="$selected_tools"
+  export ILK_WORKER_MODE ILK_WORKER_TOOLS
 
   # Refuse unavailable engines before any launch state or detached process.
   local loop_script

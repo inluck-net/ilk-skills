@@ -8,7 +8,7 @@ import subprocess
 import pytest
 
 
-@pytest.mark.parametrize('mode,drain', [('code-only', '1'), ('code-only', ''), ('', '')])
+@pytest.mark.parametrize('mode,drain', [('code-only', '1'), ('code-only', ''), ('', ''), ('legacy', '')])
 def test_profile_survives_an_empty_terminal_environment(tmp_path, mode, drain):
     source = (Path(__file__).resolve().parents[1]/'scripts/launch.sh').read_text()
     helper = re.search(r'^pinned_runner_command\(\) \{.*?^\}', source, re.M | re.S)
