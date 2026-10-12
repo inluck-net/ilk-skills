@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import textwrap
@@ -145,6 +146,12 @@ current_step: 0
 
 
 def _run_lint_master(tmp_path: Path, master: str, subplans: dict[str, str]) -> subprocess.CompletedProcess:
+    # Pin the required-verifier scenario rather than inheriting the toolkit
+    # checkout's intentionally optional verifier configuration.
+    (tmp_path / ".git").mkdir(exist_ok=True)
+    (tmp_path / ".ilk-launch.json").write_text(json.dumps({
+        "ship": {"verification_subplan": "required"}
+    }))
     mp = tmp_path / "MASTER-2026-08-29-execution-plan.md"
     mp.write_text(textwrap.dedent(master), encoding="utf-8")
     paths = []
@@ -154,7 +161,7 @@ def _run_lint_master(tmp_path: Path, master: str, subplans: dict[str, str]) -> s
         paths.append(str(sp))
     return subprocess.run(
         [sys.executable, str(_PLAN_LINT), "--master", str(mp), *paths],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, timeout=30, cwd=tmp_path,
         encoding="utf-8", errors="replace",
     )
 

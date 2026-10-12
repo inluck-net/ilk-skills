@@ -78,8 +78,12 @@ def test_declared_timeouts_are_summed_under_system_awk(tmp_path: Path):
     (sk / "ilk_paths.py").write_text(
         f"import json; print(json.dumps({{'resolved_plans_dir': '{plans_dir}'}}))"
     )
-    # Symlink to the real run_local_checks.py (needed after step 1).
-    (sk / "run_local_checks.py").symlink_to(_SCRIPTS / "run_local_checks.py")
+    # Supply the complete production module root, including sibling imports.
+    # A lone symlink makes run_local_checks fail import and the shell returns 0.
+    for source in _SCRIPTS.glob("*.py"):
+        target = sk / source.name
+        if not target.exists():
+            target.symlink_to(source)
 
     # Write a plan with two timeout declarations.
     plan = plans_dir / "x.md"
@@ -109,7 +113,10 @@ def test_timeoutless_gate_sums_to_zero(tmp_path: Path):
     (sk / "ilk_paths.py").write_text(
         f"import json; print(json.dumps({{'resolved_plans_dir': '{plans_dir}'}}))"
     )
-    (sk / "run_local_checks.py").symlink_to(_SCRIPTS / "run_local_checks.py")
+    for source in _SCRIPTS.glob("*.py"):
+        target = sk / source.name
+        if not target.exists():
+            target.symlink_to(source)
 
     plan = plans_dir / "x.md"
     plan.write_text(

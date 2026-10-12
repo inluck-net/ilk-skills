@@ -177,7 +177,7 @@ class TestDriverAppliesPreludeToAgentEnv:
         """
         text = DRIVER.read_text(encoding="utf-8")
         invocations = [ln for ln in text.splitlines()
-                       if 'gtimeout "${timeout_sec}s" claude' in ln]
+                       if 'gtimeout "${timeout_sec}s" "${worker_command[@]}"' in ln]
         assert invocations, "no claude invocation arm found in the driver"
         evals = text.count('eval "$PATH_PRELUDE"')
         assert evals >= len(invocations), (

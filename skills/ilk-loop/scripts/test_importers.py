@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -84,6 +85,24 @@ def _module_name(changed_file: str) -> str | None:
     return Path(changed_file).stem
 
 
+# Judgment call: 4096 entries cover this toolkit's roughly 1500 tracked test
+# files with room for changed sources during a short-lived gate process.
+# Profiled memory growth or eviction-driven repeated parsing would falsify it.
+# Key by exact source bytes and filename, not mtime: same-size edits and
+# restored timestamps must never preserve stale scope results.
+@lru_cache(maxsize=4096)
+def _import_segments(src: str, filename: str) -> frozenset[str]:
+    tree = ast.parse(src, filename=filename)
+    segments: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                segments.update(alias.name.split("."))
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            segments.update(node.module.split("."))
+    return frozenset(segments)
+
+
 def importer_tests(project: Path, changed: list[str]) -> list[str]:
     """Return sorted repo-relative test files that import changed modules.
 
@@ -151,22 +170,13 @@ def importer_tests(project: Path, changed: list[str]) -> list[str]:
     # ``top == module_name`` where ``top`` is the first segment, but also
     # handles sub-package imports like ``from pkg.widget import X`` where
     # the changed file is ``pkg/widget.py`` (stem ``widget``).
-    test_imports: dict[str, set[str]] = {}
+    test_imports: dict[str, frozenset[str]] = {}
     for rel in test_files:
         try:
             src = (project / rel).read_text(encoding="utf-8", errors="replace")
-            tree = ast.parse(src, filename=rel)
+            test_imports[rel] = _import_segments(src, rel)
         except (SyntaxError, OSError):
             continue
-        segments: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    segments.update(alias.name.split("."))
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    segments.update(node.module.split("."))
-        test_imports[rel] = segments
 
     # Find tests that import any changed module (matching on any segment)
     result: set[str] = set()
