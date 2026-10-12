@@ -122,6 +122,18 @@ def _run_one_iteration(world: dict, root: Path) -> subprocess.CompletedProcess:
         "CLAUDE_CONFIG_DIR": str(root / ".claude"),
     }
     env.pop("ILK_DATA_DIR", None)
+    # This child is the driver of a private test project, not the real
+    # worker whose gate happens to execute pytest. Module-scoped fixtures
+    # can run before the function-scoped ambient hook cleanup fixture, so
+    # the live worker pins would otherwise be copied in and run_registry
+    # would refuse the dispatch before any gate executes — measured
+    # 2026-10-12 on this file (state=`interrupted`, no `failed_check`).
+    for name in (
+        "ILK_WORKER_SESSION", "ILK_SHIPPED_MARKER", "ILK_ITERATION_SUBPLAN",
+        "ILK_ITER_CONTEXT", "ILK_CODE_ROOT", "ILK_TOOLKIT_SOURCE_ROOT",
+        "ILK_RUN_INPUTS", "ILK_CLAUDE_BIN", "MCP_CONFIG_PATH", "ILK_RUN_LOCK_HELD",
+    ):
+        env.pop(name, None)
     (root / ".claude").mkdir(exist_ok=True)
     return subprocess.run(
         ["bash", str(RUNNER),
