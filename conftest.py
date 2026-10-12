@@ -932,6 +932,39 @@ def _no_inherited_runner_hook_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
+# The runner picks its agent binary from ILK_CLAUDE_BIN (falling back to
+# `claude` on PATH) and its MCP registry from MCP_CONFIG_PATH.  A suite run
+# as a driver gate inherits both from the live dispatch: a test that puts a
+# stub `claude` on PATH still launches the REAL CLI — with the test's own
+# prompt — and the stub's invocation counter stays empty.  That is the whole
+# subject of the runner tests, so an ambient value is not their subject.
+# A test that wants a particular binary sets it explicitly in its env.
+#
+# ILK_SKILL_HOME / ILK_CODE_ROOT / ILK_RUN_INPUTS are the same class of leak
+# and a worse one: they point at the dispatch's PINNED toolkit snapshot
+# (``<run>/inputs/code/skills``), so a test that sources the repo's driver
+# still runs that snapshot's ``run_local_checks.py``.  Every edit to the
+# working tree is then invisible — measured 2026-10-12, a fixed
+# ContextError message still printed its old text because the helper under
+# test was the frozen copy.  A test of this tree must resolve _SKILL_ROOT
+# from the driver it sourced, which is what happens with these unset.
+@pytest.fixture(autouse=True)
+def _no_inherited_runner_binary_env(monkeypatch):
+    monkeypatch.delenv("ILK_CLAUDE_BIN", raising=False)
+    monkeypatch.delenv("MCP_CONFIG_PATH", raising=False)
+    monkeypatch.delenv("ILK_SKILL_HOME", raising=False)
+    monkeypatch.delenv("ILK_CODE_ROOT", raising=False)
+    monkeypatch.delenv("ILK_TOOLKIT_SOURCE_ROOT", raising=False)
+    monkeypatch.delenv("ILK_RUN_INPUTS", raising=False)
+    # A live worker already holds this project's single-instance lock, so the
+    # driver exported ILK_RUN_LOCK_HELD=1 for the worker.  A test's own driver
+    # run inherits it and skips ilk_run_lock.py entirely — no run.lock is
+    # written, and run_registry.attach then refuses with
+    # ``direct runner lock identity absent`` before any gate-first behaviour
+    # runs.  A test that wants to hold the lock does so explicitly.
+    monkeypatch.delenv("ILK_RUN_LOCK_HELD", raising=False)
+
+
 # ───────────────────────────────────────────────────────────────────────────
 # Rmtree guard — prevents tests from deleting live data directories.
 #

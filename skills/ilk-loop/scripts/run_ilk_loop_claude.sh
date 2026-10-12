@@ -3522,8 +3522,28 @@ except: pass
     if [[ -s "$tmp_out" ]]; then
       gate_cmd=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/emit_jsonl_record.py" --label "$tmp_out" 2>/dev/null || true)
     fi
-    if [[ -n "$gate_cmd" ]]; then
-      echo "  [local_checks $tag] $slug step $step -> $outcome  cmd: $gate_cmd"
+    # An inconclusive/error verdict with no reason is indistinguishable from
+    # a gate that never ran.  The helper carries the reason in its JSON
+    # `error` key (a ContextError string, a missing sub-plan, ...); surface
+    # it on the same line so the outcome is auditable.
+    local gate_error=""
+    if [[ "$outcome" != "pass" && "$outcome" != "fail" && -s "$tmp_out" ]]; then
+      gate_error=$(python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(0)
+err = d.get("error")
+if err:
+    print(err)
+' "$tmp_out" 2>/dev/null || true)
+    fi
+    local detail=""
+    [[ -n "$gate_cmd" ]] && detail="  cmd: $gate_cmd"
+    [[ -n "$gate_error" ]] && detail="$detail  error: $gate_error"
+    if [[ -n "$detail" ]]; then
+      echo "  [local_checks $tag] $slug step $step -> $outcome$detail"
     else
       echo "  [local_checks $tag] $slug step $step -> $outcome"
     fi
@@ -8049,11 +8069,25 @@ append_revert_row(
     # Instead, stop once with local_checks_environment_fault and let the
     # watchdog park the project.
     # (sub-plan an-unrunnable-derived-check-stops-once, AC-2)
+    #
+    # local_checks_inconclusive is NOT in that skip.  It used to be, which
+    # made the whole enforcement block unreachable for exactly the verdict
+    # its own "Inconclusive revert" arm exists to serve: a sub-plan the
+    # worker shipped in this iteration must not stand on a non-verdict, so
+    # that arm reverts shipped -> in-progress.  Placing the arm inside a
+    # block that is skipped whenever the gate is inconclusive meant the
+    # revert could never fire — measured 2026-10-12 on
+    # test_gate_is_bounded_by_what_it_declares::test_inconclusive_reverts_shipped_to_in_progress:
+    # the stub self-shipped, the gate was killed by the driver cap
+    # ([local_checks INCONCLUSIVE]), and the sub-plan stayed shipped with no
+    # [ship-integrity] line at all.  The arm is already inconclusive-safe
+    # further down: it does the revert and then skips ship_integrity.py
+    # ("no red-based rollback"), so entering the block costs nothing red.
     local _si_stderr=""
     local _ship_integrity_passed=0 _progress_integrity_passed=0 _owned_landing_json="{}"
     local _integrity_started="" _integrity_ended="" _landing_started="" _landing_ended=""
     _integrity_started=$(python3 "${_ILK_SCRIPT_DIR}/iteration_clock.py") || _integrity_started=""
-    if [[ "$iter_stop_reason" == "local_checks_environment_fault" || "$iter_stop_reason" == "local_checks_inconclusive" ]]; then
+    if [[ "$iter_stop_reason" == "local_checks_environment_fault" ]]; then
       echo "  [ship-integrity] skipped — gate unmeasured; no red-based rollback" >&2
     else
     if [[ "$_driver_progress_accepted" -eq 1 ]]; then

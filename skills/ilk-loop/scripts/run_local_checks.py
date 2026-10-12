@@ -2488,8 +2488,24 @@ def main(argv: list[str]) -> int:
         try:
             run_cwd=root_for_plan(context,subplan);repo_error=None
             frozen=context['plans'][subplan.name]
-            if step is not None and int(frozen.get('step') or 0)!=step:
-                raise ContextError('gate step differs from frozen registry')
+            # Only a step the dispatch has not reached is out of bounds.
+            # Gating one would let a green result credit unreached work.
+            #
+            # A step AT OR BELOW the frozen one is a re-measure of work the
+            # dispatch already owns, and the driver needs exactly that: the
+            # stale-record fallback (run_ilk_loop_claude.sh "Stale-record
+            # step-0 fallback") re-runs step 0's gate before gating step N
+            # whenever the verify record's tree no longer matches HEAD.
+            # Requiring exact equality made that fallback return
+            # outcome=inconclusive for step 0 — the ContextError below —
+            # which failed gate_first_results_are_green and fell through to
+            # the agent, so the re-measure never happened and the stale
+            # record stayed stale.  Measured 2026-10-12 on
+            # test_a_stale_verify_goes_back_to_step_0::test_stale_record_reruns_step0_before_step1:
+            # step 0 -> inconclusive, step 1 -> pass, same helper, same
+            # repo-root, differing only in --step.
+            if step is not None and int(step) > int(frozen.get('step') or 0):
+                raise ContextError('gate step is beyond the frozen registry step')
             if args.repo_root is not None and args.repo_root.resolve()!=run_cwd:
                 raise ContextError('gate repo override differs from frozen root')
         except (ContextError,ValueError) as error:
