@@ -122,6 +122,15 @@ def _run_one_iteration(world: dict, root: Path) -> subprocess.CompletedProcess:
         "CLAUDE_CONFIG_DIR": str(root / ".claude"),
     }
     env.pop("ILK_DATA_DIR", None)
+    # This private driver is not the outer worker whose gate runs pytest.
+    # Module fixtures can precede ambient function-fixture cleanup. Retain
+    # the worker's restrictions in its parent, and clear only child pins.
+    for name in (
+        "ILK_WORKER_SESSION", "ILK_WORKER_MODE", "ILK_SHIPPED_MARKER", "ILK_ITERATION_SUBPLAN",
+        "ILK_ITER_CONTEXT", "ILK_CODE_ROOT", "ILK_TOOLKIT_SOURCE_ROOT",
+        "ILK_RUN_INPUTS", "ILK_CLAUDE_BIN", "MCP_CONFIG_PATH", "ILK_RUN_LOCK_HELD",
+    ):
+        env.pop(name, None)
     (root / ".claude").mkdir(exist_ok=True)
     return subprocess.run(
         ["bash", str(RUNNER),
@@ -248,3 +257,15 @@ def test_postmortem_says_gate_red_on_unchanged_tree() -> None:
     assert "unchanged tree" in facts.get("reason_detail", ""), (
         f"reason_detail should mention 'unchanged tree'; got {facts.get('reason_detail')!r}"
     )
+
+@_NEEDS_GTIMEOUT
+def test_private_unchanged_tree_driver_does_not_inherit_code_only_mode(tmp_path, monkeypatch):
+    monkeypatch.setenv("ILK_WORKER_MODE", "code-only")
+    world = _build_world(tmp_path)
+    result = _run_one_iteration(world, tmp_path)
+    sentinel_path = world["data_home"] / "projects" / world["key"] / "runtime/launcher/last-exit.json"
+    assert sentinel_path.exists(), result.stdout + result.stderr
+    sentinel = json.loads(sentinel_path.read_text())
+    assert sentinel["state"] == "local_checks_failed_no_commits", sentinel
+    assert sentinel.get("failed_check"), sentinel
+    assert os.environ["ILK_WORKER_MODE"] == "code-only"
