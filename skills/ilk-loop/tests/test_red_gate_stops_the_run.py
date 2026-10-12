@@ -163,6 +163,10 @@ def _run_one_iteration(world: dict, root: Path) -> subprocess.CompletedProcess:
         "CLAUDE_CONFIG_DIR": str(root / ".claude"),
     }
     env.pop("ILK_DATA_DIR", None)
+    # This child is the driver of a private test project, not the real
+    # worker whose gate happens to execute pytest. Module-scoped fixtures
+    # can run before the function-scoped ambient hook cleanup fixture.
+    env.pop("ILK_WORKER_SESSION", None)
     (root / ".claude").mkdir(exist_ok=True)
     return subprocess.run(
         ["bash", str(RUNNER),
@@ -172,6 +176,17 @@ def _run_one_iteration(world: dict, root: Path) -> subprocess.CompletedProcess:
          "--run-local-checks"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, env=env, cwd=str(root),
     )
+
+
+@_NEEDS_GTIMEOUT
+def test_nested_driver_fixture_does_not_inherit_worker_authority(tmp_path, monkeypatch):
+    monkeypatch.setenv("ILK_WORKER_SESSION", "outer-real-worker")
+    world = _build_world(tmp_path)
+    proc = _run_one_iteration(world, tmp_path)
+    sentinel = world["data_home"] / "projects" / world["key"] / "runtime/launcher/last-exit.json"
+    assert sentinel.is_file(), (proc.stdout + proc.stderr)[-4000:]
+    assert json.loads(sentinel.read_text())["state"] == "ship_integrity_violation"
+    assert os.environ["ILK_WORKER_SESSION"] == "outer-real-worker"
 
 
 @pytest.fixture(scope="module")
