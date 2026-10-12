@@ -3923,6 +3923,7 @@ test_ship_integrity() {
   local lc_file="${2:-}"
   local _heads_before_file="${3:-}"
   local _heads_after_file="${4:-}"
+  local _inconclusive_only="${5:-0}"
   if [[ -z "$plans_dir" || ! -d "$plans_dir" ]]; then
     plans_dir=$(get_plans_dir) || return 0
   fi
@@ -4131,6 +4132,13 @@ for raw in Path(sys.argv[1]).read_text().splitlines():
         print(rec.get('outcome', ''))
         break
 " "$lc_file" "$_si_slug" 2>/dev/null) || true
+    fi
+
+    # An unmeasured gate gives no regression-attribution authority. The narrow
+    # reconciliation entry point only removes a same-iteration self-ship;
+    # every other outcome and prior shipped plan remains untouched.
+    if [[ "$_inconclusive_only" == "1" && "$_raw_gate_outcome" != "inconclusive" ]]; then
+      continue
     fi
 
     # Scope to the active master: skip sub-plans not in this batch.
@@ -8048,7 +8056,14 @@ append_revert_row(
     local _ship_integrity_passed=0 _progress_integrity_passed=0 _owned_landing_json="{}"
     local _integrity_started="" _integrity_ended="" _landing_started="" _landing_ended=""
     _integrity_started=$(python3 "${_ILK_SCRIPT_DIR}/iteration_clock.py") || _integrity_started=""
-    if [[ "$iter_stop_reason" == "local_checks_environment_fault" || "$iter_stop_reason" == "local_checks_inconclusive" ]]; then
+    if [[ "$iter_stop_reason" == "local_checks_inconclusive" ]]; then
+      # Do not accept a worker-authored ship on a non-verdict. This restores
+      # only a status written since the frozen baseline, not code/pointers,
+      # and never attributes a regression or increments quarantine counters.
+      _si_stderr=$(test_ship_integrity "$(get_plans_dir)" "$local_checks_results" "$heads_before_file" "$heads_after_file" 1 2>&1 1>/dev/null) || true
+      [[ -z "$_si_stderr" ]] || echo "$_si_stderr" >&2
+      echo "  [ship-integrity] gate unmeasured; no red-based rollback" >&2
+    elif [[ "$iter_stop_reason" == "local_checks_environment_fault" ]]; then
       echo "  [ship-integrity] skipped — gate unmeasured; no red-based rollback" >&2
     else
     if [[ "$_driver_progress_accepted" -eq 1 ]]; then

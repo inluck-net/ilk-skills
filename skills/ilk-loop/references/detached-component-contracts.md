@@ -104,6 +104,7 @@ submenu line.
 |---|---|---|
 | `"running"` | Loop is actively iterating | **Live** — check PID |
 | `"shipped"` | All sub-plans shipped, clean exit | Terminal |
+| `"local_checks_inconclusive"` | Gate execution did not yield a conclusive accepted result (for example a cap kill); not green proof | Terminal |
 | `"local_checks_failed"` | A step's local_checks failed | Terminal |
 | `"local_checks_failed_no_commits"` | A step's local_checks failed with 0 new commits this iteration (gate red on an unchanged tree — a red base or environment). Never set after an interrupted iteration with 0 commits (the gate is skipped; `_should_gate_iteration` returns 1) | Terminal |
 | `"local_checks_environment_fault"` | A derived check (e.g. mention gate) could not run because its binary is missing from PATH (exit 126/127). The gate record carries `reason: "environment-fault: ..."`. Distinct from `local_checks_failed` (tests ran and failed) — the environment is broken, not the code. The sub-plan is NOT reverted; the project is parked. (sub-plan `an-unrunnable-derived-check-stops-once`) | Terminal |
