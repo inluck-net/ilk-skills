@@ -68,10 +68,15 @@ def _git(repo: Path, *args: str) -> None:
 def _build_world(root: Path) -> dict:
     """A project + isolated data home + a stub `claude`, ready for one iteration.
 
-    The sub-plan is already at ``status: shipped`` with a gate that always
-    fails, and the stub agent lands a commit carrying the
-    ``[plan:<slug>#step-0]`` trailer the gate discovery reads.  That is the
-    field scenario reduced to its smallest form.
+    The sub-plan is already at ``status: shipped`` with a gate that is green
+    at the iteration base and red once the stub's commit lands, and the stub
+    agent lands that commit carrying the ``[plan:<slug>#step-0]`` trailer the
+    gate discovery reads.  That is the field scenario reduced to its smallest
+    form.  The gate must be *introduced* by the iteration's own commit: an
+    always-red gate is attribution-unmeasured under red_owner.py (no batch
+    base to resolve inherited vs pre-existing), and ship_integrity.py then
+    refuses to revert — measured 2026-10-12 on this file before the fixture
+    named its red.
     """
     project = root / "project"
     (project / "docs").mkdir(parents=True)
@@ -110,7 +115,7 @@ def _build_world(root: Path) -> dict:
         "### Step 0 — do the thing\n\n"
         "```yaml\n"
         "local_checks:\n"
-        "  - command: \"python3 -c 'raise SystemExit(1)'\"\n"
+        "  - command: \"python3 -c 'import pathlib,sys; raise SystemExit(1 if pathlib.Path(\\\"RED\\\").exists() else 0)'\"\n"
         "    timeout: 60\n"
         "```\n\n"
         "Body.\n",
@@ -134,8 +139,10 @@ def _build_world(root: Path) -> dict:
         "b = re.sub(r'^current_step: 0', 'current_step: 1', b, count=1, flags=re.M)\n"
         "p.write_text(b)\n"
         "EOP\n"
+        "touch RED\n"
+        "git add RED\n"
         "git -c user.email=t@example.com -c user.name=t commit -q "
-        f"--allow-empty -m 'feat: the work [plan:{SLUG}#step-0]'\n"
+        f"-m 'feat: the work [plan:{SLUG}#step-0]'\n"
         "echo 'stub agent done'\n",
         encoding="utf-8",
     )
@@ -155,6 +162,15 @@ def _run_one_iteration(world: dict, root: Path) -> subprocess.CompletedProcess:
         "CLAUDE_CONFIG_DIR": str(root / ".claude"),
     }
     env.pop("ILK_DATA_DIR", None)
+    # This child is the driver of a private test project, not the real
+    # worker whose gate happens to execute pytest. Module-scoped fixtures
+    # can run before the function-scoped ambient hook cleanup fixture.
+    for name in (
+        "ILK_WORKER_SESSION", "ILK_SHIPPED_MARKER", "ILK_ITERATION_SUBPLAN",
+        "ILK_ITER_CONTEXT", "ILK_CODE_ROOT", "ILK_TOOLKIT_SOURCE_ROOT",
+        "ILK_RUN_INPUTS", "ILK_CLAUDE_BIN", "MCP_CONFIG_PATH", "ILK_RUN_LOCK_HELD",
+    ):
+        env.pop(name, None)
     (root / ".claude").mkdir(exist_ok=True)
     return subprocess.run(
         ["bash", str(RUNNER),
@@ -164,6 +180,27 @@ def _run_one_iteration(world: dict, root: Path) -> subprocess.CompletedProcess:
          "--run-local-checks"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, env=env, cwd=str(root),
     )
+
+
+@_NEEDS_GTIMEOUT
+def test_nested_driver_fixture_does_not_inherit_worker_authority(tmp_path, monkeypatch):
+    """Seeded outer pins must not reach the private driver, and must stay set here.
+
+    Fails without the strip in `_run_one_iteration`: the module-scoped
+    fixtures build the child env from `os.environ` before the function-scoped
+    conftest cleanups run, so the live worker session is copied in and
+    run_registry.py:110 refuses the dispatch before any gate executes.
+    """
+    monkeypatch.setenv("ILK_WORKER_SESSION", "outer-real-worker")
+    monkeypatch.setenv("ILK_CLAUDE_BIN", str(tmp_path / "outer-worker-cli"))
+    monkeypatch.setenv("ILK_RUN_INPUTS", str(tmp_path / "outer-worker-inputs"))
+    monkeypatch.setenv("ILK_CODE_ROOT", str(tmp_path / "outer-worker-code"))
+    world = _build_world(tmp_path)
+    proc = _run_one_iteration(world, tmp_path)
+    sentinel = world["data_home"] / "projects" / world["key"] / "runtime/launcher/last-exit.json"
+    assert sentinel.is_file(), (proc.stdout + proc.stderr)[-4000:]
+    assert json.loads(sentinel.read_text())["state"] == "ship_integrity_violation"
+    assert os.environ["ILK_WORKER_SESSION"] == "outer-real-worker"
 
 
 @pytest.fixture(scope="module")
