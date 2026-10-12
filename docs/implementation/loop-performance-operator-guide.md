@@ -129,8 +129,10 @@ production provider and hooks. Final verification remains separately opt-in.
 
 Prepared plain global instructions and rule files are explicit bootstrap reads
 because owned print mode disables automatic setting sources. Repository
-instruction references are inventoried with cycle detection. Global imports
-requiring source-home rebasing refuse preparation until an adapter exists.
+instruction references are inventoried with cycle detection. Protocol 2 mirrors
+relative Markdown imports wholly within the source worker home, preserving
+bytes, paths and cycles. Absolute/external imports, imported symlinks, missing
+files and references into protected worker resources still refuse preparation.
 Managed policy and external runtime upgrades still need explicit coordination;
 private toolkit snapshots do not freeze host libraries or remote policy.
 

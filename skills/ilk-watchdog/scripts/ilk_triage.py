@@ -267,13 +267,27 @@ def build_evidence(data_dir: Path, run_id: str) -> dict[str, Any]:
         evidence["git_status"] = []
         evidence["git_log"] = []
 
+    # Frozen open/close dispatch is diagnostic identity, never green proof.
+    from triage_apply import _target_from_records
+    from dispatch_target import TargetError
+    try:frozen=_target_from_records(data_dir,data_dir/'plans',run_id)
+    except TargetError as exc:
+        evidence.update(subplan_frontmatter='',subplan_findings='',subplan_slug=None,subplan_slug_source=None)
+        missing.append('frozen triage target refused: '+str(exc))
+        return evidence
+
     # 7. slug from the run's own records (contract B), first hit wins
     slug: str | None = None
     slug_source: str | None = None
     sentinel_matched = evidence.get("last_exit", {}).get("run_id") == run_id
 
+    if frozen:
+        slug=frozen['selected']['slug'];slug_source='iteration_record'
+        evidence['subplan_path']=frozen['selected']['subplan_path']
+        evidence['subplan_record_phase']=frozen['phase']
+
     # B1: failed_check.slug from the sentinel, only when sentinel matched this run
-    if sentinel_matched:
+    if slug is None and sentinel_matched:
         fc_slug = evidence.get("last_exit", {}).get("failed_check", {}).get("slug")
         if fc_slug:
             slug = fc_slug
@@ -307,6 +321,7 @@ def build_evidence(data_dir: Path, run_id: str) -> dict[str, Any]:
 
         # C. Locate the file by exact slug match on plan: frontmatter
         plans_dir = data_dir / "plans"
+        evidence['subplan_frontmatter']='';evidence['subplan_findings']=''
         found_text: str | None = None
         candidates: list[str] = []
         if plans_dir.exists():
@@ -316,9 +331,13 @@ def build_evidence(data_dir: Path, run_id: str) -> dict[str, Any]:
                 text = plan_file.read_text(encoding="utf-8")
                 if text.startswith("---"):
                     fm = parse_frontmatter(text)
-                    if fm.get("plan") == slug:
+                    if (frozen and str(plan_file.resolve())==frozen['selected']['subplan_path']
+                            or not frozen and fm.get('plan')==slug):
                         candidates.append(plan_file.name)
-                        found_text = text  # last match wins (sorted ⇒ newest)
+                        found_text = text
+        if len(candidates)>1:
+            found_text=None
+            missing.append(f'ambiguous sub-plan identity for slug {slug}')
         if candidates:
             evidence["subplan_candidates"] = candidates
             if found_text:
@@ -839,7 +858,8 @@ def run_triage(
 
     # Validate.
     plans_dir = data_dir / "plans"
-    problems = validate(decision, plans_dir)
+    selected_path=evidence.get('subplan_path')
+    problems = validate(decision, plans_dir,target_path=Path(selected_path) if selected_path else None)
     if problems:
         reason = "; ".join(problems)
         decision = {

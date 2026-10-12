@@ -18,6 +18,9 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from contextvars import ContextVar
+
+_triage_record=ContextVar("triage_record",default=None)
 
 # Ensure the scripts dirs are importable.
 _HERE = Path(__file__).resolve().parent
@@ -128,7 +131,8 @@ def _append_finding(
     )
     transition(plan_path,{'status':fm['status']},{'status':fm['status']},
                actor='triage',reason='stopped-run triage findings',findings_note=block,
-               expected_digest=hashlib.sha256(raw).hexdigest())
+               expected_digest=hashlib.sha256(raw).hexdigest(),
+               **_record_transition_kwargs(plan_path,raw))
 
 
 def _set_plan_status(
@@ -151,7 +155,8 @@ def _set_plan_status(
         wanted['last_updated']=datetime.now(timezone.utc).astimezone().strftime('%Y-%m-%d')
     transition(plan_path,{key:fm[key] for key in wanted},wanted,
                actor='triage',reason='validated stopped-run triage state correction',
-               expected_digest=hashlib.sha256(raw).hexdigest())
+               expected_digest=hashlib.sha256(raw).hexdigest(),
+               **_record_transition_kwargs(plan_path,raw))
 
 
 def _find_plans_dir(data_dir: Path) -> Path:
@@ -167,15 +172,98 @@ def _find_plans_dir(data_dir: Path) -> Path:
     return plans_dir
 
 
+def _target_from_records(data_dir,plans_dir,run_id):
+    """Consume the run's latest frozen dispatch; open rows are diagnostic only."""
+    from dispatch_target import TargetError
+    from iteration_context import read_dispatch,ContextError,plan_snapshot
+    path=data_dir/'logs/.ilk-loop.log'
+    if not path.exists():return None
+    records=[]
+    try:lines=path.read_text(encoding='utf-8-sig').splitlines()
+    except OSError as exc:raise TargetError('triage loop record is unreadable') from exc
+    for line in lines:
+        if not line.strip():continue
+        try:row=json.loads(line)
+        except ValueError as exc:raise TargetError('triage loop record is corrupt') from exc
+        if not isinstance(row,dict):raise TargetError('triage loop record is invalid')
+        if row.get('run_id')!=run_id or row.get('record_phase') not in {'open','close'}:continue
+        context=row.get('context')
+        if context is None:raise TargetError('triage typed record has no frozen context')
+        if (not isinstance(context,dict) or type(context.get('schema_version')) is not int
+                or context['schema_version']!=1 or context.get('run_id')!=run_id
+                or type(context.get('iteration')) is not int or context['iteration']<0
+                or type(row.get('iteration')) is not int or context['iteration']!=row.get('iteration')
+                or context.get('plans_dir')!=str(plans_dir.resolve())):
+            raise TargetError('triage frozen record identity contradicts requested run/project')
+        try:selected=read_dispatch(context)
+        except (ContextError,KeyError,TypeError) as exc:raise TargetError('triage frozen dispatch is invalid') from exc
+        if not isinstance(selected.get('slug'),str) or not selected['slug']:
+            raise TargetError('triage frozen slug is invalid')
+        if selected.get('master_path') is not None and (not isinstance(selected['master_path'],str) or not Path(selected['master_path']).is_absolute()):
+            raise TargetError('triage frozen master identity is invalid')
+        if context.get('master_snapshot') is not None and not isinstance(context['master_snapshot'],dict):
+            raise TargetError('triage frozen master snapshot is invalid')
+        records.append((context,selected,row['record_phase']))
+    if not records:return None
+    latest=max(context['iteration'] for context,_,_ in records)
+    records=[row for row in records if row[0]['iteration']==latest]
+    identities={(selected.get('slug'),selected.get('step'),selected.get('subplan_path'),selected.get('master_path'),
+                 (context.get('plans',{}).get(Path(selected['subplan_path']).name) or {}).get('fingerprint'),
+                 (context.get('master_snapshot') or {}).get('fingerprint'))
+                for context,selected,_ in records}
+    if len(identities)!=1:raise TargetError('triage frozen dispatch records contradict one another')
+    context,selected,phase=next((row for row in reversed(records) if row[2]=='close'),records[-1])
+    path=Path(selected['subplan_path']).resolve()
+    fingerprint=context['plans'][path.name].get('fingerprint')
+    if (not isinstance(fingerprint,str) or not re.fullmatch('[0-9a-f]{64}',fingerprint)
+            or plan_snapshot(path).get('fingerprint')!=fingerprint):
+        raise TargetError('triage frozen plan contract changed or disappeared')
+    guards={}
+    if selected.get('master_path'):
+        master=Path(selected['master_path']).resolve()
+        snapshot=context.get('master_snapshot') or {}
+        if (master.parent!=plans_dir.resolve() or snapshot.get('path')!=str(master)
+                or not isinstance(snapshot.get('fingerprint'),str)
+                or not re.fullmatch('[0-9a-f]{64}',snapshot['fingerprint'])
+                or plan_snapshot(master).get('fingerprint')!=snapshot['fingerprint']):
+            raise TargetError('triage frozen master contract changed or disappeared')
+        state=parse_frontmatter(master.read_text(encoding='utf-8-sig'))
+        guards[master]={'status':state.get('status'),'hold':state.get('hold')}
+    return {'context':context,'selected':selected,'guards':guards,'phase':phase}
+
+
+def _record_transition_kwargs(plan_path,raw):
+    """Check the recorded contract and guard its master under the shared lock."""
+    record=_triage_record.get()
+    if record is None:return {}
+    from plan_fingerprint import surface
+    from plan_state import TransitionError
+    expected=record['context']['plans'].get(plan_path.name) or {}
+    actual=hashlib.sha256(surface(raw.decode('utf-8-sig'),master=False).encode()).hexdigest()
+    if expected.get('path')!=str(plan_path.resolve()) or expected.get('fingerprint')!=actual:
+        raise TransitionError('triage recorded plan contract changed')
+    return {'guards':record['guards']}
+
+
+def _exact_target(plans_dir,slug):
+    from dispatch_target import identities,TargetError
+    if not isinstance(slug,str) or not slug.strip():raise TargetError('triage slug is invalid')
+    matches=[]
+    for path in sorted(plans_dir.glob('*.md')):
+        if path.name.startswith('MASTER-'):continue
+        if path.resolve().parent!=plans_dir.resolve():raise TargetError('triage plan escapes plans root')
+        if slug in identities(path):matches.append(path)
+    if len(matches)>1:raise TargetError('triage exact identity is ambiguous')
+    return matches[0] if matches else None
+
+
 def _find_active_subplan(plans_dir: Path) -> Path | None:
-    """Return the first non-MASTER plan with ``status: in-progress``."""
-    for plan_file in sorted(plans_dir.glob("*.md")):
-        if plan_file.name.startswith("MASTER-"):
-            continue
-        fm = _read_plan_frontmatter(plan_file)
-        if fm.get("status") == "in-progress":
-            return plan_file
-    return None
+    """Legacy fallback may attach a diagnostic only to a unique active plan."""
+    from dispatch_target import TargetError
+    matches=[path for path in sorted(plans_dir.glob('*.md'))
+             if not path.name.startswith('MASTER-') and _read_plan_frontmatter(path).get('status')=='in-progress']
+    if len(matches)>1:raise TargetError('legacy triage active target is ambiguous')
+    return matches[0] if matches else None
 
 
 def _resolve_target_slug(
@@ -188,11 +276,15 @@ def _resolve_target_slug(
     Returns ``(plan_path, slug)`` — both None when nothing can be resolved.
     """
     slug = decision.get("slug")
+    record=_triage_record.get()
+    if record is not None:
+        from dispatch_target import TargetError,identities
+        selected=record['selected'];path=Path(selected['subplan_path'])
+        if slug and slug not in identities(path):raise TargetError('triage decision contradicts frozen dispatch')
+        return path,selected['slug']
     if slug:
-        plan_path = plans_dir / f"*{slug}*.md"
-        matches = list(plans_dir.glob(f"*{slug}*.md"))
-        if matches:
-            return matches[0], slug
+        selected=_exact_target(plans_dir,slug)
+        if selected:return selected,slug
         return None, slug
 
     # No slug in decision — try last-exit.json failed_check.
@@ -204,11 +296,9 @@ def _resolve_target_slug(
             last_exit = {}
         failed_slug = (last_exit.get("failed_check") or {}).get("slug")
         if failed_slug:
-            matches = list(plans_dir.glob(f"*{failed_slug}*.md"))
-            if matches:
-                fm = _read_plan_frontmatter(matches[0])
-                if fm.get("status") != "shipped":
-                    return matches[0], failed_slug
+            selected=_exact_target(plans_dir,failed_slug)
+            if selected and _read_plan_frontmatter(selected).get('status')!='shipped':
+                return selected,failed_slug
 
     # Fallback: active sub-plan.
     active = _find_active_subplan(plans_dir)
@@ -364,8 +454,15 @@ def _any_master_auto_planned(plans_dir: Path) -> bool:
     return False
 
 
-def validate(
-    decision: dict[str, Any], plans_dir: Path, *, repo: Path | None = None,
+def validate(decision,plans_dir,*,repo=None,target_path=None):
+    """Expose ambiguous target failures as validation problems, never guesses."""
+    from dispatch_target import TargetError
+    try:return _validate(decision,plans_dir,repo=repo,target_path=target_path)
+    except TargetError as exc:return ['triage target refused: '+str(exc)]
+
+
+def _validate(
+    decision: dict[str, Any], plans_dir: Path, *, repo: Path | None = None, target_path: Path | None = None,
 ) -> list[str]:
     """Return the list of problems with *decision* against *plans_dir*.
 
@@ -394,15 +491,15 @@ def validate(
     step = decision.get("step")
 
     if action in ("reopen", "amend") and slug:
-        matches = list(plans_dir.glob(f"*{slug}*.md"))
-        if not matches:
+        selected=target_path or _exact_target(plans_dir,slug)
+        if selected is None:
             problems.append(f"slug {slug!r} not found in plans_dir")
 
     if action == "reopen":
         if slug and step is not None:
-            matches = list(plans_dir.glob(f"*{slug}*.md"))
-            if matches:
-                fm = _read_plan_frontmatter(matches[0])
+            selected=target_path or _exact_target(plans_dir,slug)
+            if selected:
+                fm = _read_plan_frontmatter(selected)
                 current = int(fm.get("current_step", 0))
                 if step < 0 or step > current:
                     problems.append(
@@ -473,15 +570,24 @@ def validate(
 def apply(decision, data_dir, *, run_id, data_root=None, repo=None):
     """Return a recorded refusal if a shared state transition loses its CAS."""
     from plan_state import TransitionError
+    from dispatch_target import TargetError
     if os.environ.get('ILK_WORKER_SESSION','').strip():
         raise TransitionError('worker cannot apply control-plane triage')
+    token=None
     try:
+        from run_registry import project_status,RegistryError
+        try:live=project_status(data_dir/'runtime/launcher')
+        except (RegistryError,OSError,ValueError) as exc:raise TargetError('triage project ownership is unverified') from exc
+        if live['busy']:raise TargetError('triage project already has a live or launching run')
+        token=_triage_record.set(_target_from_records(data_dir,_find_plans_dir(data_dir),run_id))
         return _apply(decision,data_dir,run_id=run_id,data_root=data_root,repo=repo)
-    except TransitionError as exc:
-        reason='state_transition_refused: '+str(exc)
+    except (TransitionError,TargetError) as exc:
+        reason=('state_transition_refused: ' if isinstance(exc,TransitionError) else 'triage_target_refused: ')+str(exc)
         write_audit('triage-refused',_project_name(data_dir),root=data_dir,
                     run_id=run_id,reason=reason)
         return {'action':'refused','reason':reason,'audit_kind':'triage-refused'}
+    finally:
+        if token is not None:_triage_record.reset(token)
 
 
 def _apply(
@@ -551,7 +657,7 @@ def _apply(
         return {"action": "refused", "reason": "kill_switch"}
 
     # ── validate ────────────────────────────────────────────────────────
-    problems = validate(decision, plans_dir, repo=repo)
+    problems = validate(decision, plans_dir, repo=repo,target_path=target_path)
     if problems:
         reason = "; ".join(problems)
         escalate_decision = {

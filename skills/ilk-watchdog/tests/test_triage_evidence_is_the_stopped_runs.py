@@ -169,3 +169,32 @@ def test_ac4_exact_slug_match_not_substring(tmp_path: Path):
     assert "plan: foo" in evidence["subplan_frontmatter"]
     assert "plan: foo-verify" not in evidence["subplan_frontmatter"]
     assert evidence.get("subplan_slug") == "foo"
+
+def test_evidence_uses_frozen_dispatch_path_before_legacy_sentinel(tmp_path):
+    from ilk_triage import build_evidence
+    from iteration_context import plan_snapshot
+    data=tmp_path/'data';plans=data/'plans'
+    _write_plan(plans,'2026-10-12-target.md','duplicate','in-progress','FROZEN TARGET')
+    _write_plan(plans,'2026-10-12-other.md','duplicate','in-progress','WRONG TARGET')
+    path=plans/'2026-10-12-target.md'
+    ctx={'schema_version':1,'run_id':'R','iteration':1,'plans_dir':str(plans),
+         'exec_tree':str(tmp_path),'code_root':str(tmp_path),
+         'plans':{path.name:plan_snapshot(path)},
+         'dispatch':{'slug':'duplicate','step':0,'subplan_path':str(path)}}
+    _write_gate_history(data/'logs/.ilk-loop.log',[{'run_id':'R','iteration':1,'record_phase':'open','context':ctx}])
+    _write_json(data/'runtime/launcher/last-exit.json',{'run_id':'R2','state':'running','failed_check':{'slug':'unrelated'}})
+    evidence=build_evidence(data,'R')
+    assert evidence['subplan_slug_source']=='iteration_record'
+    assert evidence['subplan_path']==str(path) and evidence['subplan_findings']=='FROZEN TARGET'
+    assert evidence['subplan_record_phase']=='open' # diagnostic, no close proof
+
+
+def test_ambiguous_legacy_evidence_does_not_pick_newest_plan(tmp_path):
+    from ilk_triage import build_evidence
+    data=tmp_path/'data';plans=data/'plans'
+    _write_plan(plans,'first.md','duplicate','in-progress','FIRST')
+    _write_plan(plans,'second.md','duplicate','in-progress','SECOND')
+    _write_json(data/'runtime/launcher/last-exit.json',{'run_id':'R','failed_check':{'slug':'duplicate'}})
+    evidence=build_evidence(data,'R')
+    assert evidence['subplan_frontmatter']=='' and evidence['subplan_findings']==''
+    assert any('ambiguous' in item for item in evidence['missing_sources'])

@@ -22,9 +22,9 @@ Delivery target: by 2026-10-12 00:48 Asia/Shanghai (two hours from Chad’s
 request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
-Current next action: finish declared-worktree settings/dependency root validation,
-then reconcile the remaining accepted design requirements against the implementation
-and evidence map. Toolkit preview c8add919
+Current next action: deliver the checked frozen-target triage correction, then
+finish the named state/lifecycle caller inventory before member/portable adapters.
+Toolkit preview 43f9c354
 and consumer compatibility 3987a299 are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -173,7 +173,7 @@ an explicit owned-profile refusal does not prove an unbuilt adapter.
 | Worker scope (C2/C3) | worker_dispatch.py private settings/broker plus worker_sandbox OS policy; driver_step.py:167 gates/commit/CAS. | Real native tools and driver gate scopes checked on Mac, source home unchanged. Windows/network/nested-sandbox adapters refuse new profiles. |
 | State ownership (C4/C6/I3) | plan_state.py:158 transition byte CAS + durable journal; :84 owned state audit. | Holds, concurrent transition, registry projection, rollback and interruption negatives passed. Legacy workers keep older authority until migrated; policing retired only on enforced path. |
 | Process ownership (D1/I4) | run_registry.py:145 launch reservation, :352 child registration, :33 fresh driver authority. | Native owned-child and scheduler/watchdog/stop reader checks; PID reuse and unknown group refuse. Windows ownership adapter not established. |
-| Input pinning (D2/I6) | run_inputs private code/settings/hooks/MCP/inventory; instruction_inputs.py inventory/import_paths named, rule and manually referenced inputs; provider_provenance.py configured origin. | Actual provider with eight copied hooks, immutable homes and sanitized records. Manual repository references are frozen with protocol 2. Plain global instructions are explicit reads; global import rebasing, managed settings and system libraries require adapters/coordination. |
+| Input pinning (D2/I6) | run_inputs private code/settings/hooks/MCP/inventory; instruction_inputs.py inventory/import_paths named, rule and manually referenced inputs; provider_provenance.py configured origin. | Actual provider with eight copied hooks, immutable homes and sanitized records. Manual repository references are frozen with protocol 2. Plain global instructions and bounded source-home relative Markdown imports are explicit pinned reads (protocol 2); absolute/external global import rebasing, managed settings and system libraries require adapters/coordination. |
 | Consumer compatibility (D3) | gh-resolve closed exact proof readers installed at 3987a299; hermetic explicit toolkit fixtures and quoted pin rendering retained. | Consumer negative ambient poison reproduced; 7 pin/integration checks and 8 adjacent focused checks passed. Affected strict consumer readers passed 49 in 1.32s; local consumer 3987a299 installed. Rezmac private consumer 3987a299 prepared; shared rezmac activation remains pending. |
 | Upgrade (D4) | upgrade_drain.py:18 positive accepted boundary, :92 activation, :150 consume. | Archived real launcher preserves limits/master/budget/holds, refuses live old children and tampering. Global opt-in remains off. Production local activation separate below. |
 | All-attempt verdicts (E2/I5) | driver_step.attempt_verdict groups same frozen input tree and scope/command; driver history retained before commit. | Same-tree red→pass flaky leaves HEAD/pointer unchanged; changed repaired tree green. Legacy rolling flaky history, shared capped actual-base attribution and portable PowerShell transport are checked below. Opt-in Mac measured-red progress advances only after fresh exact-base samples and typed non-green close; archived and actual consumer repair passed. Windows ownership/recovery remains unsupported. |
@@ -3681,3 +3681,38 @@ aliases whose resolved path **and hash** exactly match a declared global copy;
 all other protected paths retain their refusal. Twenty targeted global-copy and
 actual sandbox protection checks passed in **1.81s**. Archived positive rerun
 is pending; the installed `c8add919` snapshot is unaffected by this candidate.
+
+
+### Relative global imports delivered; frozen triage identity checked
+
+Archived global-import worker consumption passed **1 in 9.17s**, 18 unrelated
+cases deselected. Preview `43f9c354` installed locally at the fresh verified
+boundary; controller 94556 and all 1,891 protected hashes stayed unchanged,
+services restored. Evidence: `toolkit-delivery-preview-20261012y/installed.json`.
+The operator guide now describes this bounded relative-import adapter; absolute,
+external and managed-policy input coordination remain open.
+
+Triage's legacy substring target selection reproduced selecting a sibling and
+accepting duplicate identities (**2 failed, 8 deselected in 0.05s**). A frozen
+record with duplicate aliases reproduced refusal instead of selecting its exact
+path (**1 failed, 10 deselected in 0.05s**). The first negative fixtures depended
+on filesystem order or filenames outside the old glob; corrected deterministic
+fixtures established the actual failures before the fix.
+
+Triage now consumes the stopped run's latest canonical open/close dispatch,
+checks typed identity and frozen plan/master contracts, and refuses conflicting
+records or decision targets. Open records provide diagnostic identity only.
+Legacy fallback requires an exact unique identity or unique active target.
+Plan writes retain byte CAS and guard the selected master's state/hold under
+the shared transition lock. A live or launching canonical registry refuses
+apply without acknowledgement or relaunch. Evidence construction uses the same
+frozen path and never chooses the newest duplicate alias.
+
+Adjacent triage reader/client checks: **50 passed in 11.23s**. Final added typed
+schema/master-snapshot refusal and selected-phase checks: **26 passed in 0.10s**.
+Diff whitespace check passed. The launch-reservation fixture's 60 seconds is a
+judgment solely to keep a synchronous test future-dated; a setup exceeding it
+invalidates that fixture margin, not a production limit. No numeric production
+default was added. This is a checked candidate awaiting local activation; it
+closes this named caller, not every authority migration or multi-file atomicity.
+No live batch, worker or plan was changed.
