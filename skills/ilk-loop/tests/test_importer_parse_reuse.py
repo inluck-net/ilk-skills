@@ -2,6 +2,7 @@
 import ast
 import subprocess
 
+import test_importers
 from test_importers import importer_tests
 
 
@@ -17,6 +18,10 @@ def _project(tmp_path):
 
 def test_identical_source_is_parsed_once(tmp_path, monkeypatch):
     _project(tmp_path)
+    # Isolate this measurement from earlier scope scans in the same process.
+    clear = getattr(getattr(test_importers, "_import_segments", None), "cache_clear", None)
+    if clear:
+        clear()
     calls = []
     original_parse = ast.parse
 
