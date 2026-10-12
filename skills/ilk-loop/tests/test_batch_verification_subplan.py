@@ -159,6 +159,13 @@ def _run_lint_master(tmp_path: Path, master: str, subplans: dict[str, str]) -> s
         sp = tmp_path / name
         sp.write_text(textwrap.dedent(content), encoding="utf-8")
         paths.append(str(sp))
+    # cwd must be the hermetic tmp project, not the repo checkout.  With
+    # no --project-root, plan_lint falls back to Path.cwd() as project_root
+    # (plan_lint.py `--master` path) and asks ship_config whether this
+    # project waives the verification sub-plan.  The repo checkout declares
+    # `verification_subplan: "optional"` in .ilk-launch.json, so a lint run
+    # from the repo root waives AC-2 and reports clean. The private fixture
+    # explicitly declares required verification, independent of pytest cwd.
     return subprocess.run(
         [sys.executable, str(_PLAN_LINT), "--master", str(mp), *paths],
         capture_output=True, text=True, timeout=30, cwd=tmp_path,

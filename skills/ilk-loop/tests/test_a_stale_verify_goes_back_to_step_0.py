@@ -200,13 +200,52 @@ def _build_world_ac1(root: Path) -> dict:
     }
 
 
+def _lock_identity_setup(project: Path) -> str:
+    """Bash that records ``$$`` as run.lock's holder, then holds the lock.
+
+    This harness sources the driver and calls ``main`` directly, because the
+    lock helper's re-exec (``bash "$0" "$@"``) cannot re-enter a dot-sourced
+    shell.  It therefore declares ``ILK_RUN_LOCK_HELD=1``, which is exactly
+    the state the helper leaves the re-exec'd runner in: the flock is held
+    and ``run.lock`` carries the runner's own process identity.
+    ``run_registry.attach`` still demands that identity when there is no
+    launch reservation, and ``bind_running`` additionally demands the runner
+    lead its own process group (``pgid == pid``).  Both are what
+    ``ilk_run_lock.py`` establishes before it execs the runner — a holder
+    record, then ``setsid()`` — so the harness must reproduce that state or
+    attach refuses and the driver never dispatches.  Mirrors the holder
+    record ilk_run_lock.py writes.
+    """
+    return f"""\
+export PROJECT_PATH={shlex.quote(str(project))}
+_runtime=$(get_ilk_runtime_dir) || exit 91
+mkdir -p "$_runtime"
+python3 - "$$" "$_runtime" "$_ILK_SCRIPT_DIR" <<'LOCKPY'
+import json, sys, time
+from pathlib import Path
+pid = int(sys.argv[1])
+runtime = Path(sys.argv[2])
+sys.path.insert(0, sys.argv[3])
+from run_registry import process_identity
+ident = process_identity(pid)
+if not ident:
+    raise SystemExit("lock winner identity unavailable")
+payload = dict(ident)
+payload["pid"] = pid
+payload["started_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+(runtime / "run.lock").write_text(json.dumps(payload))
+LOCKPY
+export ILK_RUN_LOCK_HELD=1
+"""
+
+
 def _run_one_iteration(world: dict) -> subprocess.CompletedProcess:
     """Source the driver under ILK_DOTSOURCE_ONLY=1 and run its real main()."""
     script = f"""
 export ILK_DOTSOURCE_ONLY=1
 source {shlex.quote(str(_DRIVER))} || exit 90
 unset ILK_DOTSOURCE_ONLY
-export ILK_RUN_LOCK_HELD=1
+{_lock_identity_setup(world["project"])}
 main --project-path {shlex.quote(str(world["project"]))} \\
      --max-iterations 1 \\
      --iteration-timeout-min 1 \\
@@ -219,12 +258,24 @@ echo "MAIN_RC=$?"
         "PATH": f"{world['bin']}{os.pathsep}{os.environ.get('PATH', '')}",
         "HOME": str(world["root"]),
         "ILK_DATA_HOME": str(world["data_home"]),
+        # The agent is the stub on PATH.  ILK_CLAUDE_BIN wins over PATH
+        # (run_ilk_loop_claude.sh `${ILK_CLAUDE_BIN:-claude}`), so an
+        # ambient value from a real dispatch would launch the real CLI with
+        # this test's prompt instead of counting a stub invocation.
+        "ILK_CLAUDE_BIN": str(world["bin"] / "claude"),
+        "CLAUDE_CONFIG_DIR": str(world["root"] / ".claude"),
     }
+    env.pop("MCP_CONFIG_PATH", None)
     env.pop("ILK_DATA_DIR", None)
     env.pop("ILK_DOTSOURCE_ONLY", None)
     (world["root"] / ".claude").mkdir(exist_ok=True)
+    # ``setsid`` is not on macOS, so the session is created in Python before
+    # exec'ing bash — the same order ilk_run_lock.py uses before it hands
+    # the lock to the runner.
     return subprocess.run(
-        ["bash", "-c", script],
+        [sys.executable, "-c",
+         "import os, sys; os.setsid(); os.execvp('bash', ['bash', '-c'] + sys.argv[1:])",
+         script],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=180, env=env, cwd=str(world["root"]),
     )

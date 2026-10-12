@@ -3522,8 +3522,28 @@ except: pass
     if [[ -s "$tmp_out" ]]; then
       gate_cmd=$(python3 "${_SKILL_ROOT}/ilk-loop/scripts/emit_jsonl_record.py" --label "$tmp_out" 2>/dev/null || true)
     fi
-    if [[ -n "$gate_cmd" ]]; then
-      echo "  [local_checks $tag] $slug step $step -> $outcome  cmd: $gate_cmd"
+    # An inconclusive/error verdict with no reason is indistinguishable from
+    # a gate that never ran.  The helper carries the reason in its JSON
+    # `error` key (a ContextError string, a missing sub-plan, ...); surface
+    # it on the same line so the outcome is auditable.
+    local gate_error=""
+    if [[ "$outcome" != "pass" && "$outcome" != "fail" && -s "$tmp_out" ]]; then
+      gate_error=$(python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(0)
+err = d.get("error")
+if err:
+    print(err)
+' "$tmp_out" 2>/dev/null || true)
+    fi
+    local detail=""
+    [[ -n "$gate_cmd" ]] && detail="  cmd: $gate_cmd"
+    [[ -n "$gate_error" ]] && detail="$detail  error: $gate_error"
+    if [[ -n "$detail" ]]; then
+      echo "  [local_checks $tag] $slug step $step -> $outcome$detail"
     else
       echo "  [local_checks $tag] $slug step $step -> $outcome"
     fi
@@ -5806,7 +5826,10 @@ print(fm.get('status', ''))
 # so an improvement batch can tune it (backlog 8db6cca8: a worker ran no test
 # until call 131 of 206 in a 90-min red iteration).  The invariants below stay
 # here, in the kernel, and are always appended: a template edit cannot drop
-# them.  A missing or empty template falls back to the built-in workflow text.
+# them.  The last invariant is the post-commit regeneration rule — the driver
+# rebuilds the canonical inventory from the committed tree and enforces it,
+# so a worker report never replaces driver authority (handoff §3).
+# A missing or empty template falls back to the built-in workflow text.
 build_worker_gate_notice() {
   local gate_cmds="$1" step="$2"
   local tpl="${_SKILL_ROOT}/ilk-loop/templates/worker-gate-notice.md"
@@ -5825,14 +5848,16 @@ ${indented}
 
 Rules:
 - Run every command above after your commit.
+- Before claiming green, run the canonical inventory entry (\`run_local_checks.py --print-gate-inventory --project <project> --slug <slug> --step <step>\`) and run every check it names — it is the driver's inventory, including synthesized mention partitions, not just the declared gate above.
 - While any is red: fix the code (or fix a test-infra fault), commit with 'test-infra:' in the body if fixing a test, then rerun.
 - End your turn ONLY when all are green.
 - If green is not reachable, end your turn with the failing ids written to the sub-plan's Findings section."
   fi
-  printf '%s\n%s\n%s\n%s\n' "$workflow" \
+  printf '%s\n%s\n%s\n%s\n%s\n' "$workflow" \
     "- Never weaken or delete an assertion. Never add a deselect or baseline_red entry." \
     "- When green: bump current_step from ${step} to the next step (exactly +1), commit that bump, and END YOUR TURN." \
-    "- Do not start the next step in this turn. Never write the sub-plan's status: field."
+    "- Do not start the next step in this turn. Never write the sub-plan's status: field." \
+    "- After your commit the driver regenerates its gate inventory from the committed tree and enforces it. Your report never replaces the driver's inventory."
 }
 
 # Compact observations from the already selected target; no new state owner.
@@ -8065,6 +8090,10 @@ append_revert_row(
     # Instead, stop once with local_checks_environment_fault and let the
     # watchdog park the project.
     # (sub-plan an-unrunnable-derived-check-stops-once, AC-2)
+    #
+    # An inconclusive gate still reconciles a self-ship written during this
+    # iteration, but only through the inconclusive-only entry. It does not
+    # authorize code rollback, regression attribution, or quarantine.
     local _si_stderr=""
     local _ship_integrity_passed=0 _progress_integrity_passed=0 _owned_landing_json="{}"
     local _integrity_started="" _integrity_ended="" _landing_started="" _landing_ended=""

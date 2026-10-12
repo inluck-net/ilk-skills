@@ -170,10 +170,17 @@ class TestDriverAppliesPreludeToAgentEnv:
         The driver once had two arms (env-clear and plain); d451f07 merged
         them into one — the settings env is applied via
         `eval "$settings_env_exports"` inside the single arm, with the
-        prelude eval on the arm's first line and the gtimeout-claude call on
+        prelude eval on the arm's first line and the gtimeout call on
         a continuation line. Pin coverage (each arm has an eval), not the
         arm count: an arm added later without the eval is still the whole
         defect, reachable only on projects with settings env.
+
+        The arm is located by its gtimeout prefix, not by a literal `claude`
+        argument: the arm execs ``"${worker_command[@]}"`` (an array whose
+        first element is claude), so a literal-claude needle matches nothing
+        and the pin silently covers 0 arms.  Matching the prefix widens what
+        counts as an arm, which makes ``evals >= len(invocations)`` stricter,
+        not weaker.
         """
         text = DRIVER.read_text(encoding="utf-8")
         invocations = [ln for ln in text.splitlines()

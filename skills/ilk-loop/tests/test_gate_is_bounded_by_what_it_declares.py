@@ -325,10 +325,11 @@ class TestAC3CapKillRevertsSelfShip:
 
         # Verify the sub-plan was reverted to in-progress.
         plan_text = (plans / "2026-09-23-test-slug.md").read_text()
+        tail = "\n".join((result.stdout + result.stderr).splitlines()[-40:])
         assert re.search(r"^status:\s*in-progress", plan_text, re.MULTILINE), (
             "the sub-plan should have been reverted to in-progress after an "
             f"inconclusive gate, but status is still shipped.\n"
-            f"plan={plan_text[:200]}"
+            f"plan={plan_text[:200]}\nlast 40 lines:\n{tail}"
         )
 
         # Verify auto_block_fails was NOT bumped (the driver's cap caused it).

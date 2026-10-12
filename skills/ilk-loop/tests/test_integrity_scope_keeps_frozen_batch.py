@@ -59,6 +59,7 @@ get_plans_dir() { printf '%s' fixture; }
 test_ship_integrity() { echo 'scope unavailable' >&2; return 2; }
 probe() {
   local iter_stop_reason='' stop_reason='' _si_stderr=''
+  local _driver_progress_accepted=0
   local _ILK_SCRIPT_DIR=fixture local_checks_results='' heads_before_file='' heads_after_file=''
 """+branch+"""
   [[ $_ship_integrity_passed == 0 ]]

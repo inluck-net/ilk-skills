@@ -2256,6 +2256,115 @@ def _load_base_red_ids(project: Path, batch_name: str) -> tuple[list[str], str]:
     return ids_to_deselect, diag
 
 
+def _mention_inventory_for_step(
+    project: Path,
+    slug: str,
+    step: int | None,
+    subplan_checks: list[dict],
+    step_checks: list[dict],
+    *,
+    context: dict | None = None,
+    run_cwd: Path | None = None,
+) -> tuple[list[dict], list[dict], str | None]:
+    """Build the mention inventory the driver will enforce (AC-3).
+
+    Shared by the driver gate (``main``) and the worker-facing
+    ``--print-gate-inventory`` entry so both name the same checks for the
+    same committed tree.  Returns ``(mention_checks, baseline_red,
+    skip_reason)``; ``skip_reason`` is None when the inventory was resolved.
+    """
+    mention_checks: list[dict] = []
+    baseline_red: list[dict] = []
+    if step is None:
+        return mention_checks, baseline_red, "no step"
+    effective_cwd = run_cwd if (context and run_cwd is not None) else project
+    pre_iter_head = os.environ.get("ILK_PRE_ITER_HEAD")
+    if context:
+        pre_iter_head = context.get('repository_bases', {}).get(str(run_cwd))
+        if not pre_iter_head and run_cwd == Path(context['exec_tree']):
+            pre_iter_head = context.get('base_commit')
+    changed_files = _get_changed_files_for_step(effective_cwd, slug, step, pre_iter_head)
+    if changed_files is None:
+        return mention_checks, baseline_red, "mention-gate: skipped (no trailer, no range)"
+    if not changed_files:
+        return mention_checks, baseline_red, None
+    existing_commands = {c.get("command", "") for c in subplan_checks + step_checks}
+    baseline_red = _read_declared_reds(effective_cwd)
+    mention_checks = build_mention_gate_inventory(
+        effective_cwd, changed_files, existing_commands, baseline_red
+    )
+    return mention_checks, baseline_red, None
+
+
+def canonical_gate_inventory(project: Path, slug: str, step: int) -> dict:
+    """The exact production gate inventory, for the worker and the driver.
+
+    One entry point (AC-3).  Returns the declared checks plus every
+    synthesized mention partition, each carrying ``command`` / ``scope`` /
+    ``timeout`` and the committed-tree identity.  The worker runs this after
+    its step commit to name the same checks the driver will enforce; the
+    driver rebuilds it from the committed tree (post-commit regeneration) so
+    a stale worker report can never replace driver authority.
+    """
+    from iteration_context import read_context, root_for_plan, ContextError
+
+    project = Path(project).resolve()
+    try:
+        context = read_context()
+        subplan = find_subplan(project, slug)
+    except ContextError as error:
+        return {"error": str(error), "slug": slug, "step": step, "checks": []}
+    if subplan is None:
+        return {
+            "error": f"sub-plan not found for slug={slug!r} under {project}/docs/plans/",
+            "slug": slug,
+            "step": step,
+            "checks": [],
+        }
+    _fm_text, body = split_frontmatter(read_text(subplan))
+    if context:
+        try:
+            run_cwd = root_for_plan(context, subplan)
+        except (ContextError, ValueError) as error:
+            return {"error": str(error), "slug": slug, "step": step, "checks": []}
+    else:
+        run_cwd, repo_error = resolve_run_cwd(project, subplan, _fm_text)
+        if repo_error:
+            return {"error": repo_error, "slug": slug, "step": step, "checks": []}
+    subplan_checks = parse_local_checks_block(_fm_text)
+    step_checks = extract_step_local_checks(body, step) if step is not None else []
+    mention_checks, _baseline_red, skip = _mention_inventory_for_step(
+        project, slug, step, subplan_checks, step_checks,
+        context=context, run_cwd=run_cwd,
+    )
+    tree = _tree_identity(run_cwd if context else project)
+    return {
+        "slug": slug,
+        "step": step,
+        "tree_sha": tree,
+        "skip_reason": skip,
+        "declared_commands": [c.get("command", "") for c in subplan_checks + step_checks],
+        "mention_check_count": len(mention_checks),
+        "checks": mention_checks,
+    }
+
+
+def _print_gate_inventory_main(argv: list[str]) -> int:
+    """Print the canonical gate inventory as JSON (worker + driver entry).
+
+    Usage: ``run_local_checks.py --print-gate-inventory --project P --slug S --step N``
+    """
+    ap = argparse.ArgumentParser(description="Print the canonical gate inventory")
+    ap.add_argument("--print-gate-inventory", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--project", required=True, type=Path)
+    ap.add_argument("--slug", required=True)
+    ap.add_argument("--step", type=int, required=True)
+    args = ap.parse_args(argv)
+    out = canonical_gate_inventory(args.project, args.slug, args.step)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 2 if out.get("error") else 0
+
+
 def _print_step_gate_main(argv: list[str]) -> int:
     """Print a step's declared gate commands, one per line.
 
@@ -2335,6 +2444,10 @@ def main(argv: list[str]) -> int:
     if "--print-step-gate" in argv:
         return _print_step_gate_main(argv)
 
+    # Dispatch to --print-gate-inventory (canonical worker/driver inventory)
+    if "--print-gate-inventory" in argv:
+        return _print_gate_inventory_main(argv)
+
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--project", required=True, type=Path)
     ap.add_argument("--slug", required=True)
@@ -2375,8 +2488,24 @@ def main(argv: list[str]) -> int:
         try:
             run_cwd=root_for_plan(context,subplan);repo_error=None
             frozen=context['plans'][subplan.name]
-            if step is not None and int(frozen.get('step') or 0)!=step:
-                raise ContextError('gate step differs from frozen registry')
+            # Only a step the dispatch has not reached is out of bounds.
+            # Gating one would let a green result credit unreached work.
+            #
+            # A step AT OR BELOW the frozen one is a re-measure of work the
+            # dispatch already owns, and the driver needs exactly that: the
+            # stale-record fallback (run_ilk_loop_claude.sh "Stale-record
+            # step-0 fallback") re-runs step 0's gate before gating step N
+            # whenever the verify record's tree no longer matches HEAD.
+            # Requiring exact equality made that fallback return
+            # outcome=inconclusive for step 0 — the ContextError below —
+            # which failed gate_first_results_are_green and fell through to
+            # the agent, so the re-measure never happened and the stale
+            # record stayed stale.  Measured 2026-10-12 on
+            # test_a_stale_verify_goes_back_to_step_0::test_stale_record_reruns_step0_before_step1:
+            # step 0 -> inconclusive, step 1 -> pass, same helper, same
+            # repo-root, differing only in --step.
+            if step is not None and int(step) > int(frozen.get('step') or 0):
+                raise ContextError('gate step is beyond the frozen registry step')
             if args.repo_root is not None and args.repo_root.resolve()!=run_cwd:
                 raise ContextError('gate repo override differs from frozen root')
         except (ContextError,ValueError) as error:
@@ -2454,31 +2583,14 @@ def main(argv: list[str]) -> int:
         }))
         return 2
 
-    # AC-1 through AC-7: build the mention-gate inventory if applicable
-    mention_checks: list[dict] = []
-    baseline_red: list[dict] = []
-    if step is not None:
-        # Get pre-iteration head from environment (set by runner)
-        pre_iter_head = os.environ.get("ILK_PRE_ITER_HEAD")
-        if context:
-            pre_iter_head=context.get('repository_bases',{}).get(str(run_cwd))
-            if not pre_iter_head and run_cwd==Path(context['exec_tree']):pre_iter_head=context.get('base_commit')
-        changed_files = _get_changed_files_for_step(run_cwd if context else project, slug, step, pre_iter_head)
-        if changed_files is None:
-            # No trailers and no pre-iteration head — skip with logged warning
-            print(
-                f"mention-gate: skipped (no trailer, no range)",
-                file=sys.stderr,
-            )
-        elif changed_files:
-            # Collect existing commands to avoid duplicates
-            existing_commands = {
-                c.get("command", "") for c in subplan_checks + step_checks
-            }
-            baseline_red = _read_declared_reds(run_cwd if context else project)
-            mention_checks = build_mention_gate_inventory(
-                run_cwd if context else project, changed_files, existing_commands, baseline_red
-            )
+    # AC-1 through AC-7: the mention-gate inventory, from the one canonical
+    # builder shared with --print-gate-inventory (worker/driver parity).
+    mention_checks, baseline_red, mention_skip = _mention_inventory_for_step(
+        project, slug, step, subplan_checks, step_checks,
+        context=context, run_cwd=run_cwd,
+    )
+    if mention_skip:
+        print(mention_skip, file=sys.stderr)
 
     # ── batch-verification gate deselection ──────────────────────────────
     # When the sub-plan has batch_verification: true and a pytest gate runs,

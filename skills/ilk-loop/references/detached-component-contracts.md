@@ -108,6 +108,7 @@ submenu line.
 | `"local_checks_failed"` | A step's local_checks failed | Terminal |
 | `"local_checks_failed_no_commits"` | A step's local_checks failed with 0 new commits this iteration (gate red on an unchanged tree — a red base or environment). Never set after an interrupted iteration with 0 commits (the gate is skipped; `_should_gate_iteration` returns 1) | Terminal |
 | `"local_checks_environment_fault"` | A derived check (e.g. mention gate) could not run because its binary is missing from PATH (exit 126/127). The gate record carries `reason: "environment-fault: ..."`. Distinct from `local_checks_failed` (tests ran and failed) — the environment is broken, not the code. The sub-plan is NOT reverted; the project is parked. (sub-plan `an-unrunnable-derived-check-stops-once`) | Terminal |
+| `"local_checks_inconclusive"` | The gate produced no trustworthy verdict: a check outcome was unmeasured, the check's flaky/verdict history was unavailable, progress projection failed, or the frozen scope was missing. "no attribution, rollback or quarantine" and "no strike or passing proof" — there is nothing to blame, so nothing is reverted and nothing is credited. Distinct from `local_checks_failed` (a verdict of red) and from `local_checks_environment_fault` (a derived check never ran). A self-ship taken during the iteration is reverted to `in-progress` because no green proof exists at or after it | Terminal |
 | `"interrupted"` | The run ended without a terminal state. An operator stop (INT/TERM to the runner) adds `stopped_by: "signal:<SIG>"`; its absence means a crash or an unexplained exit. The watchdog never relaunches a sentinel carrying `stopped_by` (`relaunch_guard.py`) | Terminal |
 | `"error"` | Unexpected runner error | Terminal |
 | `"dispatch_identity_invalid"` | Exact selected-master/plan identity is missing or ambiguous; no dispatch | Terminal |
@@ -695,17 +696,51 @@ catches the 93-minute-delayed failure from retro F7.
    skips the gate and logs `WARN mention-gate: <n> files cite
    <X>:<line> — over cap, not gated`.
 
-5. **Synthesis** (AC-3): appends one check to the step's gate:
-   `<resolved suite invocation> <test files…>`, with `scope: mention`,
-   timeout 300. If the declared gate already runs a file, drops it. If
-   nothing is left, appends nothing.
+5. **Synthesis** (AC-3, updated 2026-10-12): builds one bounded check
+   **per basename partition** via the one canonical entry point
+   `build_mention_gate_inventory` (alias `_synthesize_mention_check`):
+   `<resolved suite invocation> <partition files…>`, `scope: mention`,
+   timeout 300. Files the declared gate already runs IN FULL are dropped
+   (coverage is parsed from real pytest file/directory arguments, not
+   substrings). Colliding import basenames never share an invocation —
+   pytest's prepend mode cannot collect them together. If nothing is left,
+   the inventory is empty.
 
 6. **Vitest** (AC-6): a vitest project gets a `vitest run <files>` form.
 
-**Output format:** the synthesized check appears in the results array
-with `scope: "mention"` (instead of `"subplan"` or `"step"`). The
-top-level `mention_check_count` field indicates whether a mention check
-was appended (0 or 1).
+**Output format (payload extended 2026-10-11/12):** each mention check
+appears in the results array with `scope: "mention"` and carries its
+inventory identity alongside the usual `command` / `timeout` / `passed` /
+`exit_code` fields:
+
+| field | meaning |
+|---|---|
+| `files` | repo-relative test files in this partition |
+| `partition_index` | 0-based index of this partition |
+| `partition_count` | total partitions for this inventory |
+| `tree_sha` | committed-tree identity the inventory was built for |
+
+The top-level `mention_check_count` is the **number of partitions**, not a
+0/1 flag (it was a 0/1 flag before the partition refactor). A consumer that
+treats it as boolean still works; one that needs the checks must read
+`results[]` filtered on `scope == "mention"`.
+
+### Canonical gate inventory — worker and driver (added 2026-10-12)
+
+`run_local_checks.py --print-gate-inventory --project P --slug S --step N`
+prints the exact production inventory (declared commands plus every
+synthesized mention partition, each with the identity fields above) as JSON.
+It is the same builder `main()` uses, so worker and driver **name the same
+checks for the same committed tree**.
+
+**Post-commit regeneration rule.** After the worker's step commit the driver
+regenerates the inventory from the committed tree and enforces the
+regenerated checks. A worker report never replaces driver authority: a green
+claim from the worker is not an input to the verdict, and an inventory tied
+to an older tree does not describe what will ship. The worker is told this
+in `build_worker_gate_notice`'s kernel invariants
+(`run_ilk_loop_claude.sh`) and pointed at `--print-gate-inventory` in
+`templates/worker-gate-notice.md` before it claims green.
 
 ### Rollup rule
 
