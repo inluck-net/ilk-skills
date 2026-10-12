@@ -94,6 +94,11 @@
       "path": "skills/ilk-loop/scripts/run_registry.py",
       "guard": "owner",
       "why": "run identity, verified process groups and lifecycle authority"
+    },
+    {
+      "path": "skills/ilk-watchdog/scripts/park_dead_master.py",
+      "guard": "owner",
+      "why": "Scheduler-owned master parking with registry liveness and journaled state/body CAS."
     }
   ],
   "kernel": [

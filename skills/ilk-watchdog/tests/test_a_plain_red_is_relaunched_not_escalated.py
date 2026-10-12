@@ -277,6 +277,8 @@ class TestAC2_BoundAtMostTwice:
         run_id_3 = "20261007-212959"
         slug = "a-plain-red-is-relaunched-not-escalated"
 
+        triage_home=tmp_path/"triage-home"
+        triage_home.mkdir()
         decide_called = {"count": 0}
 
         def mock_decide(evidence, *, home, timeout_s=600, skip_audit=False):
@@ -300,16 +302,16 @@ class TestAC2_BoundAtMostTwice:
 
         # Run 1
         _build_data_dir(tmp_path / "projects" / "run1", run_id=run_id_1, slug=slug)
-        run_triage(project_key="run1", run_id=run_id_1, home=None, timeout_s=5)
+        run_triage(project_key="run1", run_id=run_id_1, home=triage_home, timeout_s=5)
 
         # Run 2
         _build_data_dir(tmp_path / "projects" / "run2", run_id=run_id_2, slug=slug)
-        run_triage(project_key="run2", run_id=run_id_2, home=None, timeout_s=5)
+        run_triage(project_key="run2", run_id=run_id_2, home=triage_home, timeout_s=5)
 
         # Run 3: at base, decide() is called for ALL three runs (count == 3).
         # After the bound is implemented, count should be 1 (only the third).
         _build_data_dir(tmp_path / "projects" / "run3", run_id=run_id_3, slug=slug)
-        run_triage(project_key="run3", run_id=run_id_3, home=None, timeout_s=5)
+        run_triage(project_key="run3", run_id=run_id_3, home=triage_home, timeout_s=5)
 
         assert decide_called["count"] == 1, (
             f"decide() should be called once (third red only), "

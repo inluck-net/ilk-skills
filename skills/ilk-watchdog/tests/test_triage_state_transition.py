@@ -183,3 +183,14 @@ def test_triage_refuses_when_another_run_is_launching(tmp_path,monkeypatch):
                              data,run_id='old-run')
     assert result['action']=='refused' and path.read_bytes()==before
     assert not (data/'runtime/launcher/blacklist-cleared.json').exists()
+
+
+def test_rule_first_proposal_does_not_mutate_plan_before_guarded_apply(tmp_path,monkeypatch):
+    import ilk_triage
+    data,path=fixture(tmp_path,'hold: human\n');before=path.read_bytes()
+    launcher=data/'runtime/launcher';launcher.mkdir(parents=True)
+    (launcher/'last-exit.json').write_text(json.dumps({'run_id':'rule-fixture','state':'local_checks_failed','failed_check':{'slug':'triage','step':2}}))
+    (launcher/'gate-history.jsonl').write_text(json.dumps({'run_id':'rule-fixture','slug':'triage','step':2,'outcome':'fail','attribution':{'node_ids':['tests/test_case.py::test_case']}})+'\n')
+    decision=ilk_triage._try_rule_first(data,run_id='rule-fixture',plans_dir=path.parent,data_root=tmp_path)
+    assert decision['action']=='ack-and-relaunch'
+    assert path.read_bytes()==before

@@ -765,11 +765,6 @@ def _try_rule_first(
     )
 
     red_owner = last_red.get("red_owner")
-    _write_rule_finding(
-        plans_dir, data_dir,
-        slug=slug, run_id=run_id,
-        node_ids=node_ids, red_owner=red_owner,
-    )
 
     return {
         "action": "ack-and-relaunch",
@@ -778,45 +773,13 @@ def _try_rule_first(
         "finding": (
             f"gate red — failing ids: {', '.join(node_ids)}"
             + (f"\nred-owner: {red_owner}" if red_owner else "")
+            + "\nFix the code, never the assertion."
         ),
         "basis": "local_checks_failed with known failing node ids",
         "falsifier": "gate green",
         "model": None,
+        "source": "rule",
     }
-
-
-def _write_rule_finding(
-    plans_dir: Path,
-    data_dir: Path,
-    *,
-    slug: str,
-    run_id: str,
-    node_ids: list[str],
-    red_owner: str | None,
-) -> None:
-    """Append a ``#### Triage <ts> (rule)`` block to the sub-plan's Findings."""
-    matches = list(plans_dir.glob(f"*{slug}*.md"))
-    if not matches:
-        return
-    plan_path = matches[0]
-    text = plan_path.read_text(encoding="utf-8")
-
-    ts = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-    ids_block = "\n".join(f"  - {nid}" for nid in node_ids)
-    block = (
-        f"\n#### Triage {ts} (rule)\n"
-        f"- Failing ids:\n{ids_block}\n"
-    )
-    if red_owner:
-        block += f"- Red-owner: {red_owner}\n"
-    block += "- Fix the code, never the assertion.\n"
-
-    if "## Findings" in text:
-        text = text.replace("## Findings\n", "## Findings\n" + block, 1)
-    else:
-        text += f"\n## Findings\n{block}\n"
-
-    plan_path.write_text(text, encoding="utf-8")
 
 
 def run_triage(

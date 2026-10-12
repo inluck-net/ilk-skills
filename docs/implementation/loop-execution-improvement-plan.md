@@ -22,9 +22,9 @@ Delivery target: by 2026-10-12 00:48 Asia/Shanghai (two hours from Chad’s
 request). This is a target, not permission to interrupt the live batch or omit
 required correctness. Prioritize delivery closure over new exploratory work.
 
-Current next action: deliver the checked frozen-target triage correction, then
-finish the named state/lifecycle caller inventory before member/portable adapters.
-Toolkit preview 43f9c354
+Current next action: deliver the checked dead-master transaction and rule-first
+triage closure, then finish the named state/lifecycle caller inventory before
+member/portable adapters. Toolkit preview ae7873ce
 and consumer compatibility 3987a299 are locally installed and checked. The original idle controller exit is historical. Current controller 94556
 remained alive on private pinned inputs during the latest activation; its
 pause, plans, hooks and manifest bytes were preserved. No active
@@ -3716,3 +3716,42 @@ invalidates that fixture margin, not a production limit. No numeric production
 default was added. This is a checked candidate awaiting local activation; it
 closes this named caller, not every authority migration or multi-file atomicity.
 No live batch, worker or plan was changed.
+
+
+### Frozen triage delivered; dead-master and rule-first closure checked
+
+Preview `ae7873ce` installed after fresh idle proof. First attempt refused the
+active gh-resolve reaper before mutation; second attempt at an idle boundary
+preserved controller 94556 and all 1,891 protected hashes, restored services.
+Evidence: `toolkit-delivery-preview-20261012z/installed.json`.
+
+Dead-master parking reproduced two failures (**2 failed in 0.05s**): progress
+body rewrites broke the journal's final-byte identity, and a live project was
+parked from its stale sentinel. `plan_state.transition` now accepts an additive
+progress note in the same CAS replacement as the status. `park_dead_master`
+checks canonical liveness, exact source bytes, human holds and optional recorded
+master identity; unsafe marker run IDs refuse. Its state/body transaction is
+journaled together; only successful transitions write the parking marker.
+It is registered as owner-only authority for new bases (missing-registration
+negative **1 failed, 22 deselected in 0.05s**). Historical policy stays frozen.
+This is not a project-wide atomic exclusion against a concurrent new launch.
+
+Initial parking/caller checks passed **9 in 0.74s**; hold, worker, stale-byte,
+wrong-master, invalid-ID and unknown-registry checks passed in the expanded
+**44-check run (0.92s)**. Adjacent state/kernel checks initially had **57 passed,
+1 failed in 1.68s**: the real-entry fixture set a held-lock flag without owning
+its required lock identity. A session-only fixture adjustment still failed;
+the corrected fixture acquires the real `ilk_run_lock.py` wrapper. Fourteen
+actual state-repair/worker-mutation entry checks then passed in **15.37s**.
+The existing 180-second outer fixture cap is unchanged; these are local stub
+provider checks, not performance measurements or a routine final verifier.
+
+The remaining rule-first triage writer also reproduced mutating a held plan
+before guarded apply (**1 failed in 0.05s**). Proposal construction no longer
+writes plan files; the existing guarded findings transition adds the rule label,
+failing IDs and repair guidance exactly once. An older retry-bound test relied
+on the user's triage home; it now creates its own explicit fixture home.
+Expanded state/kernel/rule/parking checks passed **82 in 1.22s**. Diff whitespace
+check passed. No production numeric threshold/default was added. This closure
+is candidate-only until safe installation, and does not mark all C4/D1 complete.
+No live plans, pause state, worker or pinned input was changed.

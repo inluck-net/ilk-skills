@@ -157,7 +157,7 @@ def _recover(log,path,content):
 
 
 def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, guards=None,
-               findings_note=None,release_auto_block=False,expected_digest=None) -> bool:
+               findings_note=None,progress_note=None,release_auto_block=False,expected_digest=None) -> bool:
     """Change only requested scalar state fields if every expected value matches.
 
     Human holds cannot be lifted or progressed by driver calls. The worker
@@ -169,6 +169,8 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
         raise TransitionError('expected state, requested state, actor and reason required')
     if findings_note is not None and (not isinstance(findings_note,str) or '\x00' in findings_note):
         raise TransitionError('invalid finding text')
+    if progress_note is not None and (not isinstance(progress_note,str) or '\x00' in progress_note):
+        raise TransitionError('invalid progress text')
     path=Path(path).resolve(strict=True)
     guards={Path(guard).resolve(strict=True):expected for guard,expected in (guards or {}).items()}
     if any(guard.parent!=path.parent for guard in guards):
@@ -237,6 +239,16 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
                 position=start+following.start() if following else len(projected)
                 projected=projected[:position].rstrip()+'\n\n'+findings_note+'\n\n'+projected[position:].lstrip('\n')
             else:projected=projected.rstrip()+'\n\n## Findings\n\n'+findings_note+'\n'
+        if progress_note is not None:
+            markers=list(re.finditer(r'^## Progress log[ \t]*$',projected,re.M))
+            if len(markers)>1:raise TransitionError('duplicate progress log section')
+            if markers:
+                start=markers[0].end()
+                following=re.search(r'^## ',projected[start:],re.M)
+                position=start+following.start() if following else len(projected)
+                projected=projected[:position].rstrip()+'\n'+progress_note+'\n\n'+projected[position:].lstrip('\n')
+            else:
+                projected=projected.rstrip()+'\n\n## Progress log\n\n| Date | Event |\n|---|---|\n'+progress_note+'\n'
         # State transactions preserve the source encoding/newline convention.
         if b'\r\n' in content:
             projected=projected.replace('\r\n','\n').replace('\n','\r\n')

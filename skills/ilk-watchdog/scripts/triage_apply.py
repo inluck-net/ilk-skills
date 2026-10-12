@@ -115,6 +115,7 @@ def _append_finding(
     finding: str,
     basis: str,
     falsifier: str,
+    rule_based: bool = False,
 ) -> None:
     """Append a ``#### Triage <ts> (run <id>)`` block under ``## Findings``."""
     from plan_state import transition,TransitionError
@@ -124,7 +125,7 @@ def _append_finding(
     if not fm.get('status'):raise TransitionError('triage target status is missing')
     ts = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
     block = (
-        f"#### Triage {ts} (run {run_id})\n"
+        f"#### Triage {ts} (run {run_id}){' (rule)' if rule_based else ''}\n"
         f"- Finding: {finding}\n"
         f"- Basis: {basis}\n"
         f"- Falsifier: {falsifier}\n"
@@ -736,6 +737,7 @@ def _do_ack_and_relaunch(
             finding=decision.get("finding", ""),
             basis=decision.get("basis", ""),
             falsifier=decision.get("falsifier", ""),
+            rule_based=decision.get("source")=="rule",
         )
 
     write_resume_ack(data_dir)

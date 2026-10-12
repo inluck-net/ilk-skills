@@ -16,6 +16,8 @@ Exit 0 always.  Prints one JSON line:
 from __future__ import annotations
 
 import json
+import hashlib
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -27,7 +29,7 @@ sys.path.insert(0, str(_LOOP_SCRIPTS))
 
 from ilk_audit import write_audit  # noqa: E402
 from plan_status import parse_frontmatter  # noqa: E402
-from promote_next_master import write_status  # noqa: E402
+from plan_state import transition, TransitionError  # noqa: E402
 
 _TARGET_STATE = "work_tree_invalid"
 _PARKED_STATUS = "paused"
@@ -62,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         _result(None, run_id=run_id, reason=f"state is {state!r}, not {_TARGET_STATE!r}")
         return 0
 
-    if not run_id:
+    if not run_id or not re.fullmatch(r'[A-Za-z0-9_.-]+',run_id) or run_id in {'.','..'}:
         _result(None, reason="sentinel has no run_id")
         return 0
 
@@ -72,20 +74,34 @@ def main(argv: list[str] | None = None) -> int:
         _result(None, run_id=run_id, reason=f"already handled (marker {marker.name})")
         return 0
 
+    # A stale sentinel cannot park another live or launching batch.
+    from run_registry import project_status, RegistryError
+    try:
+        if project_status(project_dir/'runtime/launcher')['busy']:
+            _result(None,run_id=run_id,reason='project has a live or launching run')
+            return 0
+    except (RegistryError,OSError,ValueError) as exc:
+        _result(None,run_id=run_id,reason=f'project ownership unverified: {exc}')
+        return 0
+
     # ── find the single active master ─────────────────────────────────────
     plans_dir = project_dir / "plans"
     if not plans_dir.is_dir():
         _result(None, run_id=run_id, reason="no plans dir")
         return 0
 
-    active_masters: list[tuple[Path, dict]] = []
+    active_masters = []
     for p in sorted(plans_dir.glob("MASTER-*.md")):
         try:
-            fm = parse_frontmatter(p.read_text(encoding="utf-8-sig"))
+            if p.resolve().parent!=plans_dir.resolve():
+                _result(None,run_id=run_id,reason="master escapes plans root")
+                return 0
+            raw=p.read_bytes()
+            fm = parse_frontmatter(raw.decode("utf-8-sig"))
         except OSError:
             continue
         if (fm.get("status") or "").strip().lower() == "active":
-            active_masters.append((p, fm))
+            active_masters.append((p, fm, raw))
 
     if not active_masters:
         _result(None, run_id=run_id, reason="no active master found")
@@ -96,59 +112,26 @@ def main(argv: list[str] | None = None) -> int:
                 reason=f"{len(active_masters)} active masters; expected 1")
         return 0
 
-    master_path, _fm = active_masters[0]
+    master_path, _fm, raw = active_masters[0]
+    recorded_master=sentinel.get('master_path')
+    if recorded_master is not None and (not isinstance(recorded_master,str)
+            or not Path(recorded_master).is_absolute() or Path(recorded_master).resolve()!=master_path.resolve()):
+        _result(None,run_id=run_id,reason='sentinel master contradicts active master')
+        return 0
 
-    # ── park: set status to paused ────────────────────────────────────────
-    write_status(master_path, _PARKED_STATUS)
-
-    # ── append progress-log row ───────────────────────────────────────────
+    # Status and explanatory body bytes share the same CAS/journal replacement.
     today = date.today().isoformat()
     log_row = (
         f"| {today} | Parked by the scheduler: run {run_id} ended "
         f"work_tree_invalid (no restart can fix it). |"
     )
-    text = master_path.read_text(encoding="utf-8-sig")
-    lines = text.splitlines(keepends=True)
-    out: list[str] = []
-    in_progress_section = False
-    inserted = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped == "## Progress log":
-            in_progress_section = True
-            out.append(line)
-            continue
-        if in_progress_section and stripped.startswith("## "):
-            # End of progress-log section — insert before the next heading.
-            out.append(log_row + "\n")
-            inserted = True
-            in_progress_section = False
-            out.append(line)
-            continue
-        out.append(line)
-    # If the section was the last thing in the file (no trailing heading).
-    if in_progress_section and not inserted:
-        # Ensure a trailing newline before the row.
-        if out and not out[-1].endswith("\n"):
-            out[-1] += "\n"
-        out.append(log_row + "\n")
-        inserted = True
-
-    # Create the section if the master had none.
-    if not inserted:
-        if out and not out[-1].endswith("\n"):
-            out[-1] += "\n"
-        out.append("\n## Progress log\n\n")
-        out.append("| Date | Event |\n")
-        out.append("|---|---|\n")
-        out.append(log_row + "\n")
-        inserted = True
-
-    if inserted:
-        tmp = master_path.with_suffix(master_path.suffix + ".tmp")
-        tmp.write_text("".join(out), encoding="utf-8")
-        import os
-        os.replace(tmp, master_path)
+    try:
+        transition(master_path,{'status':_fm['status']},{'status':_PARKED_STATUS},
+                   actor='scheduler',reason='stopped run has an invalid work tree',
+                   progress_note=log_row,expected_digest=hashlib.sha256(raw).hexdigest())
+    except (TransitionError,OSError) as exc:
+        _result(None,run_id=run_id,reason=f'state transition refused: {exc}')
+        return 0
 
     # ── audit row ─────────────────────────────────────────────────────────
     key = project_dir.name

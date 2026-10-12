@@ -232,9 +232,13 @@ echo "MAIN_RC=$?"
            "HOME": str(root), "ILK_DATA_HOME": str(data_home)}
     env.pop("ILK_DATA_DIR", None)
     env.pop("ILK_DOTSOURCE_ONLY", None)
-    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+    # The real single-instance lock supplies PID/start/group authority; setting
+    # ILK_RUN_LOCK_HELD alone cannot invent the registry's required identity.
+    lock_helper=_DRIVER.parent/'ilk_run_lock.py'
+    proc = subprocess.run(["python3",str(lock_helper),"--lock",str(sentinel.parent/'run.lock'),
+                           "--","bash", "-c", script], capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=180,
-                          env=env, cwd=str(root))
+                          env=env, cwd=str(root), start_new_session=True)
     state = json.loads(sentinel.read_text()) if sentinel.exists() else {}
     return proc, master, state
 
