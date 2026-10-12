@@ -48,8 +48,12 @@ print(cur if isinstance(cur, str) else "")
 PY
 }
 
-# Only guard Read calls — everything else passes through.
-[[ "$(field tool_name)" == "Read" ]] || allow
+# Compaction removes the context the ledger describes. PreCompact is too
+# early: it can be cancelled, so invalidate only after it completes.
+hook_event="$(field hook_event_name)"
+if [[ "${hook_event}" != "PostCompact" ]]; then
+  [[ "$(field tool_name)" == "Read" ]] || allow
+fi
 
 # Resolve the session key: session_id → transcript_path → cwd+PPID.
 session_key=""
@@ -76,6 +80,11 @@ ledger_dir="${ILK_READ_LEDGER_DIR:-${ILK_DATA_HOME:-${ILK_DATA_DIR:-$HOME/.ilk-d
 mkdir -p "${ledger_dir}" 2>/dev/null || allow
 
 ledger_file="${ledger_dir}/${session_key}.json"
+
+if [[ "${hook_event}" == "PostCompact" ]]; then
+  rm -f -- "${ledger_file}" 2>/dev/null || true
+  allow
+fi
 
 # Resolve the target file path from tool_input.file_path.
 target_path="$(field tool_input.file_path)"

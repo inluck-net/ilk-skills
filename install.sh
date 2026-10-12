@@ -1082,11 +1082,13 @@ reconcile_hooks_settings() {
   echo
   echo "=== hooks settings.json reconcile ($mode) ==="
 
-  # Declaration table — each row: "filename:matcher:hosts"
+  # Declaration table — each row: "filename:matcher:hosts[:event]".
+  # The default event is PreToolUse.
   # hosts = "all" (both interactive and worker) or "worker" (worker only).
   local HOOK_TABLE=(
     "no-full-suite.sh:Bash:all"
     "no-duplicate-read.sh:Read:worker"
+    "no-duplicate-read.sh:auto|manual:worker:PostCompact"
     "no-live-clone-edit.py:Edit|Write|MultiEdit|NotebookEdit:worker"
     "no-live-clone-edit.py:Bash:worker"
     "no-foreign-plan-edit.py:Edit|Write|MultiEdit|NotebookEdit:worker"
@@ -1096,17 +1098,19 @@ reconcile_hooks_settings() {
   )
 
   # Serialise the table for the Python block.
-  local hook_cmds=() matchers=() hosts=()
+  local hook_cmds=() matchers=() hosts=() events=()
   for entry in "${HOOK_TABLE[@]}"; do
-    IFS=: read -r cmd mtr hst <<< "$entry"
+    IFS=: read -r cmd mtr hst evt <<< "$entry"
     hook_cmds+=("$cmd")
     matchers+=("$mtr")
     hosts+=("$hst")
+    events+=("${evt:-PreToolUse}")
   done
-  local hook_cmds_json matchers_json hosts_json
+  local hook_cmds_json matchers_json hosts_json events_json
   hook_cmds_json=$(printf '%s\n' "${hook_cmds[@]}" | python3 -c "import sys,json; print(json.dumps([l.rstrip() for l in sys.stdin]))")
   matchers_json=$(printf '%s\n' "${matchers[@]}" | python3 -c "import sys,json; print(json.dumps([l.rstrip() for l in sys.stdin]))")
   hosts_json=$(printf '%s\n' "${hosts[@]}" | python3 -c "import sys,json; print(json.dumps([l.rstrip() for l in sys.stdin]))")
+  events_json=$(printf '%s\n' "${events[@]}" | python3 -c "import sys,json; print(json.dumps([l.rstrip() for l in sys.stdin]))")
 
   for hooks_dir in "${TARGET_HOOKS[@]}"; do
     local settings="${hooks_dir%/hooks}/settings.json"
@@ -1116,7 +1120,7 @@ reconcile_hooks_settings() {
       host_type="worker"
     fi
 
-    python3 - "$settings" "$hook_cmds_json" "$matchers_json" "$hosts_json" "$host_type" "$apply" <<'PYEOF'
+    python3 - "$settings" "$hook_cmds_json" "$matchers_json" "$hosts_json" "$host_type" "$apply" "$events_json" <<'PYEOF'
 import json, os, sys
 
 settings_path = sys.argv[1]
@@ -1125,6 +1129,7 @@ matchers = json.loads(sys.argv[3])
 hosts = json.loads(sys.argv[4])
 host_type = sys.argv[5]
 dry_run = sys.argv[6] != "1"
+events = json.loads(sys.argv[7]) if len(sys.argv) > 7 else ["PreToolUse"] * len(hook_cmds)
 
 _INTERPRETERS = ("python3 ", "python ", "bash ", "sh ")
 
@@ -1145,30 +1150,21 @@ else:
     settings = {}
 
 hooks = settings.get("hooks", {})
-pre_tool = hooks.get("PreToolUse", [])
-if not pre_tool:
-    pre_tool = []
-    hooks["PreToolUse"] = pre_tool
-
-from collections import defaultdict
-entries_by_matcher = defaultdict(list)
-for e in pre_tool:
-    entries_by_matcher[e.get("matcher")].append(e)
 any_change = False
 
-for hook_cmd, matcher, hook_hosts in zip(hook_cmds, matchers, hosts):
+for hook_cmd, matcher, hook_hosts, event in zip(hook_cmds, matchers, hosts, events):
     # Skip hooks scoped to a different host type (AC-3).
     if hook_hosts == "worker" and host_type != "worker":
         continue
 
+    event_entries = hooks.setdefault(event, [])
     hook_path = os.path.join(os.path.dirname(settings_path), "hooks", hook_cmd)
     hook_norm = _normalise(hook_path)
-    entries = entries_by_matcher.get(matcher, [])
+    entries = [entry for entry in event_entries if entry.get("matcher") == matcher]
     if not entries:
         entry = {"matcher": matcher, "hooks": []}
-        pre_tool.append(entry)
-        entries_by_matcher[matcher].append(entry)
-        entries = entries_by_matcher[matcher]
+        event_entries.append(entry)
+        entries = [entry]
 
     # Check if the hook is already registered in any entry for this matcher.
     # Normalise commands so a hand-wired ``python3 <path>`` is recognised as
@@ -1206,7 +1202,6 @@ for hook_cmd, matcher, hook_hosts in zip(hook_cmds, matchers, hosts):
     entry["hooks"] = kept
     any_change = True
 
-hooks["PreToolUse"] = pre_tool
 settings["hooks"] = hooks
 
 if dry_run:

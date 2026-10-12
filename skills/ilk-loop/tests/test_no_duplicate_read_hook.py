@@ -450,3 +450,30 @@ class TestAlwaysExitZero:
         event = _make_read_event("/tmp/test.py")
         del event["session_id"]
         _run_hook(event, ledger)
+
+
+class TestCompactionResetsOnlyItsSession:
+    def test_post_compact_allows_reread_without_clearing_other_session(self, tmp_path):
+        ledger = tmp_path / "ledger"
+        target = tmp_path / "source.py"
+        target.write_text("content")
+        a = _make_read_event(str(target), session_id="compact-A")
+        b = _make_read_event(str(target), session_id="compact-B")
+        _run_hook(a, ledger)
+        _run_hook(b, ledger)
+        assert not _run_hook(a, ledger)["allowed"]
+        compact = {"session_id": "compact-A", "hook_event_name": "PostCompact",
+                   "trigger": "auto", "compact_summary": "summary, not original file"}
+        assert _run_hook(compact, ledger)["allowed"]
+        assert _run_hook(a, ledger)["allowed"], "compaction invalidates context residency"
+        assert not _run_hook(b, ledger)["allowed"], "another session remains intact"
+
+    def test_pre_compact_does_not_claim_context_was_removed(self, tmp_path):
+        ledger = tmp_path / "ledger"
+        target = tmp_path / "source.py"
+        target.write_text("content")
+        event = _make_read_event(str(target), session_id="precompact-A")
+        _run_hook(event, ledger)
+        compact = {"session_id": "precompact-A", "hook_event_name": "PreCompact", "trigger": "auto"}
+        assert _run_hook(compact, ledger)["allowed"]
+        assert not _run_hook(event, ledger)["allowed"]

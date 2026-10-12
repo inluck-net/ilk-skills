@@ -74,3 +74,9 @@ Default-path correctness first, then execution coverage, then bookkeeping. Reord
 2026-10-12 11:46:next11b gate base traps verified.3529ee25 fixes optional registry/taxonomy;15no-installed-home checks green. Measured-green red rejection fixture:old control fails,new7checks pass21.27s. Next-iteration evidence queued; live plans unchanged. Continue D1.
 
 2026-10-12 11:49:remaining31existing gate-file selection closes on side tree:317passed,1existing xfail22.55s. Future feature tests remain absent, so not feature acceptance. D1workers progressing; continue.
+
+2026-10-12 11:57:launcher shell caller matrix2old expectations contradicted released worker floor; corrected14checks pass, explicit planner/invalid-engine cases intact. No production engine change. Continue D1.
+
+2026-10-12 11:59:postmortem step0 declared8green but derived callers2red; not accepted. Driver restored step0 and iteration3retry dispatched automatically. Owner fixture diagnosis available; no hand state edits. Retain1533s failed attempt in D2comparison.
+
+2026-10-12 12:23:verified post-compaction read-denial blocker: session ledger survived compaction and caused Bash reread workarounds. Hook now resets only that session on PostCompact; installer declares worker-only event, preserving foreign entries and idempotence. New controls failed before fix; two focused hook files:56passed5.97s. Active frozen inputs untouched. Continue D1, then narrow release at boundary; no full suite.

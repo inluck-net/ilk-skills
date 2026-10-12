@@ -390,6 +390,34 @@ def _run_reconcile_multi(hooks_dir: str, *, apply: bool = True,
     return result.stdout.strip()
 
 
+@pytest.mark.parametrize("host", ["worker", "interactive"])
+def test_declared_postcompact_hook_preserves_foreign_entries(tmp_path, host):
+    import re
+    source = (REPO_ROOT / "install.sh").read_text()
+    table = source.split("local HOOK_TABLE=(", 1)[1].split("\n  )", 1)[0]
+    rows = [row.split(":") for row in re.findall(r'"([^"\n]+)"', table)]
+    assert any(len(row) == 4 and row[0] == "no-duplicate-read.sh"
+               and row[3] == "PostCompact" for row in rows)
+    settings_path = tmp_path / "settings.json"
+    foreign = {"matcher": "auto", "hooks": [{"type": "command", "command": "/foreign/compact"}]}
+    settings_path.write_text(json.dumps({"hooks": {"PostCompact": [foreign]}}))
+    argv = [sys.executable, "-", str(settings_path)]
+    argv += [json.dumps([row[i] for row in rows]) for i in range(3)]
+    argv += [host, "1", json.dumps([row[3] if len(row) == 4 else "PreToolUse" for row in rows])]
+    for attempt in range(2):
+        before = settings_path.read_bytes()
+        result = subprocess.run(argv, input=_extract_reconcile_python(), text=True,
+                                capture_output=True, timeout=10)
+        assert result.returncode == 0, result.stderr
+        if attempt:
+            assert settings_path.read_bytes() == before
+    entries = json.loads(settings_path.read_text())["hooks"]["PostCompact"]
+    assert entries[0] == foreign
+    commands = [hook["command"] for entry in entries for hook in entry["hooks"]]
+    expected = str(tmp_path / "hooks/no-duplicate-read.sh")
+    assert commands.count(expected) == (1 if host == "worker" else 0)
+
+
 
 
 class TestSettingsReconcileBothHooks:
