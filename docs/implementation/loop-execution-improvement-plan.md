@@ -1,52 +1,34 @@
-# ilk-skills delivery tracker — D1/D2 only
+# ilk-skills delivery tracker — D1/D2 complete
 
-ACTIVE; updated 2026-10-12T14:59:09+08:00. Chad reassigned owner work to D1 and D2. **D3 is deferred until D2 is resolved; do not start a row.** Earlier whole-checklist/reporting-stop instructions are superseded.
+Completed 2026-10-12T23:12:19+08:00. Chad assigned D1 and D2 to this owner. D3 remains deferred and none of its nine rows was started. Detailed dated evidence remains in `~/.ilk-data/projects/users-chad-projects-github-inluck-net-ilk-skills-604d727/runtime/analysis/design-revision-20261011/owner-readiness-report-20261012.md` and Git history.
 
-Active integration worktree: `/Users/chad/Projects/github/inluck-net/ilk-skills-worktrees/owner-release-integration-20261012`, branch `owner/release-integration-20261012`. Original owner source: `../owner-loop-performance-20261011` at dd493098 (tracker prose may be dirty). Full dated evidence: `~/.ilk-data/projects/users-chad-projects-github-inluck-net-ilk-skills-604d727/runtime/analysis/design-revision-20261011/owner-readiness-report-20261012.md`. Git and earlier handoffs retain history; handoff2's estimation-only pause is revoked by Chad's continuation.
+## Definition of done
 
-## Outcomes and order
+- [x] D1: ilk-skills 11b and gh-resolve 10c masters shipped through loop-owned commits, unattended on v0.9.194 or later, without owner edits to progress state.
+- [x] D2: a real two-step code-only trial qualified against the predeclared default comparator; code-only became the managed-Mac default on both hosts; a genuine live batch then accepted and shipped a step on that released default.
+- [ ] D3: deferred by Chad; do not start without new scope.
 
-- [ ] D1:11b and10c masters show shipped with loop-authored ship commits; unattended runs on194+; no owner plan-state edits.
-- [ ] D2:real two-step code-only feature qualifies, or is ruled out after at most3failed attempts with measured root cause. Qualification requires>=2driver-accepted steps, no human intervention, and all-attempt wall/accepted step no worse than comparable default steps. If qualified, release core-loop default on both hosts, verify, then observe a live accepted step. If ruled out, keep opt-in.
-- D2 may start once11bships and195is verified on both hosts; it does **not** wait for10ccompletion.
-- D3:all9backlog rows remain deferred. Canonical IDs/order in `owner-scope-freeze-backlog-20261012.json` and readiness report; no work started.
+## Delivered evidence
 
-Rules: focused tests only, no full suites/final verifier unless explicitly changed. No main hand commits under a live batch. No stop/park/hotpatch of progressing runs. Side-ref landing at toolkit batch boundary. Both-host release verification includes scheduler exact head, fresh decision and deploy status; keep rezmac host-compat.json. No preview flips, gate-result reuse, fabricated batch proof, or silent attribution of baseline reds to workers. Fix only evidenced blockers with failing controls. Dated milestones here and in report, then continue. Label numeric/context/model/effort changes with judgment basis/falsifier.
+- 11b master: `status: shipped`; loop ship commit `54893916`. Its old terminal audit reported stale shared verdict evidence, retained as a reporting limitation.
+- 10c master: `status: shipped`; final driver acceptance `d55f1ac2`, loop ship commit `4cb3a82e`, pushed to `origin/main`. No final verification sub-plan ran and no owner progress-state edit was made.
+- 10c inherited gate repair: side-ref commit `ed7ecbc9`; the 36 previously failing nodes plus the real-corpus prerequisite passed 37/37 under the isolated gate environment, with liveness/pin checks 14/14. No full suite ran.
+- D2 controlled attempts: attempt 1 used 3,602 driver seconds and accepted 0 steps; attempt 2 accepted `bb8b46c3` and `460c03d0` in 2,746 + 1,384 seconds. All-attempt cost was 7,732 / 2 = 64.43 minutes per accepted step versus the predeclared comparable default 9,377 / 2 = 78.14 minutes.
+- Released default: v0.9.197 enabled qualified code-only/native execution for managed Macs; v0.9.198 (`d17ffdcd`) added exact-owner late reservation binding. Both releases were installed and verified on this Mac and rezmac. Current on both hosts is v0.9.198; rezmac `host-compat.json` remains hash `480c287bf2000016e62541da8eb57ec0b95a2d25d806e7de69497b16dc96adf0`.
+- Genuine released-default proof: 10c run `20261012-222753` used v0.9.198 code-only default, passed its authored driver gates, accepted step 1, and wrote the loop-owned step/ship commits above.
 
-## Current state
+## Measured limitations
 
-- Installed/published194:57efa856e352bbea59e724bc9077f5fff69b95fa on both hosts, scheduler exact head and deploy ok. Code-only opt-in. Six freeze-brief defects already delivered4010e7e2 plus precursors; do not redo.
-- Rezmac consumer activation DONE:8d079263→3987a299 while idle; doctor0; host-compat hash preserved. One contacted gh-resolve owner serves both hosts; no separate rezmac session. No further consumer changes.
--11b:master active, base194. Registered1/2/4loop-shipped; launcher6has2steps left. Retired3/5/7helddrafts outside registry. Run20261012-133021/controller60813, iteration4launcherstep0 active at last check. Postmortem step1 driver accepted14:26,1536s, ship580d05d7.
--10c:master active, base3987a299. Plans1–6loop-shipped; planning7three steps, then delegation8two steps. Run20261012-101406/controller38716, iteration6planningstep0 active. Parallel plan6ship494f3ef0, driver3778s. Final verifier9helddraft outside registry.
+- 10c ended `shipped-unproven` even though its final driver gate passed and the loop wrote the ship commit. The terminal proof lookup reports all post-state-commit trees as stale or missing. This is an integrity-reporting defect; no proof was manufactured and no full suite was run.
+- The 1M context declaration improved observed headroom but does not prove a full effective 1M window. The frozen v0.9.194 run compacted near 167–168k input/cache tokens; the qualified trial reached about 242k without compaction.
+- Actual hands-on time was not continuously instrumented. Do not substitute elapsed wall time for hands-on time.
 
-## Prepared integration / next release
+## Timing against the accepted estimate
 
--7cd35573 merges accepted main snapshot8e5b1fbf into owner source; all4conflicts resolved. Stronger child fixture/native-mode controls, narrow inconclusive reconciliation and worker canonical gate inventory retained. Side branch pushed through e8bb370f tracker milestone.
-- Actual code commit validation:10focused files,108passed132.94s; runner/install/duplicate-read hook Bash syntax all0. Evidence `integration-7cd35573-focused-20261012.json`.
-- Main advanced to580d05d7 afterward (5commits: child fixture, taxonomy docs, narrative repair, bump, ship). Wait until11bships, then merge its final HEAD on this side ref, reconcile duplicate owner fixes, run final scoped validation/syntax, and cut authorized direct195. Do not main-merge/tag before11bship.
-- Draft change-scoped selection402test files (changed tests + production importers/readers), not executed; recompute after final merge. No full suite selected.
-- Pre-ship audit reads an old shared batch verdict02753d20 as stale_head; no11b-specific record exists. Keep automatic refusal. Direct-release audit may use supported explicit manual gate input **only after fresh applicable scoped gates pass**, with author/provenance stated in tag. No replacement verdict record or independent-batch claim. Draft tag body/evidence in analysis directory.
--195activation: use each host's upgrade/install path, scheduler launchctl bounce; reconcile released PostCompact event in all numbered worker homes, verify head+freshdecision+deploy, preserve host-compat. Active10c keeps frozen194.
+- D1 continuation: 14:39:30 to 23:12:19 = 8.55 hours, slightly above the 5–8 hour estimate.
+- 11b ship to v0.9.195 verified on both hosts: 15:45:23 to 16:34:00 = 0.81 hours versus the 2–3 hour merge/release estimate.
+- D2 first trial launch to genuine live-default acceptance: 16:40:54 to 23:06:00 = 6.42 elapsed hours. This is calendar time; hands-on actual remains unknown.
 
-## D2 preparation / comparison
+## Operating boundary
 
-- Not launched. `D2-predeclared-comparison-20261012.json` and `D2-trial-preparation-20261012.md` record protocol.
-- Comparable default postmortem feature:6finished attempts,2accepted,9377driver seconds =78.14min/accepted step. Failures, timeout and refusal retained. Count all trial attempts and disclose controller gaps separately.
-- Trial:private DataHome outside watched ~/.ilk-data; real pre-feature source; unique trial slug; same authored two-step gates; released root conftest/child-authority isolation; MiMo-v2.6-pro/default thinking/1M declaration. Code-only native coding tools match used default Read/Edit/Write/Bash; advertised tool sets differ and actual-call/gate comparability must be checked. PostCompact reset is an explicit195profile change.
-- No steering during an attempt. If failure, diagnose stream clocks/first-edit without summing overlaps; only evidenced cause fixes between attempts. Three failures is Chad's bound.
-- Original085944trial timed out3603s,0/2accepted,first edit1895s; uncontrolled default replay was stopped/held and is never qualification evidence. New trial starts after both-host195activation.
-
-## Planning / reporting
-
-Plan with independent all-attempt throughput60–95min/accepted step and~1/3iterations without progress. Estimates: D1critical path5–8h; integration+release2–3h; D2hands-on5–10h over1–2days. These are planning judgments, not promises. `D1-D2-delivery-clock-20261012.json` records continuation14:39 and evidence; distinguish hands-on from waiting and report actual hours when D2 resolves.
-
-Latest milestones2026-10-12:14:26postmortem loop-shipped;14:40parallel-readiness loop-shipped;7cd35573integration committed,108focused tests/syntax passed;comparison fixed78.14min/accepted step. Hosts and live frozen inputs unchanged. Next:observe launcher/planning steps, final integration at11bship, direct195bothhosts, then unsteered D2; no D3.
-
-2026-10-12T15:02:47+08:00:D2 private unchanged-tree fixture mode leakage reproduced as iteration_context_invalid beforegate; child-only pins/mode isolation fixed, parent restriction asserted.5focused tests passed12.91s, negative control failed1.94s. Test-only prerequisite onside ref; reconcile duplicate9afc4255atfinal main merge. No liveplan/state/input changes;11blauncherstep0nowdriver evaluation.
-
-2026-10-12T15:33:26+08:00:10c planning7step0driver accepted at15:19:45,2125s, all recorded gates pass; implementation aff6a7e3/32b38dbf, normal loop bump d0287911. Remaining planning2steps then delegation2; master not shipped.11bfinal launcherstep stillactive. Noowner progress/state edits.
-
-2026-10-12T15:47:12+08:00:11bmaster loop-shipped, final launcher ship54893916; iteration5driver gate pass2362s, integritytrue, controller60813exited15:45:23. Terminalshipped-unproven namesold sharedverdict staleness, not a red stepgate; preservedaslimitation. No owner plan-state edits. Boundary nowavailable for finalsideintegration/direct195freshscoped evidence;10ccontinues frozen194.
-
-2026-10-12T16:22:15+08:00:final integration7bf465f8 complete; fresh417-file scoped run4025pass/34same194base reds/25skip/7xfail,0newIDs, no collection/data-root errors. Additional17authored-gate files222pass; shell16pass; syntaxall0. Fourmanual-provenance auditsPROVEN; no batch-verdict record authored. Preparing direct195tag with these narrow claims;10ccontinues.
+Keep code-only as the managed-Mac default. Preserve explicit legacy/opt-out paths and fail closed when required native ownership probes are unavailable. Use focused tests only for follow-up defects. D3 remains outside this delivery.
