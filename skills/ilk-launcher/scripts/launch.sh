@@ -410,9 +410,13 @@ resolve_engine() {
     fi
   done
   if [[ "$valid" != "true" ]]; then
-    echo "Error: Invalid worker_engine '$engine'. Valid engines: $VALID_ENGINES" >&2
+    echo "Error: Engine '$engine' is not packaged in this toolkit. Valid engines: $VALID_ENGINES" >&2
     exit 1
   fi
+  # Availability: an advertised name is only valid while its runner is
+  # actually packaged.  A name that survives the list check but has no
+  # runner is refused here, before any launch state exists.
+  runner_script_for_engine "$engine" >/dev/null || exit 1
 
   echo "$engine"
 }
@@ -923,7 +927,10 @@ Options:
   --force                      Legacy scheduling flag; never bypasses busy ownership.
   --dry-run                    Print resolved plan but do not spawn.
   --engine ENGINE              Worker engine: claude-worker (default), claude,
-                               or claude-manager.
+                               or claude-manager. Engine 'codex' is not
+                               packaged in this toolkit (no Codex runner) and
+                               is refused with a missing-engine error rather
+                               than silently rerouted to Claude.
   --worker-home PATH           Override worker home for claude-worker engine
                                (default: ~/.claude-worker; also CLAUDE_WORKER_HOME).
   --master NAME                Pin to a specific MASTER-*.md basename.
@@ -1131,7 +1138,14 @@ for p in d:
     else
       echo "[$RESOLVED_NAME] LocalChecks: OFF"
     fi
-    if [[ "$engine" == "claude-worker" ]]; then
+    if [[ "$engine" == "claude-manager" ]]; then
+      # Mirror start_ilk_window: the manager home carries session identity
+      # only — the toolkit stays this checkout (no ILK_SKILL_HOME redirect).
+      # Reporting the planner home here would silently advertise Claude.
+      local manager_home="${CLAUDE_MANAGER_HOME:-$HOME/.claude-manager}"
+      echo "[$RESOLVED_NAME] ClaudeConfigDir: $manager_home"
+      echo "[$RESOLVED_NAME] IlkSkillHome: (this checkout)"
+    elif [[ "$engine" == "claude-worker" ]]; then
       local resolved_wh="$CLI_WORKER_HOME"
       if [[ -z "$resolved_wh" && -n "${CLAUDE_WORKER_HOME:-}" ]]; then
         resolved_wh="$CLAUDE_WORKER_HOME"

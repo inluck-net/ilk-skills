@@ -51,10 +51,14 @@ def _resolve_engine(project_path: str, cli_engine: str = "") -> str:
     config / env sources removed so the test exercises the DEFAULT_ENGINE
     floor.
     """
-    # Extract the functions resolve_engine depends on.
+    # Extract the functions resolve_engine depends on.  runner_script_for_engine
+    # is the availability check: resolve_engine now refuses any engine whose
+    # runner is not packaged, so the extraction has to carry it (and _SKILL_ROOT)
+    # or the function cannot resolve a runner path at all.
     resolve_fn = _extract_function(_LAUNCH_SH, "resolve_engine")
     read_cfg_fn = _extract_function(_LAUNCH_SH, "read_project_config")
     get_ext_fn = _extract_function(_LAUNCH_SH, "get_external_plans_dir")
+    runner_fn = _extract_function(_LAUNCH_SH, "runner_script_for_engine")
 
     # Read the actual DEFAULT_ENGINE from launch.sh so the test tracks
     # the source of truth rather than hardcoding a stale value.
@@ -68,13 +72,14 @@ def _resolve_engine(project_path: str, cli_engine: str = "") -> str:
     script = textwrap.dedent(f"""\
         set -euo pipefail
         # Provide the globals resolve_engine reads.
-        VALID_ENGINES="claude codex claude-worker claude-manager"
+        VALID_ENGINES="claude claude-worker claude-manager"
         {default_engine_line}
-        _SKILL_ROOT=""
+        _SKILL_ROOT="{_SKILLS}"
         ILK_DEFAULT_ENGINE=""
         # Stub read_project_config to return {{}} (no config).
         {get_ext_fn}
         {read_cfg_fn}
+        {runner_fn}
         {resolve_fn}
         resolve_engine "{project_path}" "{cli_engine}"
     """)
@@ -111,13 +116,20 @@ class TestDefaultEngineFloor:
         )
 
     def test_cli_engine_still_overrides(self, tmp_path: Path) -> None:
-        """CLI --engine takes precedence over the floor (no regression)."""
+        """CLI --engine takes precedence over the floor (no regression).
+
+        Uses a packaged engine as the override token: ``codex`` is now
+        refused by resolve_engine's availability check (it has no runner),
+        which is the behaviour ``test_a_launcher_advertises_only_available_
+        engines.py`` pins.  The property under test here is still only that
+        the CLI flag beats the DEFAULT_ENGINE floor.
+        """
         project = str(tmp_path / "empty-project")
         os.makedirs(project, exist_ok=True)
-        engine = _resolve_engine(project, cli_engine="codex")
-        assert engine == "codex", (
+        engine = _resolve_engine(project, cli_engine="claude-manager")
+        assert engine == "claude-manager", (
             f"CLI override broken: resolve_engine returned {engine!r}, "
-            f"expected 'codex'."
+            f"expected 'claude-manager'."
         )
 
     def test_config_still_overrides_floor(self, tmp_path: Path) -> None:
@@ -134,15 +146,17 @@ class TestDefaultEngineFloor:
         resolve_fn = _extract_function(_LAUNCH_SH, "resolve_engine")
         read_cfg_fn = _extract_function(_LAUNCH_SH, "read_project_config")
         get_ext_fn = _extract_function(_LAUNCH_SH, "get_external_plans_dir")
+        runner_fn = _extract_function(_LAUNCH_SH, "runner_script_for_engine")
 
         script = textwrap.dedent(f"""\
             set -euo pipefail
-            VALID_ENGINES="claude codex claude-worker claude-manager"
+            VALID_ENGINES="claude claude-worker claude-manager"
             DEFAULT_ENGINE="claude"
-            _SKILL_ROOT=""
+            _SKILL_ROOT="{_SKILLS}"
             ILK_DEFAULT_ENGINE=""
             {get_ext_fn}
             {read_cfg_fn}
+            {runner_fn}
             {resolve_fn}
             resolve_engine "{project}" ""
         """)
