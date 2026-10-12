@@ -44,3 +44,7 @@ Plan with independent all-attempt throughput60–95min/accepted step and~1/3iter
 Latest milestones2026-10-12:14:26postmortem loop-shipped;14:40parallel-readiness loop-shipped;7cd35573integration committed,108focused tests/syntax passed;comparison fixed78.14min/accepted step. Hosts and live frozen inputs unchanged. Next:observe launcher/planning steps, final integration at11bship, direct195bothhosts, then unsteered D2; no D3.
 
 2026-10-12T15:02:47+08:00:D2 private unchanged-tree fixture mode leakage reproduced as iteration_context_invalid beforegate; child-only pins/mode isolation fixed, parent restriction asserted.5focused tests passed12.91s, negative control failed1.94s. Test-only prerequisite onside ref; reconcile duplicate9afc4255atfinal main merge. No liveplan/state/input changes;11blauncherstep0nowdriver evaluation.
+
+2026-10-12T15:33:26+08:00:10c planning7step0driver accepted at15:19:45,2125s, all recorded gates pass; implementation aff6a7e3/32b38dbf, normal loop bump d0287911. Remaining planning2steps then delegation2; master not shipped.11bfinal launcherstep stillactive. Noowner progress/state edits.
+
+2026-10-12T15:47:12+08:00:11bmaster loop-shipped, final launcher ship54893916; iteration5driver gate pass2362s, integritytrue, controller60813exited15:45:23. Terminalshipped-unproven namesold sharedverdict staleness, not a red stepgate; preservedaslimitation. No owner plan-state edits. Boundary nowavailable for finalsideintegration/direct195freshscoped evidence;10ccontinues frozen194.
