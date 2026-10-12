@@ -23,7 +23,9 @@ Do NOT re-implement the logic here. Specifically:
      "what happened"
    - Key metrics: iters used, elapsed time, new commits total, transient
      error count
-   - **Recommended params** for next launch
+   - **Recommended params** for next launch. A `null` / `none` here is the
+     measurement: the run left no basis for a cap. **Do not invent one** —
+     pass no such flag rather than a default (30, 45, any round number).
    - **Tail of the last problematic iter** (≤40 lines) so the user can
      eyeball the actual error
 4. Offer a 3-way choice via `AskUserQuestion`:

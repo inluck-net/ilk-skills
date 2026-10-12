@@ -1485,6 +1485,38 @@ def _classify_core(
             return [c for c in lc if isinstance(c, dict)]
         return []
 
+    def _gate_history() -> dict:
+        """Measured fail/pass history of the machine-checkable gates.
+
+        The narrative may claim repetition only where repetitions were
+        recorded, and may call a red terminal only when that red is the
+        last iteration and greens preceded it.  Both are measurements;
+        asserting a convergence loop from a single terminal red is the
+        20261011-061345 defect (four green checks, one red attribution
+        gate, narrative said the criteria "kept failing").
+        """
+        fail = 0
+        passed = 0
+        last_fail_index = None
+        for i, r in enumerate(_real_iters):
+            items = _items(r)
+            if any(c.get("outcome") in ("fail", "error") for c in items):
+                fail += 1
+                last_fail_index = i
+            elif items and all(c.get("outcome") == "pass" for c in items):
+                passed += 1
+        return {
+            "fail_iters_in_window": fail,
+            "pass_iters_in_window": passed,
+            "window_size": len(_real_iters),
+            # One red, at the stop, with at least one green before it.
+            "terminal_gate_failure": (
+                fail == 1
+                and last_fail_index == len(_real_iters) - 1
+                and passed > 0
+            ),
+        }
+
     # An `error` outcome (the check command itself failed to run — e.g. `grep`
     # missing in the worker's cmd.exe shell) is NOT a pass.
     last_checks = _items(last)
@@ -1738,11 +1770,16 @@ def _classify_core(
             if c.get("outcome") in ("fail", "error")
         )
         label = "local-checks-broken" if broken else "local-checks-stuck"
+        # Carry the measured gate history so the narrative is proportional
+        # to it: this route reaches the label without the ≥3-window heuristic,
+        # so without these facts every terminal red was narrated as if the
+        # criteria had been failing repeatedly.
         return label, {
             "iter_at_stop": last.get("iteration"),
             "stop_reason": last_stop,
             "broken_gate_result": broken,
             "reason": "run_exit terminal state",
+            **_gate_history(),
         }
     if last_stop == "local_checks_failed_no_commits":
         return "local-checks-unchanged", {
@@ -3041,7 +3078,16 @@ def render_report(
     to_disp = f"{to_cfg} min" if to_cfg and to_cfg != "unknown" else "unknown (no matching launch metadata for this run)"
     body_lines.append(f"| Max iter | {max_dur:.1f} min (configured timeout: {to_disp}) |")
     body_lines.append(f"| New commits | {new_commits_total} |")
-    body_lines.append(f"| Transient API errors | {err_count} |")
+    if err_count:
+        body_lines.append(f"| Transient API errors | {err_count} |")
+    else:
+        # A zero here is a recorded count, not a finding: the JSONL held no
+        # logged transient errors.  It does not establish that no retries
+        # happened — retries are not what this field counts.
+        body_lines.append(
+            "| Transient API errors | 0 recorded "
+            "(a recorded count, not proof of no retries) |"
+        )
     rl_count = facts.get("rate_limit_event_count", 0)
     if rl_count:
         body_lines.append(f"| Rate-limit events | {rl_count} |")
@@ -3426,16 +3472,35 @@ def _label_narrative(label: str, facts: dict[str, Any]) -> str:
                 f"failed in {fail_w} of the last {win} iterations "
                 f"(passed in {pass_w}). "
             )
+            # Proportional to the measured history, not to the label.  A
+            # label is a routing decision; how often the gate actually went
+            # red is a separate measurement, and "did not converge" is a
+            # claim about repetition.
+            if facts.get("terminal_gate_failure"):
+                shape = (
+                    "The gate went red once, at the stop, after green "
+                    "iterations — a terminal gate failure. "
+                )
+            else:
+                shape = (
+                    "The agent kept making commits, but the machine-checkable "
+                    "acceptance criteria did not converge across the repeated "
+                    "reds. "
+                )
         else:
             counts_clause = ""
+            shape = (
+                "The machine-checkable acceptance criteria did not converge. "
+            )
         iter_clause = f" through iter {iter_stop}" if iter_stop is not None else ""
         return (
             f"Sub-plan `local_checks` {counts_clause}"
-            f"The agent kept making commits{iter_clause}, but the machine-checkable "
-            "acceptance criteria did not converge. Either the AC is wrong/over-"
-            "specified, the step is too coarse for the agent to land in one go, "
-            "or there's a real bug it can't fix. **Read the failing check output "
-            "in the iteration log before deciding what to do.**"
+            f"{shape}"
+            f"The agent kept making commits{iter_clause}. "
+            "Either the AC is wrong/over-specified, the step is too coarse "
+            "for the agent to land in one go, or there's a real bug it can't "
+            "fix. **Read the failing check output in the iteration log before "
+            "deciding what to do.**"
         )
     if label == "local-checks-broken":
         fail_w = facts.get('fail_iters_in_window')

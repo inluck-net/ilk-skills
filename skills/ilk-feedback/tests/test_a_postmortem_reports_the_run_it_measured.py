@@ -473,3 +473,259 @@ def test_ac2_run_exit_999999_is_not_a_worker_iteration(scratch_env):
     # The five real rows are present.
     for n in range(1, 6):
         assert f"| {n} |" in text
+
+
+# ── AC-3: narratives proportional to the measured gate history ───────────────
+
+
+def _fixture_records_repeated_red(project: Path, *, run_id: str = RUN_ID) -> list[dict]:
+    """The same shape, but the reds repeat instead of landing once at the stop.
+
+    Used as the positive control for the terminal-failure narrative: a
+    fixture that DID fail repeatedly must still be described as repetition.
+    """
+    opens = (
+        "2026-10-11T06:13:53+0800",
+        "2026-10-11T07:13:08+0800",
+        "2026-10-11T07:53:50+0800",
+        "2026-10-11T08:39:26+0800",
+        "2026-10-11T08:56:03+0800",
+    )
+    closes = (
+        "2026-10-11T07:11:40+0800",
+        "2026-10-11T07:52:24+0800",
+        "2026-10-11T08:37:58+0800",
+        "2026-10-11T08:54:37+0800",
+        "2026-10-11T10:02:01+0800",
+    )
+    commits = (2, 2, 2, 1, 2)
+    records: list[dict] = []
+    for i, (opened, closed, dur, new_commits) in enumerate(
+        zip(opens, closes, ITER_DURATIONS, commits), start=1
+    ):
+        records.append({
+            "run_id": run_id,
+            "cli": "claude",
+            "iteration": i,
+            "timestamp": opened,
+            "project": str(project),
+            "model": "mimo-v2.6-pro",
+            "status": "started",
+        })
+        # Iterations 3, 4 and 5 each fail the attribution gate: a pattern
+        # that repeats, which is what the repetition narrative must report.
+        checks = [
+            {"command": f"gate-{n}", "outcome": "pass", "exit_code": 0}
+            for n in range(1, 5)
+        ]
+        if i >= 3:
+            checks.append({
+                "command": "verify_attribution.py --batch fixture",
+                "outcome": "fail",
+                "exit_code": 1,
+                "stderr_tail": "ATTRIBUTION FAILED: 1 attributed regression(s)",
+            })
+        records.append({
+            "run_id": run_id,
+            "cli": "claude",
+            "iteration": i,
+            "timestamp": closed,
+            "project": str(project),
+            "model": "mimo-v2.6-pro",
+            "duration_sec": dur,
+            "exit_code": 0,
+            "new_commits_total": new_commits,
+            "stop_reason": "local_checks_failed" if i == 5 else None,
+            "local_checks": checks,
+        })
+    records.append({
+        "run_id": run_id,
+        "cli": "claude",
+        "iteration": 999999,
+        "timestamp": RUN_END_STAMP,
+        "project": str(project),
+        "stop_reason": "local_checks_failed",
+        "record_type": "run_exit",
+        "iters": 5,
+    })
+    return records
+
+
+def test_ac3_terminal_red_is_not_narrated_as_repeated_convergence(scratch_env):
+    """Four green checks then one red attribution gate: L1 still blocks on
+    `local-checks-stuck`, but the narrative must describe a terminal gate
+    failure — not a convergence loop the records do not show."""
+    project_path, env, key, data_home = scratch_env
+    project = project_path.resolve()
+
+    _write_jsonl(data_home, key, _fixture_records(project))
+    _write_last_launch(data_home, key, {
+        "project_path": str(project),
+        "run_id": RUN_ID,
+        "max_iterations": 30,
+        "iteration_timeout_min": 60,
+        "started_at": LAUNCH_STAMP,
+    })
+
+    text = _run_collect(env, project_path)
+
+    assert 'classification: "local-checks-stuck"' in text, (
+        f"L1 must keep classifying a terminal red gate as blocking "
+        f"local-checks-stuck.\nHead:\n{text[:700]}"
+    )
+    assert "terminal gate failure" in text, (
+        f"one red after four greens is a terminal gate failure and must be "
+        f"narrated as one.\nWhat happened:\n{text[text.find('## What happened'):text.find('## What happened') + 900]}"
+    )
+    assert "repeated convergence failure" not in text, (
+        f"the narrative must not assert a convergence failure the run did "
+        f"not record.\nWhat happened:\n{text[text.find('## What happened'):text.find('## What happened') + 900]}"
+    )
+    assert "did not converge" not in text, (
+        f"'did not converge' is a repetition claim; this run recorded one "
+        f"red, at the stop.\nWhat happened:\n{text[text.find('## What happened'):text.find('## What happened') + 900]}"
+    )
+    # The measured counts are still reported — proportion is not omission.
+    assert "failed in 1 of the last 5 iterations (passed in 4)" in text, (
+        f"the gate history must be reported as measured.\nWhat happened:\n"
+        f"{text[text.find('## What happened'):text.find('## What happened') + 900]}"
+    )
+
+
+def test_ac3_repeated_reds_still_describe_repetition(scratch_env):
+    """Positive control: a fixture whose reds repeat must still read as a
+    convergence failure. Without this the terminal-failure wording could
+    be applied unconditionally and nothing would say so."""
+    project_path, env, key, data_home = scratch_env
+    project = project_path.resolve()
+
+    _write_jsonl(data_home, key, _fixture_records_repeated_red(project))
+    _write_last_launch(data_home, key, {
+        "project_path": str(project),
+        "run_id": RUN_ID,
+        "max_iterations": 30,
+        "iteration_timeout_min": 60,
+        "started_at": LAUNCH_STAMP,
+    })
+
+    text = _run_collect(env, project_path)
+
+    assert 'classification: "local-checks-stuck"' in text
+    assert "terminal gate failure" not in text, (
+        f"three failing iterations is not a terminal red.\nWhat happened:\n"
+        f"{text[text.find('## What happened'):text.find('## What happened') + 900]}"
+    )
+    assert "did not converge" in text, (
+        f"repeated reds must still be described as repetition.\nWhat happened:\n"
+        f"{text[text.find('## What happened'):text.find('## What happened') + 900]}"
+    )
+    assert "failed in 3 of the last 5 iterations (passed in 2)" in text, (
+        f"repetition must be reported as measured counts.\nWhat happened:\n"
+        f"{text[text.find('## What happened'):text.find('## What happened') + 900]}"
+    )
+
+
+def test_ac3_local_checks_stuck_still_blocks(scratch_env):
+    """The label is a blocking class: the watchdog must not relaunch it."""
+    project_path, env, key, data_home = scratch_env
+    project = project_path.resolve()
+
+    _write_jsonl(data_home, key, _fixture_records(project))
+    _write_last_launch(data_home, key, {
+        "project_path": str(project),
+        "run_id": RUN_ID,
+        "max_iterations": 30,
+        "iteration_timeout_min": 60,
+        "started_at": LAUNCH_STAMP,
+    })
+
+    text = _run_collect(env, project_path)
+    assert 'classification: "local-checks-stuck"' in text
+
+    watchdog = _REPO_ROOT / "skills" / "ilk-watchdog" / "scripts" / "watchdog.sh"
+    action = subprocess.run(
+        ["bash", "-c",
+         f"source '{watchdog}' >/dev/null 2>&1; classify_action local-checks-stuck"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+    ).stdout.strip()
+    assert action == "block", (
+        f"watchdog.sh routes local-checks-stuck to {action!r}; it must stay "
+        "'block' — a red gate is never auto-relaunched, whatever the "
+        "narrative says about how it failed"
+    )
+
+
+def test_ac3_zero_transient_errors_is_a_recorded_count(scratch_env):
+    """Zero logged transient errors is a recorded count, not proof of no
+    retries. The report must say which it is."""
+    project_path, env, key, data_home = scratch_env
+    project = project_path.resolve()
+
+    _write_jsonl(data_home, key, _fixture_records(project))
+    _write_last_launch(data_home, key, {
+        "project_path": str(project),
+        "run_id": RUN_ID,
+        "max_iterations": 30,
+        "iteration_timeout_min": 60,
+        "started_at": LAUNCH_STAMP,
+    })
+
+    text = _run_collect(env, project_path)
+
+    assert "transient_error_count: 0" in text, (
+        f"the measured count itself must still be reported.\nHead:\n{text[:700]}"
+    )
+    assert "not proof of no retries" in text, (
+        f"a zero must be labelled as a recorded count, not as a finding.\n"
+        f"Quick stats:\n{text[text.find('## Quick stats'):text.find('## Quick stats') + 700]}"
+    )
+    assert "| Transient API errors | 0 |" not in text, (
+        f"a bare 0 reads as 'there were none'.\nQuick stats:\n"
+        f"{text[text.find('## Quick stats'):text.find('## Quick stats') + 700]}"
+    )
+
+
+# ── AC-4: quiet stdout, and no invented cap anywhere in the report ──────────
+
+
+def test_ac4_quiet_stdout_is_exactly_the_report_path(scratch_env):
+    """--quiet prints the report path and nothing else; the report itself
+    must not carry an invented cap when the configuration is unknown."""
+    project_path, env, key, data_home = scratch_env
+    project = project_path.resolve()
+
+    _write_jsonl(data_home, key, _fixture_records(project))
+    # No matching launch evidence: configured caps are unknown.
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_COLLECT_PY),
+            "-ProjectPath",
+            str(project_path),
+            "--run-id",
+            RUN_ID,
+            "--quiet",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert result.returncode == 0, result.stderr
+    lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
+    assert len(lines) == 1, f"--quiet must print only the report path, got {result.stdout!r}"
+    assert lines[0] == lines[0].strip()
+    text = Path(lines[0]).read_text(encoding="utf-8")
+
+    assert 'iterations_max_configured: "unknown"' in text
+    assert 'iteration_timeout_min_configured: "unknown"' in text
+    assert "recommended_iteration_timeout_min: null" in text
+    assert "recommended_max_iterations: null" in text
+    for invented in ("-IterationTimeoutMin 30", "-MaxIterations 30",
+                     "-IterationTimeoutMin 45", "-MaxIterations 45"):
+        assert invented not in text, (
+            f"the resume line must not invent a cap; found {invented!r}.\n"
+            f"Head:\n{text[:700]}"
+        )

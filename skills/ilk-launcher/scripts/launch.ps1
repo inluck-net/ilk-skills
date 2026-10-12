@@ -96,9 +96,11 @@ param(
   # servers (Gmail / Drive) for the worker.
   [string]$EnableMcp = "",
 
-  # Worker engine: "claude" (default) or "claude-worker". CLI override wins
-  # over .ilk-launch.json's worker_engine. "codex" is not yet supported
-  # and will produce a clear error.
+  # Worker engine: "claude-worker" (default) or "claude". CLI override wins
+  # over .ilk-launch.json's worker_engine. Validation is availability-based:
+  # an engine is refused unless its runner is packaged. "codex" has no
+  # packaged runner and is rejected with a missing-engine error rather than
+  # silently routed to Claude.
   [string]$Engine = "",
 
   # Override the worker home for claude-worker engine (default:
@@ -134,7 +136,10 @@ $ProjectsJson  = Join-Path $LauncherDir 'projects.json'
 $DefaultMaxIter = 30
 $DefaultTimeout = 30
 $ValidEngines = @('claude', 'claude-worker')
-$DefaultEngine = 'claude'
+# Deliberate: a forgot-the-flag spawn lands on a worker home, never the
+# primary account.  Must match launch.sh's DEFAULT_ENGINE — the two hosts
+# disagreeing on the default is the defect this pins away.
+$DefaultEngine = 'claude-worker'
 
 function Get-RunnerScript {
   param([string]$EngineName)
@@ -390,8 +395,12 @@ function Resolve-Engine {
     }
   }
   if ($ValidEngines -notcontains $engine) {
-    throw "Invalid engine '$engine'. Valid engines: $($ValidEngines -join ', '). (Check -Engine, .ilk-launch.json worker_engine, or `$env:ILK_DEFAULT_ENGINE.)"
+    throw "Engine '$engine' is not packaged in this toolkit. Valid engines: $($ValidEngines -join ', '). (Check -Engine, .ilk-launch.json worker_engine, or `$env:ILK_DEFAULT_ENGINE.)"
   }
+  # Availability: an advertised name is only valid while its runner is
+  # actually packaged.  A name that survives the list check but has no
+  # runner is refused here, before any launch state exists.
+  $null = Get-RunnerScript -EngineName $engine
   return $engine
 }
 
