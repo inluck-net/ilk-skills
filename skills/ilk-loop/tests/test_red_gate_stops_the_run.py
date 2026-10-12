@@ -167,7 +167,7 @@ def _run_one_iteration(world: dict, root: Path) -> subprocess.CompletedProcess:
     # worker whose gate happens to execute pytest. Module-scoped fixtures
     # can run before the function-scoped ambient hook cleanup fixture.
     for name in (
-        "ILK_WORKER_SESSION", "ILK_SHIPPED_MARKER", "ILK_ITERATION_SUBPLAN",
+        "ILK_WORKER_SESSION", "ILK_WORKER_MODE", "ILK_SHIPPED_MARKER", "ILK_ITERATION_SUBPLAN",
         "ILK_ITER_CONTEXT", "ILK_CODE_ROOT", "ILK_TOOLKIT_SOURCE_ROOT",
         "ILK_RUN_INPUTS", "ILK_CLAUDE_BIN", "MCP_CONFIG_PATH", "ILK_RUN_LOCK_HELD",
     ):
@@ -189,6 +189,7 @@ def test_nested_driver_fixture_does_not_inherit_worker_authority(tmp_path, monke
     monkeypatch.setenv("ILK_CLAUDE_BIN", str(tmp_path / "outer-worker-cli"))
     monkeypatch.setenv("ILK_RUN_INPUTS", str(tmp_path / "outer-worker-inputs"))
     monkeypatch.setenv("ILK_CODE_ROOT", str(tmp_path / "outer-worker-code"))
+    monkeypatch.setenv("ILK_WORKER_MODE", "code-only")
     world = _build_world(tmp_path)
     proc = _run_one_iteration(world, tmp_path)
     sentinel = world["data_home"] / "projects" / world["key"] / "runtime/launcher/last-exit.json"

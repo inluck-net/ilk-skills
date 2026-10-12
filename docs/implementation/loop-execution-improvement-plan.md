@@ -30,7 +30,7 @@ Rezmac gh-resolve8d079263→3987a299 activated while idle; doctor exit0, host-co
 ## Current batches
 
 -11b:replanned before unpause; overlapping3/5/7retired, remaining2/4/6, base194. Current run20261012-102830,PID83651,194frozen inputs. Plan2step1 driver pass; plan2 driver-shipped. Original resumed run timed out; WIP54e52a6f preserved. Worker implementation commitf0a287f8 exists, with1122passed/2skipped/2xfailed in118.64s worker gate; driver pass confirmed.
--10c:resumed after10b; plan4unblocked, hold/yield cleared, base3987a299. Current run20261012-101406,PID38716,194frozen inputs. Step0driver pass11.13s, driver elapsed967s; step1driverpass; step2next. WIPcc2a7a37 from original timeout preserved.
+-10c:resumed after10b; plan4unblocked, hold/yield cleared, base3987a299. Current run20261012-101406,PID38716,194frozen inputs. Step0driver pass11.13s, driver elapsed967s; step1driverpass; step2attempt rejected, iteration4retry. WIPcc2a7a37 from original timeout preserved.
 -Final verification remains opt-in for both; no final suite scheduled.
 
 ## Measured repairs, pending boundary landing/release
@@ -62,25 +62,10 @@ Default-path correctness first, then execution coverage, then bookkeeping. Reord
 |8|d568b68a4c7a5cec|Native Windows ownership adapters|open|
 |9|b1b81aeb2aef2ace|E1/E2/E4 performance/verdict bookkeeping|open|
 
-## Dated milestones
+Additional side repairs ready: b34859e3 early integrity scope (8passed/1existing skip);3529ee25 registry/taxonomy(15passed);aeb5bd79 measured-green rejection fixture(7passed);3fbf9346 shell floor(14passed);156065e9 compaction reset+event install(56passed);509312ff/b7e7b3bc private child dispatch isolation(8passed). Full dated history and evidence remain in readiness report/archive.
 
-2026-10-12 11:02:D1–D3 authorization recorded; both workers checked live, no interruption.
-2026-10-12 11:15:10c first accepted step verified; independent owner repairs tested/committed as above. Context declaration applied/verified across worker homes. Next:finish base-trap diagnosis and first11b acceptance, then D1shipment.
+## Latest milestones
 
-2026-10-12 11:29:both first accepted steps confirmed;11b plan2driver-shipped.10c baseline traps reduced to2actual fixture reds; side refe555971f,25+9focused checks passed. Runtime next-iteration evidence queued, no frozen plan edits. Continue D1.
+2026-10-12:first accepted steps confirmed for both projects;11b plan2shipped.10c step2timeout/rejection remains unaccepted,3856s worker/4382s driver;iteration4recovery started automatically.11b postmortemstep0 retry ongoing. No hand progress edits.
 
-2026-10-12 11:36:11b and10c dispatched their next iterations. CLI result confirms11b window1000000;10c old pin still200000. Measured integrity phases50.06s(ilk),65.65s(gh); hundreds of foreign shipped plans were parsed before scope rejection. Side optimization skips them before Python readers; failing startup-count regression reproduced,8focused checks passed+1existing skip22.92s. No live pin/gate/state edits.
-
-2026-10-12 11:46:next11b gate base traps verified.3529ee25 fixes optional registry/taxonomy;15no-installed-home checks green. Measured-green red rejection fixture:old control fails,new7checks pass21.27s. Next-iteration evidence queued; live plans unchanged. Continue D1.
-
-2026-10-12 11:49:remaining31existing gate-file selection closes on side tree:317passed,1existing xfail22.55s. Future feature tests remain absent, so not feature acceptance. D1workers progressing; continue.
-
-2026-10-12 11:57:launcher shell caller matrix2old expectations contradicted released worker floor; corrected14checks pass, explicit planner/invalid-engine cases intact. No production engine change. Continue D1.
-
-2026-10-12 11:59:postmortem step0 declared8green but derived callers2red; not accepted. Driver restored step0 and iteration3retry dispatched automatically. Owner fixture diagnosis available; no hand state edits. Retain1533s failed attempt in D2comparison.
-
-2026-10-12 12:23:verified post-compaction read-denial blocker: session ledger survived compaction and caused Bash reread workarounds. Hook now resets only that session on PostCompact; installer declares worker-only event, preserving foreign entries and idempotence. New controls failed before fix; two focused hook files:56passed5.97s. Active frozen inputs untouched. Continue D1, then narrow release at boundary; no full suite.
-
-2026-10-12 12:26:nested runner fixture inherits ILK_WORKER_SESSION before module fixtures; reproduced interrupted instead of gate rejection. Private child now clears only that ambient worker restriction; actual parent remains restricted. New negative reproduced;8checks passed28.58s. Live worker independently investigating same cause; no owner main edits. Hosts re-probed:194 exactschedulerhead,deploy bothok. Continue D1.
-
-2026-10-12 12:43:stronger nested-driver regression also seeds ambient CLI/code/input pins. Clearing worker restriction alone reproduced interrupted; private child now clears live-dispatch inputs as well.8checks pass28.86s; parent restriction remains asserted. This completes the same fixture isolation fix, not a gate waiver. Continue D1.
+2026-10-12 12:53:private child also inherited code-only mode, reproducing iteration_context_invalid. Same boundary isolation now clears mode for this legacy red-rejection fixture; parent stays restricted. Single regression passed7.10s. No production semantics changed; no full suite. Continue D1driver gates, then release/D2/D3.
