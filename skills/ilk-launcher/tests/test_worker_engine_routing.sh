@@ -53,19 +53,18 @@ assert_true() {
 
 echo "=== test_worker_engine_routing.sh ==="
 
-# --- AC-3: default engine → planner default, no .claude-worker ---
+# --- AC-3: no override uses the released worker-account floor ---
 echo "--- AC-3: default engine dry-run ---"
 
-# Unset ILK_DEFAULT_ENGINE so we test the true default (claude)
+# Unset the machine override; test_default_engine_floor.py independently pins
+# the production floor to claude-worker. Explicit planner routing is below.
 ILK_DEFAULT_ENGINE= bash "$LAUNCHER" --project-path "$TMPDIR_PROJ" --dry-run 2>&1 | tr -d '\r' > "$TMPDIR_OUT/default.txt" || true
 
-assert_grep "default: ClaudeConfigDir line present" \
-  "$TMPDIR_OUT/default.txt" -q 'ClaudeConfigDir:.*default.*\.claude'
+assert_grep "default: ClaudeConfigDir routes to .claude-worker" \
+  "$TMPDIR_OUT/default.txt" -q 'ClaudeConfigDir:.*\.claude-worker'
 
-# Ensure ClaudeConfigDir line does NOT contain .claude-worker
-configdir_default=$(grep 'ClaudeConfigDir:' "$TMPDIR_OUT/default.txt" || true)
-assert_true "default: no .claude-worker in ClaudeConfigDir" \
-  bash -c 'case "'"${configdir_default}"'" in *.claude-worker*) exit 1 ;; *) exit 0 ;; esac'
+assert_grep "default: IlkSkillHome routes to .claude-worker/skills" \
+  "$TMPDIR_OUT/default.txt" -q 'IlkSkillHome:.*\.claude-worker/skills'
 
 # --- AC-2: claude-worker engine → worker home routing ---
 echo "--- AC-2: claude-worker engine dry-run ---"
