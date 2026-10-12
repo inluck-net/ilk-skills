@@ -1,97 +1,70 @@
-# Owner readiness plan — scope frozen 2026-10-12
+# ilk-skills delivery tracker — D1–D3
 
-Status: ACTIVE. Chad's instruction replaces the former whole-checklist goal.
-Authoritative brief: `/Users/chad/Documents/handoffs/ilk-skills-owner-build-scope-freeze-brief.md` (read in full).
-Goal: one honest direct release installed on this Mac and rezmac, with scheduler
-cycles and resumed/re-planned batches; one real multi-step opt-in code-only trial.
-Stop after the final report. Do not implement deferred mechanisms.
+Status: ACTIVE. Chad's2026-10-12 instruction supersedes the scope-freeze reporting stop. Continue until all three outcomes below are achieved; stop only for an actual Chad decision.
+
+Owner worktree: `/Users/chad/Projects/github/inluck-net/ilk-skills-worktrees/owner-loop-performance-20261011`.
+Side branch: `owner/loop-performance-20261011`. Full evidence/report: `~/.ilk-data/projects/users-chad-projects-github-inluck-net-ilk-skills-604d727/runtime/analysis/design-revision-20261011/owner-readiness-report-20261012.md`.
+Previous trackers archived in that directory and Git. No reconstruction from chat needed.
+
+## Definition of done, in order
+
+- [ ] D1:11b and10c ship unattended on194or later, accepted by driver gates. No hand edits to plan progress/status.
+- [ ] D2:one actual code-only multi-step batch accepts≥2steps without human intervention, wall time per accepted step≤comparable default-path steps. If qualified, release as default on BOTH hosts; otherwise record measured root cause and keep opt-in.
+- [ ] D3:all9backlog rows below land from side refs and release on BOTH hosts.
+
+Rules: no full suites; focused tests only. No hand commits on main under live batches. Land owner side refs at batch boundaries. Never park/stop a progressing batch to apply owner work. Every release gets an honest narrow tag, installs on both hosts and verifies scheduler head+decision/deploy status. Keep rezmac host-compat.json. Code-only/default switch requires D2 qualification, not fixtures. Each milestone updates this tracker and the readiness report; continue afterward.
 
 ## Resume here
 
-Owner worktree: `/Users/chad/Projects/github/inluck-net/ilk-skills-worktrees/owner-loop-performance-20261011`.
-Branch: `owner/loop-performance-20261011`. Main stays unchanged until step 3's
-batch boundary. Publish the release from the side ref; do not run train `cut`.
-No full suites, no authored batch verdict, no further preview flips.
-Next current-pointer flip is step 2's release. Leave worker homes, plan Markdown,
-pause and LaunchAgent plists unchanged until their authorized readiness step.
-Code-only and final verification remain opt-in.
+1. Finish D1 blockers:14baseline gate reds verified at194; choose actual repairs, never blind deselections.11b worker is currently repairing remaining runner/harness failures; leave it running. Owner side fixes below are prepared independently.
+2.10c has accepted step0. Inspect remaining-gate base reds under correct staged toolkit/role prerequisites; distinguish missing prerequisites and corpus dependency from code defects. No proof from a union-only import-name collision.
+3. Observe both live runs through accepted steps/shipped. Fix demonstrated blockers with failing tests from side refs. Do not alter frozen live gates/state.
+4. After D1:repeat code-only trial with declared/effective context and orientation/API diagnosis applied. Compare equivalent default steps; keep separate uncontrolled replay out of qualification evidence.
+5. Work backlog in explicit priority order below; release each landed increment to both hosts.
 
-Current next action: publish/install direct release v0.9.194 from the side ref.
-Step 1 reported complete; main and batch Markdown remain unchanged.
-Progress about 20% is a judgment over these five steps, not the old checklist.
-The former 76% was written-mechanism coverage, not default-path delivery.
+## Delivered release
 
-## Five steps, in order
+v0.9.194 =57efa856e352bbea59e724bc9077f5fff69b95fa, published side ref. Both hosts installed, scheduler exact head+fresh decisions+deploy status ok. Six original defects fixed4010e7e2 (+state precursors33b45c86/e5fbbc49/ae7873ce); failing→passing focused evidence in report. Code-only stays opt-in.
+Rezmac gh-resolve8d079263→3987a299 activated while idle; doctor exit0, host-compat hash preserved. Installer legacy read-only projects bootstrap limitation remains recorded.
 
-- [x] 1. Fix the six defects with failing-then-passing focused tests; side ref only.
-- [ ] 2. Publish next free v0.9.x directly, honest annotated tag; install/bounce/
-  verify both hosts. Activate consumer 3987a299 on rezmac after peer check.
-- [ ] 3. Release gh-resolve 10c and re-plan ilk-skills 11b before lifting pause.
-- [ ] 4. Run a real multi-step batch with code-only opt-in; record accepted steps,
-  reds, recovery, wall clock and honest comparable-default evidence.
-- [ ] 5. Report tag, host states, six fix commits/tests, batch states, trial results
-  and default recommendation. Then stop until Chad replies.
+## Current batches
 
-## Step 1 evidence
+-11b:replanned before unpause; overlapping3/5/7retired, remaining2/4/6, base194. Current run20261012-102830,PID83651,194frozen inputs. Plan2step1 driver pass; plan2 driver-shipped. Original resumed run timed out; WIP54e52a6f preserved. Worker implementation commitf0a287f8 exists, with1122passed/2skipped/2xfailed in118.64s worker gate; driver pass confirmed.
+-10c:resumed after10b; plan4unblocked, hold/yield cleared, base3987a299. Current run20261012-101406,PID38716,194frozen inputs. Step0driver pass11.13s, driver elapsed967s; step1driverpass; step2next. WIPcc2a7a37 from original timeout preserved.
+-Final verification remains opt-in for both; no final suite scheduled.
 
-| Defect | Mechanism / policy | Regression evidence / status |
-|---|---|---|
-| Autoplan human actor/hold bypass | Dedicated autoplan actor; queue only its own stamped unheld draft. Human hold, parked/blocked/paused/completed, foreign run and worker refuse. | 3 failures in 0.06s before fix (including metadata); focused closure below. Committed in 4010e7e2. |
-| Unlocked post-CAS rewrites | Parking status+progress note one journal replacement (33b45c86). Triage findings use shared guarded CAS (e5fbbc49/ae7873ce/33b45c86), now shared append_findings API. Autoplan metadata uses journaled byte CAS. | Parking 2 failures in 0.05s then 44 checks in 0.92s; triage append 3 failures then 33 checks in 0.19s; metadata regression included above. API adoption committed in 4010e7e2. |
-| First-match runner slug lookups | Frozen path preferred; legacy exact unique identity; both re-entry/integrity owner lookups refuse ambiguity. | Old-source actual call sites: 2 failures in 0.17s; helper negative included 6-failure run below; passing focused run below. Committed in 4010e7e2. |
-| Non-tmux master lost | Quoted argv array carries exact master to launcher. | Real command extraction failed before fix; exact name containing spaces passes. Committed in 4010e7e2. |
-| Process probe fails open | pgrep timeout/missing/error is unknown; normal rc=1 no-match is empty. Existing quiet waiter refuses unknown. | Timeout/missing/error failed before fix; probe+quiet fleet 12 passed in 0.09s. Committed in 4010e7e2. |
-| Failed brief differs by runner | Both refuse dispatch. Bash logs error; existing PowerShell throw retained. | Actual Bash prompt formerly dispatched on failure; now refusal. Portable PowerShell/Bash target checks 5 passed in 0.83s. Committed in 4010e7e2. |
+## Measured repairs, pending boundary landing/release
 
-Focused closure: 103 state/autoplan/triage/parking tests passed in 1.51s.
-Default-path negatives: 6 failed, 1 passed in 0.36s before fix.
-Targets/master/probe checks: 9 passed in 0.31s.
-Adjacent caller checks: 118 passed, 2 failed in 29.53s; failed minimal extracted
-helper fixtures omitted their required toolkit root. Fixture now supplies it;
-rerun passed 3 focused checks in 0.16s. No production fallback or scope expansion added.
-Earlier real-lock runner state-repair checks: 14 passed in 15.37s.
-No new production numeric default. Local stub fixture 10-second caps are judgment
-margins for observed subsecond helpers; a valid slow setup falsifies the fixture.
+-5c31956d:ship_audit missingosimport.2CLI reds reproduced;3ledger checks passed1.58s.
+-ddcdfc31:inconclusive gate removes unaccepted same-iteration self-ship only. Real negative reproduced;7runner checks passed79.42s. No code rollback/quarantine attribution from an unmeasured gate.
+-c68318ed/a1cefd0f:hermetic required-verifier/timeout/prelude fixtures and frozen baseline corpus; exact-source importer parse reuse invalidates changed bytes.82fixture checks4.01s;46scope/corpus/caller checks5.56s;38adjacent checks passed+1existing skip20.04s. No assertions removed or17s cap raised.
+-Parse cache4096entry limit is a judgment margin over toolkit test corpus; eviction churn or memory growth falsifies it. Same-size source changes tested.
 
-## Step 2 coordination and release claim
+## Worker time/context diagnosis
 
-Current local preview: `33b45c86`; it is unreleased. No further preview flips.
-Consumer local: `3987a299`; rezmac shared consumer `8d079263` / v0.105.0.
-Peer Codex thread `01a124c2-bc9b-77c0-bb36-593262b2e331` confirms 15 scoped proof
-compatibility tests at 3987a299 (2.19s), no host/plan changes. It cannot establish
-the current rezmac peer identity; Chad was asked asynchronously. Fresh peer probe
-saw scheduled reap active, so activation requires fresh idle proof.
-Keep rezmac host-compat switch; no authorization to remove it in this scope.
-Tag must say default path hardened, code-only opt-in, Windows/D1 legacy readers/
-remaining B1/B2/C4 undelivered, focused evidence only, no full suite or batch verdict.
-Install on rezmac itself; bounce through launchctl, never kill KeepAlive scheduler.
-Verify current release, scheduler toolkit_head + decision cycle, host_deploy_status.
+All measured runs actually use mimo-v2.6-pro. Old11b thinking1798.06s+reportedTTFT993.74s; old10c1779.56s+TTFT917.37s; code-only1917.74s+TTFT676.87s. Discovery-intent calls93/27/88 respectively. Code-only1230.25s explicitly reported thinking before first native edit1895s after launch. Synchronous discovery replies23.762s total. Tool/TTFT/thinking clocks have limits; async/network/text time remains unallocated. Raw models and classification are in worker-time-*.json.
+Old runs auto-compacted~167k. New11b processed211548input tokens without compaction; full1Mcapacity is still unmeasured. Three localMiMo homes nowdeclare1000000; six rezmac homes already did. Active pins unchanged. Judgment basis: documented model capacity and eliminated early threshold; latency/context errors/renewed early compaction falsify usefulness. Continue observing init/context/compaction events.
+Original code-only trial085944 timed out3603s,0/2accepted,0driver gates. Extra scheduler replay100903 stopped/held, work preserved, never counted as code-only qualification. New trial not launched before D1.
 
-## Step 3 boundary
+## D3 priority order (owner judgment, no priority field on filed rows)
 
-gh-resolve 10c: subplan 4 pending, clear hold/yield, lint, evaluate 9 owner commits
-against audit scope and re-stamp base if needed before its step starts.
-ilk-skills 11b: re-stamp base, retire/rewrite overlapped subplans 3/5/7; lint.
-Only then lift this session's pause. The paused-undispatched old controller must
-not silently run an old pin when the intended scheduler release is new.
-Fresh ownership proof precedes any authorized restart; no unrelated worker signals.
+Default-path correctness first, then execution coverage, then bookkeeping. Reorder only on new blocker evidence.
 
-## Deferred via /ilk-file — do not implement now
+|Order|Backlog ID|Work|Status|
+|---|---|---|---|
+|1|c42945c349bea1d9|Remaining legacy liveness readers/process probes|open|
+|2|0f13f9b73fe854ce|Default worker state through CAS|open|
+|3|53e0f8975ceee8b6|Canonical context/record migration, remainingB1/B2|open|
+|4|104f5973a66095ee|Manifest effort and pin linting|open|
+|5|7a70deed5a416a41|Consumer reaping honors data root|open|
+|6|4b2947283759a109|Member and dirty/timeout execution adapters|open|
+|7|106e0d75fed786fc|Full PowerShell owned execution parity|open|
+|8|d568b68a4c7a5cec|Native Windows ownership adapters|open|
+|9|b1b81aeb2aef2ace|E1/E2/E4 performance/verdict bookkeeping|open|
 
-| Backlog ID | Deferred work |
-|---|---|
-| d568b68a4c7a5cec | Native Windows ownership/enforcement |
-| 4b2947283759a109 | Member and arbitrary/timeout dirty adapters |
-| 106e0d75fed786fc | Full PowerShell adapter parity |
-| c42945c349bea1d9 | Named D1 legacy readers and remaining pgrep users |
-| 104f5973a66095ee | D2 resolved effort manifest and hard-coded skill-path lint |
-| 53e0f8975ceee8b6 | Remaining B1/B2 root, selfmod, gate/result consumers |
-| 0f13f9b73fe854ce | Remaining C4 default worker/authoring state protocol |
-| b1b81aeb2aef2ace | E1/E2/E4 comparisons, verdict/hermeticity and coverage bookkeeping |
-| 7a70deed5a416a41 | gh-resolve reap data-root override |
+## Dated milestones
 
-Rows filed through improvement_backlog.py add (the /ilk-file engine). IDs are
-actual returned values; evidence anchors/falsifiers are in each row.
-Prior detailed evidence remains in Git at 33b45c86 and in the external archive:
-`runtime/analysis/design-revision-20261011/owner-plan-before-scope-freeze-20261012.md`.
-Backlog receipt: `owner-scope-freeze-backlog-20261012.json` in that analysis directory.
+2026-10-12 11:02:D1–D3 authorization recorded; both workers checked live, no interruption.
+2026-10-12 11:15:10c first accepted step verified; independent owner repairs tested/committed as above. Context declaration applied/verified across worker homes. Next:finish base-trap diagnosis and first11b acceptance, then D1shipment.
+
+2026-10-12 11:29:both first accepted steps confirmed;11b plan2driver-shipped.10c baseline traps reduced to2actual fixture reds; side refe555971f,25+9focused checks passed. Runtime next-iteration evidence queued, no frozen plan edits. Continue D1.
