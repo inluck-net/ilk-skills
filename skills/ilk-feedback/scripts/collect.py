@@ -349,6 +349,160 @@ def read_last_launch(project_path: Path) -> dict | None:
         return None
 
 
+def _parse_ts(value: Any) -> dt.datetime | None:
+    """Parse a wall-clock stamp; None when it is absent or not a timestamp.
+
+    Accepts the shapes this toolchain actually writes: ISO with ``+0800`` or
+    ``+08:00`` offsets, trailing ``Z``, a space separator, or a bare
+    ``YYYY-MM-DDTHH:MM:SS``.  Unparseable values (``"start"``, ``"unknown"``)
+    stay unmeasured rather than being coerced to a number.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    text = text.replace(" ", "T", 1)
+    # datetime.strptime's %z accepts both +0800 and +08:00 on 3.7+.
+    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z",
+                "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
+        try:
+            return dt.datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    # Last resort: fromisoformat, which wants a colon in the offset.
+    m = re.search(r"([+-]\d{2})(\d{2})$", text)
+    if m:
+        try:
+            return dt.datetime.strptime(
+                f"{text[:-5]}{m.group(1)}:{m.group(2)}", "%Y-%m-%dT%H:%M:%S%z"
+            )
+        except ValueError:
+            return None
+    return None
+
+
+def _format_hms(seconds: float) -> str:
+    """Render a duration as ``3h49m37s`` (the operator's wall-clock reading)."""
+    total = int(round(seconds))
+    if total < 0:
+        return "unknown"
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m{secs:02d}s"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
+
+
+def _launch_start_from_run_id(run_id: str) -> str | None:
+    """Launch wall-clock stamped into a ``YYYYMMDD-HHMMSS`` run_id.
+
+    The runner writes ``run_id=$(date +%Y%m%d-%H%M%S)`` at launch, so the id
+    *is* the launch stamp.  Only that exact shape is decoded — a caller-supplied
+    ``--run-id`` of anything else stays unknown.
+    """
+    m = re.fullmatch(r"(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})", str(run_id or ""))
+    if not m:
+        return None
+    year, month, day, hour, minute, second = (int(g) for g in m.groups())
+    try:
+        stamp = dt.datetime(year, month, day, hour, minute, second)
+    except ValueError:
+        return None
+    return stamp.isoformat(timespec="seconds")
+
+
+def _launch_meta_from_launcher_log(project_path: Path, run_id: str) -> dict | None:
+    """Per-run launch settings from ``logs/launcher/<key>-<run-id>.log``.
+
+    ``last-launch.json`` is a latest-run pointer and is overwritten by the next
+    launch; the launcher log is per-run and survives.  Its banner prints the
+    configured caps (``Max iterations:`` / ``Iter timeout:``), and the filename
+    binds those values to *run_id*.  Returns None when there is no such log or
+    it carries no caps — unknown stays unknown.
+    """
+    if not run_id or external_logs_dir is None or project_key is None:
+        return None
+    try:
+        launcher_dir = external_logs_dir(_project_key_for(project_path)) / "launcher"
+    except Exception:
+        return None
+    if not launcher_dir.is_dir():
+        return None
+    candidates = sorted(launcher_dir.glob(f"*-{run_id}.log"))
+    if not candidates:
+        return None
+    try:
+        text = candidates[0].read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    meta: dict[str, Any] = {"run_id": run_id, "_source": "launcher-log"}
+    m = re.search(r"^Max iterations:\s*(\d+)\s*$", text, re.M)
+    if m:
+        meta["max_iterations"] = int(m.group(1))
+    m = re.search(r"^Iter timeout:\s*(\d+)\s*min\s*$", text, re.M)
+    if m:
+        meta["iteration_timeout_min"] = int(m.group(1))
+    if "max_iterations" not in meta and "iteration_timeout_min" not in meta:
+        return None
+    stamp = _launch_start_from_run_id(run_id)
+    if stamp:
+        meta["started_at"] = stamp
+    return meta
+
+
+def resolve_matching_launch(
+    project_path: Path,
+    run_id: str,
+    last_launch: dict | None = None,
+) -> dict | None:
+    """Launch metadata that belongs to *run_id*, or None.
+
+    ``last-launch.json`` is a latest-run pointer.  Using it unfiltered borrows a
+    newer/different run's settings (Kira 161027 vs 162826); dropping it entirely
+    when the pointer has moved on is just as wrong — the report then claims the
+    metadata is missing while the per-run launcher log still holds it (gh-resolve
+    20261011-061345).  Resolve *matching* evidence instead:
+
+      1. last-launch.json when its run_id is this run
+      2. the preserved archive copy for this run
+      3. the per-run launcher log banner for this run
+
+    Sources 2-3 are keyed by run_id, so they work from selfmod worktree and
+    worker-home contexts as long as the project key resolves.  Returns None
+    when nothing matches — callers must leave those values unknown.
+    """
+    if not run_id:
+        return None
+
+    if isinstance(last_launch, dict) and last_launch.get("run_id") == run_id:
+        meta = dict(last_launch)
+        meta.setdefault("_source", "last-launch.json")
+        return meta
+
+    if archive_run_dir is not None and project_key is not None:
+        try:
+            archive_meta = archive_run_dir(_project_key_for(project_path), run_id) / "last-launch.json"
+        except Exception:
+            archive_meta = None
+        if archive_meta is not None and archive_meta.exists():
+            try:
+                rec = json.loads(archive_meta.read_text(encoding="utf-8-sig"))
+            except (json.JSONDecodeError, OSError):
+                rec = None
+            if isinstance(rec, dict) and rec.get("run_id") in (None, "", run_id):
+                meta = dict(rec)
+                meta["run_id"] = run_id
+                meta.setdefault("_source", "archive")
+                if not meta.get("started_at"):
+                    meta["started_at"] = _launch_start_from_run_id(run_id)
+                return meta
+
+    return _launch_meta_from_launcher_log(project_path, run_id)
+
+
 def read_sentinel(project_path: Path) -> dict | None:
     """Read last-exit.json sentinel written by the runner.
 
@@ -2143,8 +2297,13 @@ def recommend_params(
     field that is absent/null is honest; a number is a measurement claim.
     """
     facts = facts or {}
-    cur_max = (last_launch or {}).get("max_iterations") or 30
-    cur_to = (last_launch or {}).get("iteration_timeout_min") or 30
+    # Measured configuration only.  A missing cap stays missing: defaulting it
+    # to 30 turned "we don't know" into a numeric recommendation (gh-resolve
+    # 20261011-061345 recommended a 30-minute timeout for a 60-minute run).
+    raw_max = (last_launch or {}).get("max_iterations")
+    raw_to = (last_launch or {}).get("iteration_timeout_min")
+    cur_max = raw_max if isinstance(raw_max, int) and not isinstance(raw_max, bool) and raw_max > 0 else None
+    cur_to = raw_to if isinstance(raw_to, int) and not isinstance(raw_to, bool) and raw_to > 0 else None
 
     durations_min = [(r.get("duration_sec") or 0) / 60.0 for r in iters]
     max_dur = max(durations_min) if durations_min else 0
@@ -2223,12 +2382,22 @@ def recommend_params(
         # capped at 120, floored to 15)
         suggested = int(((max_dur * 1.5) // 5 + 1) * 5)
         suggested = max(15, min(120, suggested))
+        cfg_disp = f"{cur_to}m" if cur_to is not None else "unknown"
         return cur_max, suggested, (
-            f"longest iter was {max_dur:.1f}m vs configured {cur_to}m timeout; "
+            f"longest iter was {max_dur:.1f}m vs configured {cfg_disp} timeout; "
             f"bumped timeout to {suggested}m (~1.5x the longest observed)"
         )
 
     if label == "max-iter-bound":
+        if cur_max is None:
+            # No measured cap, so no measured bump.  Inventing a ceiling here
+            # would be a number with nothing behind it.
+            return None, cur_to, (
+                "hit the iteration ceiling without shipping, but the configured "
+                "MaxIterations is unknown for this run — no cap bump can be "
+                "computed. Re-launch with an explicit MaxIterations, and "
+                "consider whether sub-plans need finer steps."
+            )
         # bump iter cap by ~50% (capped at 60)
         suggested = min(60, int(cur_max * 1.5))
         return suggested, cur_to, (
@@ -2725,7 +2894,8 @@ def render_report(
     last_log_path: str | None = None,
     master: str = "",
 ) -> str:
-    # Exclude run_exit terminal records from iteration counts.
+    # Exclude run_exit terminal records from iteration counts: the terminal
+    # record (iteration=999999) is not a worker iteration.
     _real_iters = [r for r in iters if r.get("record_type") != "run_exit"]
     iter_count = len(_real_iters)
     sentinel = read_sentinel(project_path)
@@ -2739,13 +2909,21 @@ def render_report(
                 master = (_sent.get("master") or "").strip()
         except Exception:
             pass
-    if last_launch is not None:
-        max_iter_cfg = last_launch.get("max_iterations") or 0
-        to_cfg = last_launch.get("iteration_timeout_min") or 0
+    # Launch metadata belongs to THIS run only.  A matching per-run source
+    # (last-launch.json while it still names this run, its archive copy, or the
+    # per-run launcher log) may exist even after the latest-run pointer has
+    # moved on; a newer run's settings are never borrowed.
+    launch = resolve_matching_launch(project_path, run_id, last_launch)
+    launch = launch if isinstance(launch, dict) else {}
+    if launch.get("max_iterations") is not None:
+        max_iter_cfg = launch.get("max_iterations") or 0
     else:
         max_iter_cfg = next(
             (r.get("max_iterations") for r in iters if r.get("max_iterations") is not None), "unknown"
         )
+    if launch.get("iteration_timeout_min") is not None:
+        to_cfg = launch.get("iteration_timeout_min") or 0
+    else:
         to_cfg = next(
             (r.get("iteration_timeout_min") for r in iters if r.get("iteration_timeout_min") is not None), "unknown"
         )
@@ -2758,15 +2936,46 @@ def render_report(
     avg_dur = sum(durations_min) / len(durations_min) if durations_min else 0
     max_dur = max(durations_min) if durations_min else 0
 
-    # Run start precedes iteration start and completion. Never borrow metadata
-    # from a later run's sentinel or launch; retain legacy record fallback.
-    started_at = sentinel.get('started_at')
-    if not started_at and last_launch is not None and last_launch.get("run_id") == run_id:
-        started_at = last_launch.get("started_at")
+    # Run start precedes iteration start and completion.  Matching launch
+    # metadata first (it is the launch, not an iteration), then this run's own
+    # sentinel, then the run's own record start — never a later run's pointer,
+    # and never an iteration's completion stamp presented as the launch.
+    started_at = launch.get('started_at')
+    if not started_at:
+        started_at = sentinel.get('started_at')
     if not started_at and _real_iters:
         started_at = _real_iters[0].get('opened_at') or _real_iters[0].get('timestamp')
     if not started_at:
         started_at = "unknown"
+
+    # Complete wall time (launch → run end) is not the sum of iteration
+    # durations: iterations pause between one another, and a terminal record
+    # closes the run after the last iteration.  Report both, distinctly.
+    wall_elapsed_sec: float | None = None
+    end_stamp = None
+    if sentinel.get('ended_at'):
+        end_stamp = _parse_ts(sentinel.get('ended_at'))
+    if end_stamp is None:
+        terminal = next((r for r in iters if r.get("record_type") == "run_exit"), None)
+        end_stamp = _parse_ts((terminal or {}).get('timestamp'))
+    if end_stamp is None:
+        parsed = [_parse_ts(r.get('timestamp')) for r in iters]
+        parsed = [p for p in parsed if p is not None]
+        if parsed:
+            end_stamp = max(parsed)
+    start_stamp = _parse_ts(started_at)
+    if start_stamp is not None and end_stamp is not None:
+        # A run_id launch stamp is host-local wall clock without an offset;
+        # record timestamps carry the same host's offset.  Both are the same
+        # clock, so borrow the other side's offset rather than refusing to
+        # subtract (which left wall time unknown for launcher-log evidence).
+        if start_stamp.tzinfo is None and end_stamp.tzinfo is not None:
+            start_stamp = start_stamp.replace(tzinfo=end_stamp.tzinfo)
+        elif end_stamp.tzinfo is None and start_stamp.tzinfo is not None:
+            end_stamp = end_stamp.replace(tzinfo=start_stamp.tzinfo)
+        delta = (end_stamp - start_stamp).total_seconds()
+        if delta >= 0:
+            wall_elapsed_sec = delta
     model = next((r.get("model") for r in _real_iters if r.get("model")), "?")
     base_url = next((r.get("base_url") for r in _real_iters if r.get("base_url")), "?")
 
@@ -2785,18 +2994,28 @@ def render_report(
         "iteration_timeout_min_configured": to_cfg,
         "new_commits_total": new_commits_total,
         "total_elapsed_sec": total_elapsed,
+        "wall_elapsed_sec": wall_elapsed_sec,
         "unknown_elapsed_iterations": unknown_elapsed,
         "elapsed_basis": "driver where measured; legacy worker otherwise",
         "transient_error_count": err_count,
         "started_at": started_at,
         "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
     }
+    if launch.get("_source"):
+        fm["launch_metadata_source"] = launch["_source"]
     if master:
         fm["master"] = master
     if facts.get("skipped_non_object"):
         fm["skipped_non_object"] = facts["skipped_non_object"]
 
-    fm_yaml = "---\n" + "".join(f"{k}: {json.dumps(v, ensure_ascii=False) if isinstance(v, str) else v}\n" for k, v in fm.items()) + "---\n"
+    def _fm_value(v: Any) -> str:
+        if isinstance(v, str):
+            return json.dumps(v, ensure_ascii=False)
+        if v is None:
+            return "null"
+        return str(v)
+
+    fm_yaml = "---\n" + "".join(f"{k}: {_fm_value(v)}\n" for k, v in fm.items()) + "---\n"
 
     body_lines: list[str] = []
     body_lines.append(f"# ilk postmortem — {project_name} — run {run_id}\n")
@@ -2806,11 +3025,15 @@ def render_report(
     body_lines.append("|---|---|")
     body_lines.append(f"| Started | {started_at} |")
     body_lines.append(f"| Iterations | {iter_count} / {max_iter_cfg if max_iter_cfg else 'unknown'} |")
-    body_lines.append(f"| Total elapsed | {total_elapsed/60:.1f} min |")
+    if wall_elapsed_sec is not None:
+        body_lines.append(f"| Wall time | {_format_hms(wall_elapsed_sec)} (launch → run end) |")
+    else:
+        body_lines.append("| Wall time | unknown (no parseable launch/end stamps) |")
+    body_lines.append(f"| Iteration time (sum) | {total_elapsed/60:.1f} min |")
     if unknown_elapsed:
         body_lines.append(f"| Iterations with unknown elapsed | {unknown_elapsed} |")
     body_lines.append(f"| Avg iter | {avg_dur:.1f} min |")
-    to_disp = f"{to_cfg} min" if to_cfg and to_cfg != "unknown" else "unknown (last-launch.json missing)"
+    to_disp = f"{to_cfg} min" if to_cfg and to_cfg != "unknown" else "unknown (no matching launch metadata for this run)"
     body_lines.append(f"| Max iter | {max_dur:.1f} min (configured timeout: {to_disp}) |")
     body_lines.append(f"| New commits | {new_commits_total} |")
     body_lines.append(f"| Transient API errors | {err_count} |")
@@ -2966,7 +3189,14 @@ def render_report(
             # `-MaxIterations none` would be a fabricated instruction.
             body_lines.append("- (a) Resume now (no parameter recommendation — the previous run exercised nothing)")
         else:
-            body_lines.append(f"- (a) Resume now with `-MaxIterations {rec_max} -IterationTimeoutMin {rec_to}`")
+            # Only flags we actually measured.  Inventing the missing one would
+            # put a fabricated number in a resume command.
+            flags = []
+            if rec_max is not None:
+                flags.append(f"-MaxIterations {rec_max}")
+            if rec_to is not None:
+                flags.append(f"-IterationTimeoutMin {rec_to}")
+            body_lines.append(f"- (a) Resume now with `{' '.join(flags)}`")
         body_lines.append("- (b) Investigate the tail below first; resume later")
         body_lines.append("- (c) Manual handling — leave the loop idle, decide outside this skill")
     body_lines.append("")
@@ -3620,6 +3850,7 @@ def main() -> int:
             sentinel = read_sentinel(project_path)
             if sentinel is not None:
                 target_run = sentinel.get("run_id") or args.run_id or "unknown"
+                run_launch = resolve_matching_launch(project_path, target_run, last_launch)
                 iters: list[dict] = []
                 sentinel_state = (sentinel.get("state") or "").strip()
                 if sentinel_state == "startup-hang":
@@ -3642,14 +3873,14 @@ def main() -> int:
                         ),
                     }
                 else:
-                    label, facts = classify(iters, last_launch, project_path)
-                rec_max, rec_to, rationale = recommend_params(label, iters, last_launch, facts)
+                    label, facts = classify(iters, run_launch, project_path)
+                rec_max, rec_to, rationale = recommend_params(label, iters, run_launch, facts)
                 report = render_report(
                     project_path=project_path,
                     project_name=project_name,
                     run_id=target_run,
                     iters=iters,
-                    last_launch=last_launch,
+                    last_launch=run_launch,
                     label=label,
                     facts=facts,
                     rec_max=rec_max,
@@ -3669,7 +3900,7 @@ def main() -> int:
                 if not args.quiet:
                     print(f"[ilk-feedback] project: {project_name}  run: {target_run}")
                     print(f"[ilk-feedback] classification: {label}")
-                    print(f"[ilk-feedback] iters: 0 / {(last_launch or {}).get('max_iterations', '?')}")
+                    print(f"[ilk-feedback] iters: 0 / {(run_launch or {}).get('max_iterations', '?')}")
                 print(str(out_path))
                 return 0
             # No sentinel either — ilk genuinely never ran here.
@@ -3695,6 +3926,7 @@ def main() -> int:
                 sentinel_run = sentinel.get("run_id") if sentinel else None
                 if sentinel_run and sentinel_run == args.run_id:
                     target_run = args.run_id
+                    run_launch = resolve_matching_launch(project_path, target_run, last_launch)
                     iters = []
                     label = "no-evidence"
                     facts: dict[str, Any] = {
@@ -3704,13 +3936,13 @@ def main() -> int:
                             "before iter 1 completed"
                         ),
                     }
-                    rec_max, rec_to, rationale = recommend_params(label, iters, last_launch, facts)
+                    rec_max, rec_to, rationale = recommend_params(label, iters, run_launch, facts)
                     report = render_report(
                         project_path=project_path,
                         project_name=project_name,
                         run_id=target_run,
                         iters=iters,
-                        last_launch=last_launch,
+                        last_launch=run_launch,
                         label=label,
                         facts=facts,
                         rec_max=rec_max,
@@ -3730,12 +3962,13 @@ def main() -> int:
                     if not args.quiet:
                         print(f"[ilk-feedback] project: {project_name}  run: {target_run}")
                         print(f"[ilk-feedback] classification: {label}")
-                        print(f"[ilk-feedback] iters: 0 / {(last_launch or {}).get('max_iterations', '?')}")
+                        print(f"[ilk-feedback] iters: 0 / {(run_launch or {}).get('max_iterations', '?')}")
                     print(str(out_path))
                     return 0
                 # No JSONL records AND no sentinel match for this run_id.
                 _avail = ", ".join(sorted(by_run.keys())[-5:])
                 target_run = args.run_id
+                run_launch = resolve_matching_launch(project_path, target_run, last_launch)
                 iters = []
                 label = "no-evidence"
                 facts = {
@@ -3744,13 +3977,13 @@ def main() -> int:
                         f"match). Recent runs with records: {_avail}"
                     ),
                 }
-                rec_max, rec_to, rationale = recommend_params(label, iters, last_launch, facts)
+                rec_max, rec_to, rationale = recommend_params(label, iters, run_launch, facts)
                 report = render_report(
                     project_path=project_path,
                     project_name=project_name,
                     run_id=target_run,
                     iters=iters,
-                    last_launch=last_launch,
+                    last_launch=run_launch,
                     label=label,
                     facts=facts,
                     rec_max=rec_max,
@@ -3787,11 +4020,9 @@ def main() -> int:
     # last-launch.json is a latest-run pointer, not historical metadata.  It
     # may help discover the shared log before target selection, but it must not
     # classify or parameterize a different run (Kira 161027 vs 162826).
-    target_launch = (
-        last_launch
-        if last_launch is not None and last_launch.get("run_id") == target_run
-        else None
-    )
+    # Matching evidence for THIS run still counts — the pointer moving on does
+    # not erase the per-run launcher log or the preserved archive copy.
+    target_launch = resolve_matching_launch(project_path, target_run, last_launch)
 
     # Guard: when --run-id is explicit and records lack the "iteration" key,
     # emit a clear message instead of crashing with KeyError.
