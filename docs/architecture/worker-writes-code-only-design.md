@@ -330,3 +330,27 @@ Generic gates retain their frozen context. Actual sandboxed recovery and base
 sample checks passed; this is a new candidate, with archived caller/activation
 pending in the durable tracker. Full test eligibility, arbitrary runner adapters,
 process-table isolation and native Windows support remain separate accepted gaps.
+
+### Prepared managed Mac default — conditional on D2 qualification
+
+This side-ref candidate is not activated by v0.9.196. The launcher selects
+code-only/native by default for managed Mac `claude-worker` launches; the core
+runner independently selects code-only for an unset mode with frozen launch
+inputs on Mac. Explicit `ILK_WORKER_MODE=legacy` (or the historical explicit
+empty value) preserves the legacy path. Unprepared direct callers, other
+engines and non-Mac default paths remain declared legacy. Once an owned
+profile is selected, existing missing-adapter, dirty/member and authority
+checks still refuse; none silently downgrades to legacy. No D3 adapter is
+implemented or claimed.
+
+The default native tool profile matches the six coding tools in the D2 trial.
+This is a rollout judgment based on observed default coding-tool use and the
+real comparison; required work needing excluded tools or worse all-attempt
+throughput would falsify it. Model, thinking and existing runtime timeouts
+are unchanged. Brokered shells preserve the driver's Python user-base lookup
+while pinning private HOME; explicit operator lookup remains authoritative.
+
+Activation requires the real D2 qualification first, then a direct release
+on both hosts with exact scheduler-head/fresh-decision/deploy verification,
+and one live accepted step on that released default. Entry-point stub tests
+are technical controls, not qualification or live-batch proof.

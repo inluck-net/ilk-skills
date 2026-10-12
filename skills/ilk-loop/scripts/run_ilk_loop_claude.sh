@@ -5889,6 +5889,21 @@ PYBRIEF
 main() {
   parse_args "$@"
 
+  # Managed Mac launches have frozen inputs and the checked owned adapter.
+  # Direct unpinned callers retain their legacy compatibility path. An
+  # explicit empty/legacy selection is an opt-out, never an inherited default.
+  if [[ -z "${ILK_WORKER_MODE+x}" ]]; then
+    if [[ "$(uname -s)" == Darwin && -n "${ILK_RUN_INPUTS:-}" ]]; then
+      export ILK_WORKER_MODE=code-only
+    else
+      export ILK_WORKER_MODE=legacy
+    fi
+  fi
+  case "$ILK_WORKER_MODE" in
+    ""|legacy|code-only) ;;
+    *) echo "Unsupported worker mode: $ILK_WORKER_MODE" >&2; return 2 ;;
+  esac
+
   # --- Single-instance lock (per-project) ----------------------------------
   # Acquire an exclusive flock via ilk_run_lock.py and re-exec ourselves under
   # it.  The lock lives on the open file description, survives exec (FD_CLOEXEC
