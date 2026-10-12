@@ -7,6 +7,8 @@ import subprocess
 import sys
 import time
 import pytest
+import shlex
+import site
 from worker_broker import ShellBroker
 from worker_sandbox import profile
 from worker_shell import canonical_command
@@ -14,6 +16,31 @@ from iteration_context import write_context
 import test_owner_worker_sandbox as fixtures
 pytestmark=pytest.mark.skipif(sys.platform!='darwin',reason='explicit Mac broker integration')
 ROOT=Path(__file__).resolve().parents[3]
+
+
+@pytest.mark.parametrize('explicit_override', [False, True])
+def test_private_worker_home_keeps_driver_python_dependencies(tmp_path,monkeypatch,explicit_override):
+    ctx,temporary,home=fixtures.fixture(tmp_path)
+    ctx.update(run_id='dependencies',iteration=1,worker_tmp_dir=str(temporary),
+               private_worker_home=str(home))
+    default=tmp_path/'driver-userbase';override=tmp_path/'explicit-userbase'
+    userbase=override if explicit_override else default
+    monkeypatch.setattr(site,'getuserbase',lambda:str(default))
+    monkeypatch.delenv('PYTHONPATH',raising=False)
+    monkeypatch.delenv('PYTHONUSERBASE',raising=False)
+    if explicit_override:monkeypatch.setenv('PYTHONUSERBASE',str(override))
+    env=dict(os.environ,PYTHONUSERBASE=str(userbase))
+    target=subprocess.check_output([sys.executable,'-c','import site;print(site.getusersitepackages())'],
+                                   env=env,text=True).strip()
+    package=Path(target);package.mkdir(parents=True)
+    (package/'broker_dependency_fixture.py').write_text("VALUE='driver dependency'\n")
+    command=shlex.quote(sys.executable)+" -B -c "+shlex.quote(
+        'import broker_dependency_fixture as dep;print(dep.VALUE)')
+    # Existing broker test allowance10s; this single local import is normally
+    # <1s. A healthy import exceeding10s falsifies that test-only allowance.
+    result=ShellBroker(ctx,deadline=monotonic()+10)._execute(command)
+    assert result['exit_code']==0,result
+    assert 'driver dependency' in result['stdout']
 
 
 def test_parent_sandbox_uses_owned_broker_without_nested_apply(tmp_path):

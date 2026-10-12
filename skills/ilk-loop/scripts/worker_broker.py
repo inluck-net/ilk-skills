@@ -13,6 +13,7 @@ from pathlib import Path
 import signal
 import socket
 import subprocess
+import site
 import tempfile
 import threading
 import time
@@ -72,6 +73,9 @@ class ShellBroker:
         stdout_path=directory/(attempt+'.stdout');stderr_path=directory/(attempt+'.stderr')
         policy=profile(context,temporary=Path(context['worker_tmp_dir']),shell=True)
         env={key:value for key,value in os.environ.items() if not key.startswith('ANTHROPIC_')}
+        # Preserve the driver's installed Python dependencies before pinning
+        # HOME to the private worker copy. Explicit operator lookup wins.
+        env.setdefault('PYTHONUSERBASE',site.getuserbase())
         env.update(ILK_WORKER_SESSION='1',ILK_ITER_RECORD_STAGE='',ILK_DATA_HOME=context['data_root'],
                    ILK_DATA_DIR=context['data_root'],TMPDIR=context['worker_tmp_dir'])
         if context.get('private_worker_home'):env['HOME']=context['private_worker_home']
