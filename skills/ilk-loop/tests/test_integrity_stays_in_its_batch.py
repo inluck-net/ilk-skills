@@ -357,3 +357,30 @@ def test_empty_active_subplans_falls_back(
     assert b1_status in ("shipped", "in-progress"), (
         f"unexpected b1 status: {b1_status!r}.\n{tail}"
     )
+
+
+@_NEEDS_GTIMEOUT
+def test_foreign_plan_is_skipped_before_python_read(tmp_path_factory):
+    """A frozen foreign plan must not pay per-plan audit interpreter startup."""
+    import shlex
+
+    root = tmp_path_factory.mktemp("integrity-scope-before-read")
+    world = _build_world(root, agent_trailer="own")
+    foreign = world["plans"] / f"{STEM_B}.md"
+    trace = root / "foreign-python-reads"
+    wrapper = world["bin"] / "python3"
+    wrapper.write_text(
+        '#!/usr/bin/env bash\n'
+        'for arg in "$@"; do\n'
+        f'  if [[ "$arg" == {shlex.quote(str(foreign))} ]]; then echo read >> {shlex.quote(str(trace))}; fi\n'
+        'done\n'
+        f'exec {shlex.quote(sys.executable)} "$@"\n'
+    )
+    wrapper.chmod(0o755)
+    proc = _run_one_iteration(world, root)
+    assert not trace.exists(), (
+        "foreign plan reached a Python audit reader despite frozen batch scope: "
+        + (trace.read_text() if trace.exists() else "")
+    )
+    assert _read_subplan_status(world, STEM_B) == "shipped"
+    assert "not in the active master" in proc.stdout + proc.stderr

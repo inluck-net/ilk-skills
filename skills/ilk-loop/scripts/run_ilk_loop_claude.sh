@@ -4026,8 +4026,21 @@ except Exception:
     return 2
   }
 
+  # Scope before per-plan Python readers: the live corpus contains hundreds
+  # of historical ships. The frozen registry already determines membership;
+  # parsing a foreign plan cannot contribute evidence to this batch.
+  local _scope_members=$'\n' _scope_name=""
+  while IFS= read -r _scope_name; do
+    [[ -n "$_scope_name" && "$_scope_name" != __MASTERS_EXIST__ ]] || continue
+    _scope_members="${_scope_members}${_scope_name}"$'\n'
+  done <<< "$_active_subplans"
+
   for f in "$plans_dir"/*.md; do
-    [[ "$(basename "$f")" == MASTER* ]] && continue
+    [[ "${f##*/}" == MASTER* ]] && continue
+    if [[ "$_scope_members" != $'\n' && "$_scope_members" != *$'\n'"${f##*/}"$'\n'* ]]; then
+      echo "  [ship-integrity] ${f##*/}: not in the active master — not read or enforced" >&2
+      continue
+    fi
     # Check if shipped
     if ! head -20 "$f" | grep -qE '^status:\s*shipped'; then
       continue
