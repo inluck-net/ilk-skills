@@ -231,7 +231,12 @@ def _resolve_projects_json() -> Path:
     canonical = ilk_data_root() / "projects.json"
     if canonical.is_file():
         return canonical
-    legacy = _skill_root() / "ilk-launcher" / "projects.json"
+    try:
+        legacy = _skill_root() / "ilk-launcher" / "projects.json"
+    except FileNotFoundError:
+        # Registry metadata is optional for an explicit -ProjectPath. A clone
+        # can collect external run records without an installed legacy home.
+        return canonical
     return legacy  # may not exist; caller checks .is_file()
 
 
