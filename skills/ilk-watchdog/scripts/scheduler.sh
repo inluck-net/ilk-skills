@@ -1915,8 +1915,10 @@ except: pass
         fi
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatching $dkey (slot $slot_id) [mux=$current_mux]..."
         local master_flag=""
+        local master_args=()
         if [[ -n "$dmaster" ]]; then
           master_flag=" --master '$dmaster'"
+          master_args=(--master "$dmaster")
         fi
         local launch_cmd="bash $LAUNCH_SCRIPT --project-path '$drepo' --engine claude-worker --worker-home '$slot_home'${local_checks_flag}${master_flag} --force"
         if [[ "$current_mux" == "tmux" ]]; then
@@ -1935,7 +1937,7 @@ except: pass
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] tmux dispatch failed for $dkey"
             blacklist_skip="${blacklist_skip}"$'\n'"${dkey} $(($(date +%s) + 300))"
           fi
-        elif bash "$LAUNCH_SCRIPT" --project-path "$drepo" --engine claude-worker --worker-home "$slot_home" ${local_checks_flag} --force; then
+        elif bash "$LAUNCH_SCRIPT" --project-path "$drepo" --engine claude-worker --worker-home "$slot_home" ${local_checks_flag} "${master_args[@]}" --force; then
           dispatch_count=$((dispatch_count + 1))
           set_dispatch_time "$dkey" "$(date +%s)"
           echo "[$(date '+%Y-%m-%d %H:%M:%S')] dispatched $dkey (slot $slot_id, total: $dispatch_count)"

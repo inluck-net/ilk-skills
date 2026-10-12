@@ -157,7 +157,7 @@ def _recover(log,path,content):
 
 
 def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, guards=None,
-               findings_note=None,progress_note=None,release_auto_block=False,expected_digest=None) -> bool:
+               findings_note=None,progress_note=None,release_auto_block=False,expected_digest=None,planner_run=None) -> bool:
     """Change only requested scalar state fields if every expected value matches.
 
     Human holds cannot be lifted or progressed by driver calls. The worker
@@ -187,6 +187,8 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
         if path not in allowed: raise TransitionError('plan is outside frozen registry')
         if not set(guards)<=allowed:raise TransitionError('guard is outside frozen registry')
     allowed_fields={'status','current_step','parked_at','parked_reason','pre_park_status','yield','hold','auto_block_fails','last_updated'}
+    planner_fields={'auto_planned','autoplan_candidate','autoplan_run','priority'}
+    if actor=='autoplan':allowed_fields|=planner_fields
     if not set(to)<=allowed_fields or not set(from_)<=allowed_fields:
         raise TransitionError('transition cannot edit plan contract fields')
     for value in to.values():
@@ -209,6 +211,24 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
         text=content.decode('utf-8-sig');state=parse_frontmatter(text)
         if any(state.get(key)!=str(value) if value is not None else key in state for key,value in from_.items()):
             raise TransitionError('state changed since dispatch; compare-and-set refused')
+        planner_authorized=False
+        if actor=='autoplan':
+            if (not isinstance(planner_run,str) or not planner_run.strip() or '\n' in planner_run
+                    or not expected_digest or state.get('hold')=='human'):
+                raise TransitionError('autoplan requires byte CAS and cannot release a human hold')
+            if state.get('status') not in {'draft','pending','queued','active'}:
+                raise TransitionError('autoplan cannot change a held or completed master')
+            if state.get('autoplan_run') not in {None,planner_run}:
+                raise TransitionError('autoplan cannot change another planner run')
+            metadata_only=set(to)<=planner_fields
+            draft=(to.get('status')=='draft' and set(to)<={'status','auto_planned','autoplan_run'}
+                   and to.get('autoplan_run')==planner_run and to.get('auto_planned')=='true')
+            queue=(to=={'status':'queued'} and state.get('status')=='draft'
+                   and state.get('auto_planned')=='true' and state.get('autoplan_run')==planner_run)
+            metadata=(metadata_only and to.get('auto_planned')=='true' and to.get('autoplan_run')==planner_run)
+            if not (draft or queue or metadata):
+                raise TransitionError('autoplan transition is outside generated-draft policy')
+            planner_authorized=True
         auto_release=(release_auto_block and state.get('status')=='blocked' and state.get('hold')!='human'
                       and str(state.get('auto_block_fails','')).isdigit() and int(state['auto_block_fails'])>0
                       and from_.get('status')=='blocked' and str(from_.get('auto_block_fails'))==state['auto_block_fails']
@@ -218,7 +238,7 @@ def transition(path: Path, from_: dict, to: dict, *, actor: str, reason: str, gu
         repair=(actor=='integrity-repair' and set(to)<={'status','hold','yield','parked_at','parked_reason'}
                 and (state.get('hold')!='human' or desired_hold=='human'))
         if actor=='integrity-repair' and not repair:raise TransitionError('integrity repair cannot advance pointers or erase human holds')
-        if (state.get('status') in {'draft','parked','blocked'} or state.get('hold')=='human') and actor!='human' and not auto_release and not repair:
+        if (state.get('status') in {'draft','parked','blocked'} or state.get('hold')=='human') and actor!='human' and not auto_release and not repair and not planner_authorized:
             raise TransitionError('human hold cannot be changed by driver')
         if not text.startswith('---') or (end:=text.find('\n---',3))<0:
             raise TransitionError('frontmatter missing')
@@ -344,14 +364,15 @@ def recover_legacy_contract(path, *, before_sha256, after_sha256, reason, return
         return matched
 
 
-def append_findings(path, note, *, reason):
+def append_findings(path, note, *, reason, actor="integrity-repair", guards=None, expected_digest=None):
     """Append an idempotent driver note without racing a changed plan body."""
     path=Path(path);raw=path.read_bytes();text=raw.decode('utf-8-sig')
     if note in text:return False
     state=parse_frontmatter(text)
     if 'status' not in state:raise TransitionError('finding target has no state')
     return transition(path,{'status':state['status']},{'status':state['status']},
-        actor='integrity-repair',reason=reason,findings_note=note,expected_digest=_digest(raw))
+        actor=actor,reason=reason,findings_note=note,guards=guards,
+        expected_digest=expected_digest if expected_digest is not None else _digest(raw))
 
 
 def rollback_ship(path, *, step=None, history=None, slug=None, reason):

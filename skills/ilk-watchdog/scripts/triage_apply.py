@@ -118,7 +118,7 @@ def _append_finding(
     rule_based: bool = False,
 ) -> None:
     """Append a ``#### Triage <ts> (run <id>)`` block under ``## Findings``."""
-    from plan_state import transition,TransitionError
+    from plan_state import append_findings,TransitionError
     _assert_write_allowed(plan_path, data_dir)
     raw=plan_path.read_bytes()
     fm=parse_frontmatter(raw.decode('utf-8-sig'))
@@ -130,8 +130,8 @@ def _append_finding(
         f"- Basis: {basis}\n"
         f"- Falsifier: {falsifier}\n"
     )
-    transition(plan_path,{'status':fm['status']},{'status':fm['status']},
-               actor='triage',reason='stopped-run triage findings',findings_note=block,
+    append_findings(plan_path,block,
+               actor='triage',reason='stopped-run triage findings',
                expected_digest=hashlib.sha256(raw).hexdigest(),
                **_record_transition_kwargs(plan_path,raw))
 

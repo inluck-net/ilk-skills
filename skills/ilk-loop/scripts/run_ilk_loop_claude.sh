@@ -2603,26 +2603,28 @@ _plan_fingerprint() {
 find_subplan_file_by_slug() {
   local plans_dir="$1" slug="$2"
   [[ -n "$plans_dir" && -d "$plans_dir" ]] || return 1
-  if [[ "${ILK_DISPATCH_SLUG:-}" == "$slug" ]]; then
-    python3 - "$plans_dir" "$slug" "${_SKILL_ROOT}/ilk-loop/scripts" <<'PYPIN'
+  python3 - "$plans_dir" "$slug" "${_SKILL_ROOT}/ilk-loop/scripts" <<'PYPIN'
 import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[3])
-from dispatch_target import pinned_subplan
-print(pinned_subplan(Path(sys.argv[1]), sys.argv[2]))
+from dispatch_target import pinned_subplan,identities,TargetError
+plans=Path(sys.argv[1]).resolve();slug=sys.argv[2]
+try:
+    selected=pinned_subplan(plans,slug)
+    if selected is None:
+        matches=[]
+        for path in sorted(plans.glob('*.md')):
+            if path.name.startswith('MASTER'):continue
+            if path.resolve().parent!=plans:raise TargetError('plan escapes plans root')
+            if slug in identities(path):matches.append(path)
+        if len(matches)!=1:raise TargetError(f'exact slug has {len(matches)} matches; expected one')
+        selected=matches[0]
+    print(selected)
+except (TargetError,OSError) as error:
+    print('plan target refused: '+str(error),file=sys.stderr)
+    sys.exit(1)
 PYPIN
-    return $?
-  fi
-  local f plan_slug
-  for f in "$plans_dir"/*.md; do
-    [[ -f "$f" ]] || continue
-    plan_slug=$(grep -m1 '^plan:' "$f" 2>/dev/null | sed 's/^plan:[[:space:]]*//')
-    if [[ "$plan_slug" == "$slug" ]]; then
-      printf '%s\n' "$f"
-      return 0
-    fi
-  done
-  return 1
+
 }
 
 # Does the step's fenced yaml declare `gate_first: true`?  Exit 0 = declared.
@@ -4544,7 +4546,10 @@ for raw in Path(gh_path).read_text().splitlines():
         if [[ "$_revert_target_slug" != "$slug" ]]; then
           # Find the owner's sub-plan file.
           local _owner_plan_file
-          _owner_plan_file=$(find "$plans_dir" -maxdepth 1 -name "*-${_revert_target_slug}.md" ! -name "MASTER-*" 2>/dev/null | head -1) || true
+          _owner_plan_file=$(find_subplan_file_by_slug "$plans_dir" "$_revert_target_slug") || {
+            echo "[integrity] owner plan target refused; no guessed revert" >&2
+            return 1
+          }
           if [[ -n "$_owner_plan_file" && -f "$_owner_plan_file" ]]; then
             _from_step_file="$_owner_plan_file"
           fi
@@ -5177,7 +5182,7 @@ _stamp_reentry_note() {
 
   # Find the sub-plan file by slug.
   local sub_file
-  sub_file=$(grep -rl "^plan: $slug" "$plans_dir"/*.md 2>/dev/null | head -1) || true
+  sub_file=$(find_subplan_file_by_slug "$plans_dir" "$slug") || return 1
   if [[ -z "$sub_file" || ! -f "$sub_file" ]]; then
     return 0  # sub-plan file not found — nothing to stamp
   fi
@@ -6741,7 +6746,10 @@ ${iter_prompt}"
         _brief_master=$(printf '%s' "$_wgn_identity" | jq -r '.master_path // empty') || true
         if [[ -n "$_wgn_subplan" ]]; then
           local _dispatch_brief=""
-          _dispatch_brief=$(ILK_MASTER="$_brief_master" build_worker_dispatch_brief "$_wgn_subplan" "$_wgn_step" "$_wgn_plans_dir" 2>/dev/null) || true
+          if ! _dispatch_brief=$(ILK_MASTER="$_brief_master" build_worker_dispatch_brief "$_wgn_subplan" "$_wgn_step" "$_wgn_plans_dir"); then
+            echo "[dispatch-brief] dispatch brief refused; no worker dispatched" >&2
+            return 2
+          fi
           if [[ -n "$_dispatch_brief" ]]; then
             iter_prompt="${_dispatch_brief}
 

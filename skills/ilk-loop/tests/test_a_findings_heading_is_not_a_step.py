@@ -46,6 +46,7 @@ def _count(tmp_path: Path, findings: str) -> str:
     (plans / "2026-10-09d-verify-x.md").write_text(PLAN.format(findings=findings))
     script = f"""
 set -u
+_SKILL_ROOT='{RUNNER.parents[2]}'
 eval "$(sed -n '/^find_subplan_file_by_slug()/,/^}}/p' '{RUNNER}')"
 eval "$(sed -n '/^count_step_headings()/,/^}}/p' '{RUNNER}')"
 _gate_first_plans_dir() {{ printf '%s\\n' '{plans}'; }}

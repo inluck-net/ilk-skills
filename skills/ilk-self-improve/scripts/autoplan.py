@@ -39,8 +39,21 @@ from plan_status import (  # noqa: E402
     normalize_master_status,
     parse_frontmatter,
 )
-from promote_next_master import write_status  # noqa: E402
+from plan_state import transition  # noqa: E402
 from triage_backlog import read_backlog_strict  # noqa: E402
+
+
+def write_autoplan_status(path, status, *, run_id):
+    """Autoplan may stage or queue its own unheld generated draft, never human."""
+    import hashlib
+    from plan_status import parse_frontmatter
+    raw=path.read_bytes();fm=parse_frontmatter(raw.decode('utf-8-sig'))
+    wanted={'status':status}
+    if status=='draft':wanted.update(auto_planned='true',autoplan_run=run_id)
+    return transition(path,{key:fm.get(key) for key in wanted},wanted,
+                      actor='autoplan',reason='generated master '+status,
+                      expected_digest=hashlib.sha256(raw).hexdigest(),planner_run=run_id)
+
 
 from autoplan_rails import (  # noqa: E402
     check_master,
@@ -865,7 +878,7 @@ def _plan_session(
 
         # 5. Force all new masters to draft
         for master_name in new_masters:
-            write_status(plans_dir / master_name, "draft", allow_from_held=True)
+            write_autoplan_status(plans_dir / master_name, "draft", run_id=run_id)
 
         # If multiple masters, note the problem
         if len(new_masters) > 1:
@@ -1132,7 +1145,7 @@ def plan(
                 result = {"decision": "drafted", "master": master_path.name,
                           "draft_only": True}
             else:
-                write_status(master_path, "queued", allow_from_held=True)
+                write_autoplan_status(master_path, "queued", run_id=run_id)
                 _mark_project_candidate(
                     data_root, project, candidate_id,
                     status="planned",
@@ -1380,7 +1393,7 @@ def plan_issue(
             return _finish("failed", 1, [f"stale {stale}"])
 
         if session["decision"] == "queued-ready":
-            write_status(master_path, "queued", allow_from_held=True)
+            write_autoplan_status(master_path, "queued", run_id=run_id)
             return _finish("queued", 0)
 
         return _finish("drafted", 3, problems)

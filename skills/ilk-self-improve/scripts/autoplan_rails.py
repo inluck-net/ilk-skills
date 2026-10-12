@@ -487,57 +487,15 @@ def mark_master(
     """Insert ``auto_planned: true``, ``autoplan_candidate`` and ``autoplan_run``
     into the master's frontmatter (replacing existing values).  Atomic write.
     """
-    text = master_path.read_text(encoding="utf-8-sig")
-    if not text.startswith("---"):
-        raise ValueError(f"{master_path.name}: no frontmatter block")
-    fm_end = text.find("\n---", 3)
-    if fm_end < 0:
-        raise ValueError(f"{master_path.name}: no closing ---")
-
-    frontmatter = text[3:fm_end]
-    rest = text[fm_end:]  # includes closing --- and everything after
-
-    lines = frontmatter.splitlines(keepends=True)
-    new_lines: list[str] = []
-    replaced_auto = False
-    replaced_cand = False
-    replaced_run = False
-    replaced_priority = False
-
-    for line in lines:
-        key = line.split(":")[0].strip() if ":" in line else ""
-        if key == "auto_planned":
-            new_lines.append(f'auto_planned: "true"\n')
-            replaced_auto = True
-        elif key == "autoplan_candidate":
-            new_lines.append(f"autoplan_candidate: {candidate_id}\n")
-            replaced_cand = True
-        elif key == "autoplan_run":
-            new_lines.append(f"autoplan_run: {run_id}\n")
-            replaced_run = True
-        elif key == "priority":
-            new_lines.append(f"priority: {AUTO_PLANNED_PRIORITY}\n")
-            replaced_priority = True
-        else:
-            new_lines.append(line)
-
-    # Ensure the last existing line ends with a newline before appending.
-    if new_lines and not new_lines[-1].endswith("\n"):
-        new_lines[-1] += "\n"
-
-    if not replaced_auto:
-        new_lines.append(f'auto_planned: "true"\n')
-    if not replaced_cand:
-        new_lines.append(f"autoplan_candidate: {candidate_id}\n")
-    if not replaced_run:
-        new_lines.append(f"autoplan_run: {run_id}\n")
-    if not replaced_priority:
-        new_lines.append(f"priority: {AUTO_PLANNED_PRIORITY}\n")
-
-    new_text = "---" + "".join(new_lines) + rest
-    tmp = master_path.with_suffix(master_path.suffix + ".tmp")
-    tmp.write_text(new_text, encoding="utf-8")
-    os.replace(tmp, master_path)
+    from plan_state import transition
+    import hashlib
+    raw=master_path.read_bytes()
+    fm=parse_frontmatter(raw.decode('utf-8-sig'))
+    changes={'auto_planned':'true','autoplan_candidate':candidate_id,
+             'autoplan_run':run_id,'priority':AUTO_PLANNED_PRIORITY}
+    transition(master_path,{key:fm.get(key) for key in changes},changes,
+               actor='autoplan',reason='bind generated master to planner run',
+               expected_digest=hashlib.sha256(raw).hexdigest(),planner_run=run_id)
 
 
 # ── 6. mark_candidate ────────────────────────────────────────────────────────

@@ -1143,7 +1143,7 @@ treats every non-zero deploy exit as 'rolled back'.
 """
 
 
-def _live_loops_local() -> list[int]:
+def _live_loops_local() -> list[int] | None:
     """Return pids of live ilk loops on this host.
 
     Matches ``run_ilk_loop_claude.(sh|ps1)`` via pgrep, then filters:
@@ -1155,7 +1155,7 @@ def _live_loops_local() -> list[int]:
     via ``pinned_loops.unpinned``.  On import failure, keeps every pid
     (fail closed).
 
-    Returns an empty list when no live loops are found.
+    Returns [] only on a successful no-match probe; None means unknown.
     """
     # Build the pgrep pattern from parts so this module's own argv never matches.
     _PGREP_PATTERN = "run_ilk_loop_claude" + r"\.(sh|ps1)"
@@ -1166,11 +1166,13 @@ def _live_loops_local() -> list[int]:
             encoding="utf-8", errors="replace",
             timeout=10,
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return []
+    except (subprocess.TimeoutExpired, OSError):
+        return None
 
-    if result.returncode != 0:
+    if result.returncode == 1:
         return []
+    if result.returncode != 0:
+        return None
 
     my_pid = os.getpid()
     parent_pid = os.getppid()
@@ -1180,7 +1182,7 @@ def _live_loops_local() -> list[int]:
         try:
             pid = int(line.strip())
         except ValueError:
-            continue
+            return None
         if pid == my_pid or pid == parent_pid:
             continue
         try:
