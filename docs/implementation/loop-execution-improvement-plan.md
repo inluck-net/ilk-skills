@@ -1,83 +1,44 @@
-# ilk-skills delivery tracker — D1–D3
+# ilk-skills delivery tracker — D1/D2 only
 
-Status: ACTIVE. Chad's2026-10-12 instruction supersedes the scope-freeze reporting stop. Continue until all three outcomes below are achieved; stop only for an actual Chad decision.
+ACTIVE; updated 2026-10-12T14:59:09+08:00. Chad reassigned owner work to D1 and D2. **D3 is deferred until D2 is resolved; do not start a row.** Earlier whole-checklist/reporting-stop instructions are superseded.
 
-Owner worktree: `/Users/chad/Projects/github/inluck-net/ilk-skills-worktrees/owner-loop-performance-20261011`.
-Side branch: `owner/loop-performance-20261011`. Full evidence/report: `~/.ilk-data/projects/users-chad-projects-github-inluck-net-ilk-skills-604d727/runtime/analysis/design-revision-20261011/owner-readiness-report-20261012.md`.
-Previous trackers archived in that directory and Git. No reconstruction from chat needed.
+Active integration worktree: `/Users/chad/Projects/github/inluck-net/ilk-skills-worktrees/owner-release-integration-20261012`, branch `owner/release-integration-20261012`. Original owner source: `../owner-loop-performance-20261011` at dd493098 (tracker prose may be dirty). Full dated evidence: `~/.ilk-data/projects/users-chad-projects-github-inluck-net-ilk-skills-604d727/runtime/analysis/design-revision-20261011/owner-readiness-report-20261012.md`. Git and earlier handoffs retain history; handoff2's estimation-only pause is revoked by Chad's continuation.
 
-## Definition of done, in order
+## Outcomes and order
 
-- [ ] D1:11b and10c ship unattended on194or later, accepted by driver gates. No hand edits to plan progress/status.
-- [ ] D2:one actual code-only multi-step batch accepts≥2steps without human intervention, wall time per accepted step≤comparable default-path steps. If qualified, release as default on BOTH hosts; otherwise record measured root cause and keep opt-in.
-- [ ] D3:all9backlog rows below land from side refs and release on BOTH hosts.
+- [ ] D1:11b and10c masters show shipped with loop-authored ship commits; unattended runs on194+; no owner plan-state edits.
+- [ ] D2:real two-step code-only feature qualifies, or is ruled out after at most3failed attempts with measured root cause. Qualification requires>=2driver-accepted steps, no human intervention, and all-attempt wall/accepted step no worse than comparable default steps. If qualified, release core-loop default on both hosts, verify, then observe a live accepted step. If ruled out, keep opt-in.
+- D2 may start once11bships and195is verified on both hosts; it does **not** wait for10ccompletion.
+- D3:all9backlog rows remain deferred. Canonical IDs/order in `owner-scope-freeze-backlog-20261012.json` and readiness report; no work started.
 
-Rules: no full suites; focused tests only. No hand commits on main under live batches. Land owner side refs at batch boundaries. Never park/stop a progressing batch to apply owner work. Every release gets an honest narrow tag, installs on both hosts and verifies scheduler head+decision/deploy status. Keep rezmac host-compat.json. Code-only/default switch requires D2 qualification, not fixtures. Each milestone updates this tracker and the readiness report; continue afterward.
+Rules: focused tests only, no full suites/final verifier unless explicitly changed. No main hand commits under a live batch. No stop/park/hotpatch of progressing runs. Side-ref landing at toolkit batch boundary. Both-host release verification includes scheduler exact head, fresh decision and deploy status; keep rezmac host-compat.json. No preview flips, gate-result reuse, fabricated batch proof, or silent attribution of baseline reds to workers. Fix only evidenced blockers with failing controls. Dated milestones here and in report, then continue. Label numeric/context/model/effort changes with judgment basis/falsifier.
 
-## Resume here
+## Current state
 
-1. Finish D1 blockers:14baseline gate reds verified at194; choose actual repairs, never blind deselections.11b worker is currently repairing remaining runner/harness failures; leave it running. Owner side fixes below are prepared independently.
-2.10c has accepted step0. Inspect remaining-gate base reds under correct staged toolkit/role prerequisites; distinguish missing prerequisites and corpus dependency from code defects. No proof from a union-only import-name collision.
-3. Observe both live runs through accepted steps/shipped. Fix demonstrated blockers with failing tests from side refs. Do not alter frozen live gates/state.
-4. After D1:repeat code-only trial with declared/effective context and orientation/API diagnosis applied. Compare equivalent default steps; keep separate uncontrolled replay out of qualification evidence.
-5. Work backlog in explicit priority order below; release each landed increment to both hosts.
+- Installed/published194:57efa856e352bbea59e724bc9077f5fff69b95fa on both hosts, scheduler exact head and deploy ok. Code-only opt-in. Six freeze-brief defects already delivered4010e7e2 plus precursors; do not redo.
+- Rezmac consumer activation DONE:8d079263→3987a299 while idle; doctor0; host-compat hash preserved. One contacted gh-resolve owner serves both hosts; no separate rezmac session. No further consumer changes.
+-11b:master active, base194. Registered1/2/4loop-shipped; launcher6has2steps left. Retired3/5/7helddrafts outside registry. Run20261012-133021/controller60813, iteration4launcherstep0 active at last check. Postmortem step1 driver accepted14:26,1536s, ship580d05d7.
+-10c:master active, base3987a299. Plans1–6loop-shipped; planning7three steps, then delegation8two steps. Run20261012-101406/controller38716, iteration6planningstep0 active. Parallel plan6ship494f3ef0, driver3778s. Final verifier9helddraft outside registry.
 
-## Delivered release
+## Prepared integration / next release
 
-v0.9.194 =57efa856e352bbea59e724bc9077f5fff69b95fa, published side ref. Both hosts installed, scheduler exact head+fresh decisions+deploy status ok. Six original defects fixed4010e7e2 (+state precursors33b45c86/e5fbbc49/ae7873ce); failing→passing focused evidence in report. Code-only stays opt-in.
-Rezmac gh-resolve8d079263→3987a299 activated while idle; doctor exit0, host-compat hash preserved. Installer legacy read-only projects bootstrap limitation remains recorded.
+-7cd35573 merges accepted main snapshot8e5b1fbf into owner source; all4conflicts resolved. Stronger child fixture/native-mode controls, narrow inconclusive reconciliation and worker canonical gate inventory retained. Side branch pushed through e8bb370f tracker milestone.
+- Actual code commit validation:10focused files,108passed132.94s; runner/install/duplicate-read hook Bash syntax all0. Evidence `integration-7cd35573-focused-20261012.json`.
+- Main advanced to580d05d7 afterward (5commits: child fixture, taxonomy docs, narrative repair, bump, ship). Wait until11bships, then merge its final HEAD on this side ref, reconcile duplicate owner fixes, run final scoped validation/syntax, and cut authorized direct195. Do not main-merge/tag before11bship.
+- Draft change-scoped selection402test files (changed tests + production importers/readers), not executed; recompute after final merge. No full suite selected.
+- Pre-ship audit reads an old shared batch verdict02753d20 as stale_head; no11b-specific record exists. Keep automatic refusal. Direct-release audit may use supported explicit manual gate input **only after fresh applicable scoped gates pass**, with author/provenance stated in tag. No replacement verdict record or independent-batch claim. Draft tag body/evidence in analysis directory.
+-195activation: use each host's upgrade/install path, scheduler launchctl bounce; reconcile released PostCompact event in all numbered worker homes, verify head+freshdecision+deploy, preserve host-compat. Active10c keeps frozen194.
 
-## Current batches
+## D2 preparation / comparison
 
--11b:replanned before unpause; overlapping3/5/7retired, remaining2/4/6, base194. Current run20261012-102830,PID83651,194frozen inputs. Plan2step1 driver pass; plan2 driver-shipped. Original resumed run timed out; WIP54e52a6f preserved. Worker implementation commitf0a287f8 exists, with1122passed/2skipped/2xfailed in118.64s worker gate; driver pass confirmed.
--10c:resumed after10b; plan4unblocked, hold/yield cleared, base3987a299. Current run20261012-101406,PID38716,194frozen inputs. Step0driver pass11.13s, driver elapsed967s; step1driverpass; step2attempt rejected, iteration4retry. WIPcc2a7a37 from original timeout preserved.
--Final verification remains opt-in for both; no final suite scheduled.
+- Not launched. `D2-predeclared-comparison-20261012.json` and `D2-trial-preparation-20261012.md` record protocol.
+- Comparable default postmortem feature:6finished attempts,2accepted,9377driver seconds =78.14min/accepted step. Failures, timeout and refusal retained. Count all trial attempts and disclose controller gaps separately.
+- Trial:private DataHome outside watched ~/.ilk-data; real pre-feature source; unique trial slug; same authored two-step gates; released root conftest/child-authority isolation; MiMo-v2.6-pro/default thinking/1M declaration. Code-only native coding tools match used default Read/Edit/Write/Bash; advertised tool sets differ and actual-call/gate comparability must be checked. PostCompact reset is an explicit195profile change.
+- No steering during an attempt. If failure, diagnose stream clocks/first-edit without summing overlaps; only evidenced cause fixes between attempts. Three failures is Chad's bound.
+- Original085944trial timed out3603s,0/2accepted,first edit1895s; uncontrolled default replay was stopped/held and is never qualification evidence. New trial starts after both-host195activation.
 
-## Measured repairs, pending boundary landing/release
+## Planning / reporting
 
--5c31956d:ship_audit missingosimport.2CLI reds reproduced;3ledger checks passed1.58s.
--ddcdfc31:inconclusive gate removes unaccepted same-iteration self-ship only. Real negative reproduced;7runner checks passed79.42s. No code rollback/quarantine attribution from an unmeasured gate.
--c68318ed/a1cefd0f:hermetic required-verifier/timeout/prelude fixtures and frozen baseline corpus; exact-source importer parse reuse invalidates changed bytes.82fixture checks4.01s;46scope/corpus/caller checks5.56s;38adjacent checks passed+1existing skip20.04s. No assertions removed or17s cap raised.
--Parse cache4096entry limit is a judgment margin over toolkit test corpus; eviction churn or memory growth falsifies it. Same-size source changes tested.
+Plan with independent all-attempt throughput60–95min/accepted step and~1/3iterations without progress. Estimates: D1critical path5–8h; integration+release2–3h; D2hands-on5–10h over1–2days. These are planning judgments, not promises. `D1-D2-delivery-clock-20261012.json` records continuation14:39 and evidence; distinguish hands-on from waiting and report actual hours when D2 resolves.
 
-## Worker time/context diagnosis
-
-All measured runs actually use mimo-v2.6-pro. Old11b thinking1798.06s+reportedTTFT993.74s; old10c1779.56s+TTFT917.37s; code-only1917.74s+TTFT676.87s. Discovery-intent calls93/27/88 respectively. Code-only1230.25s explicitly reported thinking before first native edit1895s after launch. Synchronous discovery replies23.762s total. Tool/TTFT/thinking clocks have limits; async/network/text time remains unallocated. Raw models and classification are in worker-time-*.json.
-Old runs auto-compacted~167k. New11b processed211548input tokens without compaction; CLI result now reports contextWindow1000000;238148 actual input tokens observed with no compaction. Backend handling a full1Minput remains unmeasured. Three localMiMo homes nowdeclare1000000; six rezmac homes already did. Active pins unchanged. Judgment basis: documented model capacity and eliminated early threshold; latency/context errors/renewed early compaction falsify usefulness. Continue observing init/context/compaction events.
-Original code-only trial085944 timed out3603s,0/2accepted,0driver gates. Extra scheduler replay100903 stopped/held, work preserved, never counted as code-only qualification. New trial not launched before D1.
-
-## D3 priority order (owner judgment, no priority field on filed rows)
-
-Default-path correctness first, then execution coverage, then bookkeeping. Reorder only on new blocker evidence.
-
-|Order|Backlog ID|Work|Status|
-|---|---|---|---|
-|1|c42945c349bea1d9|Remaining legacy liveness readers/process probes|open|
-|2|0f13f9b73fe854ce|Default worker state through CAS|open|
-|3|53e0f8975ceee8b6|Canonical context/record migration, remainingB1/B2|open|
-|4|104f5973a66095ee|Manifest effort and pin linting|open|
-|5|7a70deed5a416a41|Consumer reaping honors data root|open|
-|6|4b2947283759a109|Member and dirty/timeout execution adapters|open|
-|7|106e0d75fed786fc|Full PowerShell owned execution parity|open|
-|8|d568b68a4c7a5cec|Native Windows ownership adapters|open|
-|9|b1b81aeb2aef2ace|E1/E2/E4 performance/verdict bookkeeping|open|
-
-Additional side repairs ready: b34859e3 early integrity scope (8passed/1existing skip);3529ee25 registry/taxonomy(15passed);aeb5bd79 measured-green rejection fixture(7passed);3fbf9346 shell floor(14passed);156065e9 compaction reset+event install(56passed);509312ff/b7e7b3bc private child dispatch isolation(8passed). Full dated history and evidence remain in readiness report/archive.
-
-## Latest milestones
-
-2026-10-12:first accepted steps confirmed for both projects;11b plan2shipped.10c step2timeout/rejection remains unaccepted,3856s worker/4382s driver;iteration4recovery started automatically.11b postmortemstep0 retry ongoing. No hand progress edits.
-
-2026-10-12 12:53:private child also inherited code-only mode, reproducing iteration_context_invalid. Same boundary isolation now clears mode for this legacy red-rejection fixture; parent stays restricted. Single regression passed7.10s. No production semantics changed; no full suite. Continue D1driver gates, then release/D2/D3.
-
-2026-10-12 13:33:11b run130438 ended local_checks_failed_no_commits. Model result was an upstream high-risk refusal, CLIis_error=false,747.046s/62turns; no accepted commit. Live private fixture had7passed29.38s. Scheduler relaunched133021automatically. Recovery limited to synthetic fixture inputs/sanitized assertions; ordinary assigned-worker commits remain authorized. No approval bypass and no plan-state edits.10c iteration4nowdriver gate; continue D1.
-
-2026-10-12 13:40:10c plan4step2driveraccepted, gatepass,2965s driverelapsed. Prior failed4382s retained. Ordinary worker fixture/golden repairs committed43f474ca, no owner main commit. Check driver ship transition, continue remaining6/7/8.11b scheduler run133021active;passing fixture WIP preserved, no accepted postmortem step yet. Continue D1.
-
-2026-10-12 14:03:11b postmortemstep0driveraccepted at13:59:10,915s driverelapsed. Working-tree/HEAD prerequisite blocker resolved by ordinary worker commit, not owner main edit. Previousfailed attempts/refusal retained in metrics. Iteration3step1dispatched automatically.10c plan4driver-shipped;remaining work continues. Continue D1; release after toolkit batch boundary, no full suite.
-
-2026-10-12 14:40:Chad assigned owner D1/D2 only; D3 deferred. Plan using all-attempt throughput60–95min/accepted step, about1/3iterations without progress. D2 starts after11bships and195is verified onbothhosts, independentof10ccompletion; max3failedattempts. Liveworkers untouched. Integrationcontents resolved; preparing sidecommit, no main merge/tag before11bship.
-
-2026-10-12 14:43:10c parallel-readiness plan6 loop-shipped at494f3ef0; iteration5driver pass,3778s elapsed. Remainingplan7three steps thenplan8two dependent steps. No owner plan-state edits. Continue D1.
-2026-10-12 14:43:integration merge7cd35573 committed onside ref;108focused tests passed132.94s across10files; Bash syntax runner/install/hook all0. Exact evidence integration-7cd35573-focused-20261012.json. Main/hosts unchanged; final main snapshot merge/release waits11bship.
-2026-10-12 14:43:D2 comparison prepared beforetrial: same two-step postmortem feature,6completed defaultattempts includingfailures/timeout/refusal,9377s/2accepted=78.14min perstep. D2-predeclared-comparison-20261012.json records gates/limitations; no trialstarted, no D3 work.
+Latest milestones2026-10-12:14:26postmortem loop-shipped;14:40parallel-readiness loop-shipped;7cd35573integration committed,108focused tests/syntax passed;comparison fixed78.14min/accepted step. Hosts and live frozen inputs unchanged. Next:observe launcher/planning steps, final integration at11bship, direct195bothhosts, then unsteered D2; no D3.
