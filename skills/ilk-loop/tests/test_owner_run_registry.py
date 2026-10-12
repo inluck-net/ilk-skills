@@ -61,6 +61,30 @@ def test_expired_or_duplicate_launch_cannot_bind(tmp_path):
                 toolkit_sha='other',expires_at=300,now=100)
 
 
+def test_expired_launch_can_bind_only_when_runner_owns_the_lock(tmp_path,monkeypatch):
+    import run_registry as rr
+    runtime,identity=fixture(tmp_path)
+    (runtime/'run.lock').write_text(json.dumps(identity))
+    monkeypatch.setattr(rr.time,'time',lambda:201)
+
+    row=rr.attach(runtime,'fixture',pid=271,project=tmp_path/'clone',key='consumer',
+                  toolkit_sha='frozen-code',ttl=120,probe=lambda pid:identity)
+
+    assert row['state']=='running'
+    assert row['pid']==271
+
+
+def test_expired_launch_refuses_a_foreign_lock_owner(tmp_path,monkeypatch):
+    import run_registry as rr
+    runtime,identity=fixture(tmp_path)
+    (runtime/'run.lock').write_text(json.dumps(dict(identity,lstart='foreign start token')))
+    monkeypatch.setattr(rr.time,'time',lambda:201)
+
+    with pytest.raises(RegistryError,match='not owned by runner lock'):
+        rr.attach(runtime,'fixture',pid=271,project=tmp_path/'clone',key='consumer',
+                  toolkit_sha='frozen-code',ttl=120,probe=lambda pid:identity)
+
+
 def test_stop_never_signals_a_reused_pid_and_finish_checks_identity(tmp_path):
     runtime,identity=fixture(tmp_path);signals=[]
     bind_running(runtime,'fixture',pid=271,probe=lambda pid:identity,now=150)

@@ -208,14 +208,21 @@ def reserve(runtime,*,run_id,project_key,clone,exec_tree,toolkit_sha,expires_at,
     return row
 
 
-def bind_running(runtime,run_id,*,pid,probe=process_identity,now=None):
+def bind_running(runtime,run_id,*,pid,probe=process_identity,now=None,allow_expired_lock_owner=False):
     _owner();path=_path(runtime,run_id);now=time.time() if now is None else now
     identity=probe(pid)
     if not identity or identity.get('pid')!=pid or identity.get('pgid')!=pid:
         raise RegistryError('runner must own its process group')
     with _lock(path.parent/'.registry.lock'):
         row=read(path)
-        if row['state']!='launching' or row['expires_at']<=now:raise RegistryError('launch reservation expired or already bound')
+        if row['state']!='launching':raise RegistryError('launch reservation expired or already bound')
+        if row['expires_at']<=now:
+            if not allow_expired_lock_owner:
+                raise RegistryError('launch reservation expired or already bound')
+            try:holder=json.loads((Path(runtime)/'run.lock').read_text())
+            except (OSError,ValueError):raise RegistryError('expired launch reservation has no lock owner')
+            if any(holder.get(name)!=identity[name] for name in ('pid','pgid','lstart')):
+                raise RegistryError('expired launch reservation is not owned by runner lock')
         row.update(identity,state='running',bound_at=now)
         if os.environ.get('ILK_RUN_INPUTS'):
             from run_inputs import verify_launch_resources
@@ -338,7 +345,11 @@ def attach(runtime,run_id,*,pid,project,key,toolkit_sha,ttl,probe=process_identi
     row=read(path)
     if row['clone']!=str(Path(project).resolve()) or row['toolkit_sha']!=toolkit_sha:
         raise RegistryError('launch reservation contradicts runner inputs')
-    return bind_running(runtime,run_id,pid=pid,probe=probe)
+    # A launcher reservation can expire while the lock-owning runner performs
+    # pre-dispatch discovery.  The process identity persisted by the lock
+    # helper is the durable proof that this exact runner, rather than a stale
+    # or foreign process, may finish binding the exact reserved run ID.
+    return bind_running(runtime,run_id,pid=pid,probe=probe,allow_expired_lock_owner=True)
 
 
 def main():
