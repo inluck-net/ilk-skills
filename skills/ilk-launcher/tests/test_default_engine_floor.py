@@ -1,18 +1,15 @@
-"""RED-first pin — DEFAULT_ENGINE lands on a worker home, never the primary.
+"""Pin — DEFAULT_ENGINE lands on a worker home, never the primary.
 
-``launch.sh:27`` sets ``DEFAULT_ENGINE="claude"``.  The engine-precedence
-comment (launch.sh:33-41) says the engine system exists to keep loops OFF
-the primary account; the default contradicts it.
-
-The fix (step 1) changes ``DEFAULT_ENGINE`` to ``"claude-worker"`` so a
-forgot-the-flag spawn lands on ``~/.claude-worker`` instead of the primary.
+``launch.sh`` sets ``DEFAULT_ENGINE="claude-worker"``.  The engine-precedence
+comment (launch.sh:33-37) records why: the engine system exists to keep loops
+OFF the primary account, so a forgot-the-flag spawn must not land there.
 
 AC-2: with NO last-launch record and NO config, ``resolve_engine``'s floor
 is ``claude-worker`` — asserted functionally (source the function the way
 ``test_launch_config_resolution.sh`` does), not by grepping the constant.
 
-**This file is deliberately RED at step 0.**  It goes green at step 1,
-when ``DEFAULT_ENGINE`` becomes ``"claude-worker"``.
+Written RED-first and green once the default moved.  It stays green as long
+as the floor holds; a revert to the planner default turns it red again.
 """
 
 from __future__ import annotations

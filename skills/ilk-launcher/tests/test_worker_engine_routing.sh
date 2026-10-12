@@ -19,10 +19,18 @@ fi
 # Create a minimal temp project so ilk_paths.py can resolve it.
 TMPDIR_PROJ="$(mktemp -d)"
 TMPDIR_OUT="$(mktemp -d)"
-trap 'rm -rf "$TMPDIR_PROJ" "$SHIM_DIR" "$TMPDIR_OUT"' EXIT
+# Pin HOME / ILK_DATA_HOME / ILK_DATA_DIR for every spawned launcher.
+# Without the HOME pin this host's release layout trips the clone-run guard
+# (_ilk_skill_root.sh:104) and launch.sh exits 3 before any dry-run output.
+# Measured 2026-10-12 unpinned: 3 passed, 11 failed, every output empty.
+TMPDIR_HOME="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR_PROJ" "$SHIM_DIR" "$TMPDIR_OUT" "$TMPDIR_HOME"' EXIT
 mkdir -p "${TMPDIR_PROJ}/docs/plans"
 echo "---" > "${TMPDIR_PROJ}/docs/plans/MASTER-test.md"
 git init -q "$TMPDIR_PROJ"
+export HOME="$TMPDIR_HOME"
+export ILK_DATA_HOME="$TMPDIR_HOME/.ilk-data"
+export ILK_DATA_DIR="$TMPDIR_HOME/.ilk-data"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -53,19 +61,29 @@ assert_true() {
 
 echo "=== test_worker_engine_routing.sh ==="
 
-# --- AC-3: default engine → planner default, no .claude-worker ---
+# --- AC-3: default engine → worker home, never the planner home ---
 echo "--- AC-3: default engine dry-run ---"
 
-# Unset ILK_DEFAULT_ENGINE so we test the true default (claude)
+# Unset ILK_DEFAULT_ENGINE so we test the true DEFAULT_ENGINE floor.
 ILK_DEFAULT_ENGINE= bash "$LAUNCHER" --project-path "$TMPDIR_PROJ" --dry-run 2>&1 | tr -d '\r' > "$TMPDIR_OUT/default.txt" || true
 
-assert_grep "default: ClaudeConfigDir line present" \
-  "$TMPDIR_OUT/default.txt" -q 'ClaudeConfigDir:.*default.*\.claude'
+# Reconciled 2026-10-12 (step 1).  This block used to assert the no-flag
+# default is the planner's ~/.claude while launch.sh:37 and
+# test_default_engine_floor.py both pinned the floor at claude-worker —
+# two claims about one fact.  The floor pin is in the declared step-1 gate
+# and launch.sh:33-37 records the default as deliberate ("a forgot-the-flag
+# spawn lands on a worker home, never the primary account"), so the planner
+# reading is the stale one.  The assertions are inverted, not removed: the
+# anti-claim now covers the planner home instead of the worker home.
+assert_grep "default: WorkerEngine is claude-worker" \
+  "$TMPDIR_OUT/default.txt" -q 'WorkerEngine: claude-worker'
 
-# Ensure ClaudeConfigDir line does NOT contain .claude-worker
+assert_grep "default: ClaudeConfigDir routes to .claude-worker" \
+  "$TMPDIR_OUT/default.txt" -q 'ClaudeConfigDir:.*\.claude-worker'
+
 configdir_default=$(grep 'ClaudeConfigDir:' "$TMPDIR_OUT/default.txt" || true)
-assert_true "default: no .claude-worker in ClaudeConfigDir" \
-  bash -c 'case "'"${configdir_default}"'" in *.claude-worker*) exit 1 ;; *) exit 0 ;; esac'
+assert_true "default: planner home is not the config dir" \
+  bash -c 'case "'"${configdir_default}"'" in *"default ~/.claude"*) exit 1 ;; */.claude) exit 1 ;; *) exit 0 ;; esac'
 
 # --- AC-2: claude-worker engine → worker home routing ---
 echo "--- AC-2: claude-worker engine dry-run ---"

@@ -34,10 +34,13 @@ try {
 
   Write-Host "=== test_worker_engine_routing.ps1 ==="
 
-  # --- AC-3: default engine → planner default, no .claude-worker ---
+  # --- AC-3: default engine → worker home, never the planner home ---
   Write-Host "--- AC-3: default engine dry-run ---"
 
-  # Unset ILK_DEFAULT_ENGINE so we test the true default (claude)
+  # Unset ILK_DEFAULT_ENGINE so we test the true DefaultEngine floor.
+  # Reconciled 2026-10-12 with test_worker_engine_routing.sh, launch.sh:37
+  # and launch.ps1's $DefaultEngine: the no-flag floor is claude-worker.
+  # Assertions inverted, not removed — see the bash sibling for the evidence.
   $savedEngine = $env:ILK_DEFAULT_ENGINE
   $env:ILK_DEFAULT_ENGINE = ''
   try {
@@ -47,13 +50,17 @@ try {
   }
   $outDefaultStr = $outDefault -join "`n"
 
-  Assert-Test "default: ClaudeConfigDir line present" {
-    $outDefaultStr -match 'ClaudeConfigDir:.*default.*\.claude'
+  Assert-Test "default: WorkerEngine is claude-worker" {
+    $outDefaultStr -match 'WorkerEngine: claude-worker'
   }
 
-  Assert-Test "default: no .claude-worker in ClaudeConfigDir" {
+  Assert-Test "default: ClaudeConfigDir routes to .claude-worker" {
+    $outDefaultStr -match 'ClaudeConfigDir:.*\.claude-worker'
+  }
+
+  Assert-Test "default: planner home is not the config dir" {
     $configdirLine = ($outDefault | Where-Object { $_ -match 'ClaudeConfigDir:' })
-    $configdirLine -notmatch '\.claude-worker'
+    $configdirLine -notmatch 'default ~/.claude' -and $configdirLine -notmatch '\\.claude$'
   }
 
   # --- AC-2: claude-worker engine → worker home routing ---
