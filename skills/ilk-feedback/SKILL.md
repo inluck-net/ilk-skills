@@ -124,6 +124,15 @@ generated_at: 2026-05-23T14:32:00
 
 The `recommended_*` fields are what `ilk-launcher` Step 1.5 reads.
 
+A `recommended_*` value of `null` is a measurement, not a gap to fill in:
+it means this run left no basis for a cap. **Never substitute a default**
+(30 iterations, 30 minutes, any round number) for a `null` — a number in
+that field is a claim that something was measured. Leave the parameter
+unset and say the configuration is unknown. The same rule applies to
+`iterations_max_configured` / `iteration_timeout_min_configured`:
+`"unknown"` stays unknown, and the resume line carries no invented flag
+value.
+
 ## Taxonomy
 
 | Label | Trigger condition | What it means |
@@ -215,7 +224,11 @@ through 3-day-old runs.
      manually)
 6. Act on their answer:
    - (a) → call `ilk-launcher`'s `launch.ps1` / `launch.sh` with the
-     recommended `MaxIterations` / `IterationTimeoutMin`. Report what you launched.
+     recommended `MaxIterations` / `IterationTimeoutMin`. Report what you
+     launched. If either recommendation is `null` / `none`, **omit that
+     flag** rather than passing a default — a cap nobody measured is worse
+     than no cap, because the next postmortem will report it as the
+     configured value.
    - (b) → open the relevant log file in the editor; do NOT auto-launch.
    - (c) → end your turn with the report path so the user can come back.
 
