@@ -2704,8 +2704,14 @@ def lint_scope_path_off_base_branch(
                  "refs/heads", "refs/remotes"],
                 cwd,
             )
+            if rc_each != 0:
+                findings.append(
+                    f"{slug}: scope_path '{p}': unknown — "
+                    f"git for-each-ref failed (rc={rc_each}): {err_each}"
+                )
+                continue
             ref_names: list[str] = []
-            if rc_each == 0 and out_each:
+            if out_each:
                 for ref in out_each.splitlines():
                     ref = ref.strip()
                     if not ref:

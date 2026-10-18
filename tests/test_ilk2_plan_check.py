@@ -1121,3 +1121,45 @@ def test_off_base_path_never_in_history_ok(tmp_path: Path) -> None:
     findings = _off_base(repo, "brand_new.py")
 
     assert findings == [], findings
+
+
+def test_off_base_for_each_ref_failure_reports_unknown(tmp_path: Path) -> None:
+    """A failed `for-each-ref` reports ``unknown``, never a pass.
+
+    When ``git for-each-ref`` fails (non-zero rc), the function must not
+    silently treat the path as absent from all refs — it must append an
+    ``unknown`` finding naming the rc and stderr.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "-b", "main")
+    (repo / "gone.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "gone.py")
+    _git(repo, "commit", "--quiet", "-m", "add gone.py")
+    (repo / "gone.py").unlink()
+    _git(repo, "rm", "gone.py")
+    _git(repo, "commit", "--quiet", "-m", "delete gone.py")
+
+    mod = _load_plan_check()
+    original_run_git = mod._run_git
+
+    def _patched_run_git(args: list[str], cwd: Path) -> tuple[int, str, str]:
+        if args and args[0] == "for-each-ref":
+            return 1, "", "fatal: cannot list refs"
+        return original_run_git(args, cwd)
+
+    old_cwd = mod._GIT_CWD
+    try:
+        mod._GIT_CWD = repo
+        mod._run_git = _patched_run_git
+        findings = mod.lint_scope_path_off_base_branch(
+            _scope_subplan("gone.py"), "demo-step",
+        )
+    finally:
+        mod._run_git = original_run_git
+        mod._GIT_CWD = old_cwd
+
+    assert len(findings) == 1, findings
+    assert "unknown" in findings[0], findings[0]
+    assert "HARD" not in findings[0], findings[0]
+    assert "for-each-ref" in findings[0], findings[0]
