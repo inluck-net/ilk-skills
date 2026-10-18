@@ -61,6 +61,36 @@ def test_ilk2_plan_delivers_through_ilk2_submit() -> None:
         assert needle in text, f"commands/ilk2-plan.md does not contain {needle!r}"
 
 
+def test_ilk2_plan_states_the_step_size_bounds() -> None:
+    """Rule 1 (docs/07 §7.4.2): at most 6 files and 12,000 characters per
+    plan, per step — the measures ilk2 reports as files-per-step and
+    chars-per-step."""
+    text = _text(ILK2_PLAN)
+    for needle in ("at most 6", "12,000", "files-per-step", "chars-per-step"):
+        assert needle in text, f"commands/ilk2-plan.md does not contain {needle!r}"
+
+
+def test_ilk2_plan_justifies_dependencies() -> None:
+    """Rule 2: depends_on only for shared files (scope_paths overlap) or a
+    needed behaviour; serial-chain is the warning for a chain that is not."""
+    text = _text(ILK2_PLAN)
+    assert "depends_on" in text, "the dependency rule must name depends_on"
+    assert "share files" in text, "the dependency rule must require shared files"
+    assert "scope_paths" in text, "the dependency rule must name scope_paths"
+    assert "serial-chain" in text, "the serial-chain warning must be named"
+
+
+def test_ilk2_plan_qc_runs_submit_check() -> None:
+    """Rule 3: the QC section runs `ilk2 submit --check` and fails on its
+    refusals AND its plan-shape warnings before submitting."""
+    text = _text(ILK2_PLAN)
+    start = text.find("## 7.")
+    end = text.find("## 8.")
+    assert start != -1 and end != -1 and start < end, "QC section (## 7.) not found"
+    qc = text[start:end]
+    assert "ilk2 submit --check" in qc, "the QC section must run ilk2 submit --check"
+
+
 def test_ilk2_plan_has_no_v1_paths_scripts_or_runner() -> None:
     text = _text(ILK2_PLAN)
     for needle in FORBIDDEN:

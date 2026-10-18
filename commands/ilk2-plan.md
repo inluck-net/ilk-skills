@@ -327,15 +327,31 @@ Apply the rubric from `decomposition-principles.md` while drafting:
 - Does each sub-plan pass the fresh-session test (principle 5)?
 
 New planning rules (docs/07 §7.4.2) — the planner fails its own QC on
-each of these:
+each of these, enforced in 7i below through `ilk2 submit --check`:
 
-1. **Step size.** A step is about 25-30 worker-minutes: per step, at
-   most 6 files of scope and 12,000 characters of plan text. Split by
-   acceptance-criteria group, with failing tests first in each step.
-2. **Dependencies are justified.** A plan depends on another only when
-   they share files (`scope_paths`) or one needs the other's behaviour,
-   and the master says which for each edge. Serial chains that exist
-   only because earlier batches had them are not justification.
+1. **Step size.** A step is about 25-30 worker-minutes. Both measures
+   are per plan, per step: a sub-plan's steps share its scope and its
+   preamble, so the counts are the plan's own divided by its steps —
+   - **at most 6 files** of `scope_paths` divided by its steps;
+   - **at most 12,000 characters** of plan text divided by its steps
+     (its shared preamble counted once, plus each step's own section).
+
+   These are the measures ilk2's `submit --check` reports as the
+   plan-shape warnings `files-per-step` and `chars-per-step` (docs/07
+   §7.4.1). Split a large sub-plan by acceptance-criteria group,
+   red-first (failing tests first) inside each step.
+
+   Basis: batch 17d (gh-resolve, Oct 17) ran 5.23 h with steps of about
+   2,958 inserted lines; the plans above these bounds were slow two
+   times in three.
+2. **Dependencies are justified.** A sub-plan lists another in
+   `depends_on` only when they **share files** (`scope_paths` overlap)
+   or one needs the other's behaviour — and the MASTER's dependency
+   section gives the reason for each edge, naming which of the two
+   applies. Plans with disjoint scope have no edge, so ilk2 runs them in
+   lanes. ilk2 warns `serial-chain` when dependencies order every plan
+   although some ordered pairs share no files: a chain copied from an
+   earlier batch, not justified here.
 3. **No re-reading what the brief preloads** (see step 6's "Before you
    start").
 
@@ -553,13 +569,16 @@ in step 2 (i.e. `~/.ilk2/plans/<project>/<YYYY-MM-DD[x]>/`):
   - Empty "Findings" section (loop fills during execution)
   - Reference reading section (any docs the executor should pre-load)
 
-## 7. Final QC (five passes)
+## 7. Final QC
 
 Run these passes against every newly-written sub-plan BEFORE
-delivering. 7a / 7d-env / 7e findings are warnings (surface to the
-user); 7b mutates files; **7c (meta projects only), 7d-errors, and 7g's
-hard findings** are hard gates — never advance to step 8 with an
-unresolved hard finding.
+delivering. The enforced instrument is `ilk2 submit --check` (7i): its
+refusals **and** its plan-shape warnings are failures of this QC, and
+the plan is fixed before it is submitted. 7a / 7d-env / 7e findings are
+warnings (surface to the user); 7b mutates files; **7c (meta projects
+only) and 7d-errors** are hard gates — never advance to step 8 with an
+unresolved hard finding. 7g and 7h are optional authoring lints (see
+7i).
 
 ### 7a. `local_checks` anti-pattern lint
 
@@ -806,11 +825,13 @@ field:
 Finding counts go in the final report. Errors should be fixed before
 advancing to step 8.
 
-### 7g. Degrade-discipline lints (`plan_lint.py`)
+### 7g. Degrade-discipline lints (`plan_lint.py`, optional)
 
-Run the planner degrade-discipline lints over every newly-written sub-plan —
-these are the *enforced* form of guards that used to be prose (and were
-skipped, stalling uccargo twice on 2026-06-13):
+An **optional authoring lint** over every newly-written sub-plan — the
+heuristics that used to be prose (and were skipped, stalling uccargo
+twice on 2026-06-13). V1's checker is all that exists until a standalone
+ilk2 authoring checker does, so nothing here is a gate: the enforced QC
+is `ilk2 submit --check` (7i). Run it when you want the extra eyes:
 
 ```bash
 python "<skill-root>/ilk-loop/scripts/plan_lint.py" \
@@ -820,8 +841,8 @@ python "<skill-root>/ilk-loop/scripts/plan_lint.py" \
 Pass `--master` — it enables the master-level checks (slug-collision and
 the retired-flag scope guard) which cannot run from sub-plan text alone.
 
-It emits finding classes (warnings except where marked **hard finding** —
-surface counts in the step-9 report; fix before delivering):
+It emits finding classes (warnings except where marked **hard finding**;
+surface counts in the step-9 report):
 
 - **env_prereq-vs-fallback contradiction** — a sub-plan that hard-gates on an
   MCP via `env_prereqs: claude mcp list | grep -q X` AND documents a
@@ -920,8 +941,8 @@ surface counts in the step-9 report; fix before delivering):
   must target files on the same branch. See decomposition-principles.md §22.
 
 `plan_lint.py` exits non-zero when it finds anything; treat findings as
-must-fix-before-delivery (a contradiction here is what actually stalled
-the loop).
+authoring advice worth fixing before delivery (a contradiction here is
+what actually stalled the loop). They do not block delivery — 7i does.
 
 ### 7h. Contract-change review (`plan_lint.py`)
 
@@ -939,8 +960,38 @@ can't be authored without consulting the contract docs. See
 The governed-file list itself lives in `plan_lint.py`, with the kernel it
 protects; this command does not restate it, so the two cannot drift.
 
-A finding here is a warning (surface in the step-9 report; fix before
-delivering).
+A finding here is a warning (surface in the step-9 report).
+
+### 7i. Plan-shape QC (`ilk2 submit --check`)
+
+Run ilk2's own check against the authored batch here, before step 8 —
+the same command step 8a delivers with, used as this planner's QC:
+
+```bash
+ilk2 submit --check --project <project> <drafts dir>/MASTER-YYYY-MM-DD-execution-plan.md
+```
+
+**Treat its refusals AND its plan-shape warnings as failures of your own
+QC.** ilk2 itself only reports the warnings and lets the batch through —
+a threshold is a judgment call, and refusing on it would stall an
+unattended consumer (docs/07 §7.4.1). This planner is the other half of
+that bargain: it fails on the same rules and fixes the plan before
+submitting. Split steps that break the step-size bounds (rule 1), and
+drop `depends_on` edges the MASTER cannot justify (rule 2). Fix, re-run
+the check, and only then go to step 8.
+
+The plan-shape warnings, named as ilk2 reports them:
+
+- `files-per-step` — a plan's distinct `scope_paths` entries divided by
+  its steps is over 6.
+- `chars-per-step` — a plan's text (its shared preamble once, plus each
+  step's own section) divided by its steps is over 12,000 characters.
+- `serial-chain` — `depends_on` orders every plan although some ordered
+  pairs share no files.
+
+`plan_lint.py --master` (7g, 7h) stays an **optional authoring lint**
+until a standalone checker exists; `ilk2 submit --check` is what this QC
+enforces.
 
 ## 8. Deliver the batch to ilk2
 
@@ -967,8 +1018,10 @@ it links, a step with no gate, a gate whose executable does not resolve,
 a `local_checks` block that cannot be read, a step whose declared writes
 touch the project's `deny_paths`, and a gate that cannot run at the base.
 Take the printed `problems` list as authoritative over this summary.
-Warnings (size thresholds and the like) are not refusals: record them for
-the step-9 report and continue.
+Warnings (the plan-shape thresholds of 7i) never refuse a batch — ilk2
+only reports them — but they are QC failures for this planner: if one
+stands here, 7i did not finish. Go back and fix the plan rather than
+submitting past it.
 
 ### 8b. Submit
 
@@ -995,10 +1048,11 @@ End your turn with:
 
 1. A brief summary: "Wrote 1 master plan + N sub-plans covering M items
    to `~/.ilk2/plans/<project>/<date>/`, submitted as batch `<id>`."
-2. QC pass results: lint findings (count, incl. diagnostic step-0),
-   invariants woven (count), env_prereqs findings (count), cold-read
-   gaps surfaced (count), step-8 refusals fixed (count). Each non-zero
-   count expanded with a short bullet list so the user can act.
+2. QC pass results: plan-shape warnings fixed (count), lint findings
+   (count, incl. diagnostic step-0), invariants woven (count),
+   env_prereqs findings (count), cold-read gaps surfaced (count),
+   step-8 refusals fixed (count). Each non-zero count expanded with a
+   short bullet list so the user can act.
 3. The batch id and the output of:
 
    ```bash
@@ -1044,6 +1098,8 @@ End your turn with:
   would land in the wrong repo.
 - **Never deliver while a refusal stands** — `--check` is the gate
   between authoring and submission, and its refusals are structural.
+  Its plan-shape warnings are this planner's QC failures too (7i): fix
+  the plan and re-check rather than submitting past them.
 - **Never write inside the project repo** — drafts live under
   `~/.ilk2/plans/`. Any sub-plan mutations from step 7b (invariant
   weaving) are written to those same draft files before step 8.
