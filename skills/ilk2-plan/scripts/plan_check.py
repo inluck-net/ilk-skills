@@ -1341,8 +1341,10 @@ _UI_ADVERTISEMENT_RE = re.compile(
     |menu\s+item                           # "menu item"
     |button\s+(?:labeled|labelled|that\s+says)  # "button labeled X"
     |tooltip                               # tooltip hint
-    |hint\b                                # hint (standalone)
     |key\s*hint                            # key hint
+    |hint\s+(?:text|label|bar|line|shown|displayed|appears)  # hint + UI noun/verb
+    |(?:shows?|displays?|on-?screen|status\s+bar)\b[^.\n]{0,40}\bhint  # display-verb + hint
+    |提示.*(?:key|键)|(?:key|键).*提示            # Chinese: "提示 key" / "key 提示"
     |shortcut                              # keyboard shortcut
     |indicator                             # e.g. "×N speed indicator"
     |displays?\b.*\b(?:press|tap|click|open)  # "displays 'press X'"
