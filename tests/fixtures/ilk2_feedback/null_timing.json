@@ -1,0 +1,84 @@
+{
+  "batch": "b-synth-null-timing",
+  "report_version": 1,
+  "steps": [
+    {
+      "plan": "synth-null-timing",
+      "idx": 1,
+      "title": "attempts recorded before report_version 2",
+      "kind": "work",
+      "status": "accepted",
+      "attempts": 2,
+      "red": 1,
+      "interrupted": 0,
+      "minutes": null,
+      "first_edit_min": null,
+      "carried": 0,
+      "peak_context_k": null,
+      "turns": null,
+      "s_per_turn": null,
+      "attempt_records": [
+        {
+          "n": 1,
+          "outcome": "red",
+          "reason": "gate red at the end of an attempt that did edit",
+          "termination": null,
+          "gates_first": false,
+          "minutes": null,
+          "edits": {"Write": 1},
+          "requests": null,
+          "long_requests": null,
+          "long_request_min": null,
+          "longest_request_min": null,
+          "model_min": null,
+          "tool_min": null,
+          "first_edit_start_min": null,
+          "first_edit_end_min": null,
+          "gates": {
+            "unit": {
+              "adapter": "pytest",
+              "command_digest": "sha256:synth-null",
+              "outcome": "fail",
+              "new": ["test_synth_null.py::test_red"],
+              "possibly_inherited": [],
+              "attributed": ["test_synth_null.py::test_red"]
+            }
+          }
+        },
+        {
+          "n": 2,
+          "outcome": "accepted",
+          "reason": "green after the fix",
+          "termination": "done",
+          "gates_first": false,
+          "minutes": null,
+          "edits": {"Edit": 1},
+          "requests": null,
+          "long_requests": null,
+          "long_request_min": null,
+          "longest_request_min": null,
+          "model_min": null,
+          "tool_min": null,
+          "first_edit_start_min": null,
+          "first_edit_end_min": null,
+          "gates": {
+            "unit": {
+              "adapter": "pytest",
+              "command_digest": "sha256:synth-null",
+              "outcome": "pass",
+              "new": [],
+              "possibly_inherited": [],
+              "attributed": []
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "refusals": [],
+  "accepted": 1,
+  "of": 1,
+  "minutes_per_accepted_step": null,
+  "first_attempt_share": null,
+  "phase_minutes": {}
+}

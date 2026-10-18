@@ -1,0 +1,93 @@
+{
+  "batch": "b-synth-api-flaky",
+  "report_version": 2,
+  "steps": [
+    {
+      "plan": "synth-api-flaky",
+      "idx": 1,
+      "title": "survive two upstream blips",
+      "kind": "work",
+      "status": "accepted",
+      "attempts": 3,
+      "red": 0,
+      "interrupted": 0,
+      "minutes": 22.0,
+      "first_edit_min": 2.0,
+      "carried": 0,
+      "peak_context_k": 25,
+      "turns": 9,
+      "s_per_turn": 35.0,
+      "attempt_records": [
+        {
+          "n": 1,
+          "outcome": "api",
+          "reason": "upstream 500 on the first request",
+          "termination": "api",
+          "gates_first": false,
+          "minutes": 1.0,
+          "edits": {},
+          "requests": 1,
+          "long_requests": 0,
+          "long_request_min": 0.0,
+          "longest_request_min": 0.0,
+          "model_min": 0.2,
+          "tool_min": 0.0,
+          "first_edit_start_min": null,
+          "first_edit_end_min": null,
+          "gates": {}
+        },
+        {
+          "n": 2,
+          "outcome": "api",
+          "reason": "upstream connection reset",
+          "termination": "api",
+          "gates_first": false,
+          "minutes": 1.5,
+          "edits": {},
+          "requests": 1,
+          "long_requests": 0,
+          "long_request_min": 0.0,
+          "longest_request_min": 0.0,
+          "model_min": 0.3,
+          "tool_min": 0.0,
+          "first_edit_start_min": null,
+          "first_edit_end_min": null,
+          "gates": {}
+        },
+        {
+          "n": 3,
+          "outcome": "accepted",
+          "reason": "green on the retry",
+          "termination": "done",
+          "gates_first": false,
+          "minutes": 19.5,
+          "edits": {"Edit": 2, "Write": 1},
+          "requests": 12,
+          "long_requests": 1,
+          "long_request_min": 6.0,
+          "longest_request_min": 6.0,
+          "model_min": 12.0,
+          "tool_min": 4.0,
+          "first_edit_start_min": 1.5,
+          "first_edit_end_min": 4.0,
+          "gates": {
+            "unit": {
+              "adapter": "pytest",
+              "command_digest": "sha256:synth-unit",
+              "outcome": "pass",
+              "new": [],
+              "possibly_inherited": [],
+              "attributed": []
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "refusals": [],
+  "accepted": 1,
+  "of": 1,
+  "minutes_per_accepted_step": 22.0,
+  "first_attempt_share": 0.33,
+  "phase_minutes": {"dispatch": 1.0, "gates": 2.0, "base": 0.4, "merge": 0.3, "attribute": 0.2}
+}
