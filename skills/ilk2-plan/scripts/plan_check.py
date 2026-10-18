@@ -1927,14 +1927,35 @@ def _discover_tests_by_import(
 ) -> set[str]:
     """Find test files that import *module_name* via ``ast`` parsing.
 
-    Returns a set of resolved absolute paths.  Only files under the project's
-    configured ``testpaths`` (or ``tests/``) are scanned.
+    Thin wrapper around ``test_importers.importer_tests`` (this folder's
+    copy of V1's helper).  Returns a set of resolved absolute paths.  Only
+    files under the project's configured ``testpaths`` (or ``tests/``) are
+    scanned.
 
-    Direct filesystem scan by ast import matching (no sibling imports).
+    Falls back to direct filesystem scan when the project is not a git
+    repository (e.g. in test fixtures with ``tmp_path``), matching any
+    import segment just as the helper does.
     """
-    # Filesystem scan by ast import matching.  plan_lint's git-only
-    # test_importers shortcut is not carried over: that helper lives in
-    # the V1 loop's script folder, and this scan has the same semantics.
+    # Check if this is a git repo — importer_tests requires git ls-files.
+    git_dir = project_root / ".git"
+    if git_dir.exists():
+        # ``test_importers.py`` sits beside this file.  Isolated mode
+        # (``python -I``) drops the script's directory from ``sys.path``;
+        # put it back so the sibling helper is importable.
+        script_dir = str(Path(__file__).resolve().parent)
+        if script_dir not in sys.path:
+            sys.path.insert(0, script_dir)
+        try:
+            from test_importers import importer_tests  # noqa: E402
+            rel_paths = importer_tests(project_root, [f"{module_name}.py"])
+            return {str(project_root / p) for p in rel_paths}
+        except ImportError:
+            pass  # Fall through to filesystem scan.
+
+    # Fallback: filesystem scan of every test file — no git here, so
+    # ``git ls-files`` cannot separate tracked from untracked.  Match the
+    # helper's semantics: the module name may be ANY segment of a dotted
+    # import (``from pkg.cli import f`` names ``cli``), not just the first.
     test_dirs = _find_testpaths(project_root)
     results: set[str] = set()
     for td in test_dirs:
@@ -1949,16 +1970,13 @@ def _discover_tests_by_import(
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
-                        top = alias.name.split(".")[0]
-                        if top == module_name:
+                        if module_name in alias.name.split("."):
                             results.add(str(py))
                             break
                 elif isinstance(node, ast.ImportFrom):
-                    if node.module:
-                        top = node.module.split(".")[0]
-                        if top == module_name:
-                            results.add(str(py))
-                            break
+                    if node.module and module_name in node.module.split("."):
+                        results.add(str(py))
+                        break
     return results
 
 
