@@ -291,6 +291,207 @@ def test_discover_tests_by_import_fallback_matches_any_segment(
     assert str(repo / "tests" / "test_x.py") in found, sorted(found)
 
 
+# ── UI-promise: standalone "hint" in prose is not an affordance ──────────────
+#
+# gh-resolve trial 18b/18c found that ``_UI_ADVERTISEMENT_RE``'s bare
+# ``hint\b`` alternative matched ordinary prose like "the master lookup is a
+# hint" or "a hint, not a guarantee".  The regex was narrowed to UI-context
+# forms only: ``key hint``, ``tooltip``, and ``hint`` next to a UI noun/verb
+# (hint text, status bar displays a hint, etc.).
+
+# Sub-plans whose body contains "hint" in prose but no UI affordance.
+# These must NOT trigger the UI-promise wiring warning.
+
+HINT_PROSE_SUBPLAN = """\
+---
+plan: demo-step
+verification_tier: compile-only
+---
+
+# Sub-plan: demo-step
+
+The master lookup is a hint, not a guarantee.
+
+## Steps
+
+### Step 0
+
+Edit `tools/demo.py`.
+
+```yaml
+local_checks:
+  - command: python3 -c "print(1)"
+    timeout: 30
+```
+"""
+
+HINT_PROSE_LOOKUP_SUBPLAN = """\
+---
+plan: demo-step
+verification_tier: compile-only
+---
+
+# Sub-plan: demo-step
+
+The lookup is only a hint for the resolver.
+
+## Steps
+
+### Step 0
+
+Edit `tools/demo.py`.
+
+```yaml
+local_checks:
+  - command: python3 -c "print(1)"
+    timeout: 30
+```
+"""
+
+# Sub-plans that DO contain a UI affordance and should still fire.
+
+KEY_HINT_SUBPLAN = """\
+---
+plan: demo-step
+verification_tier: compile-only
+---
+
+# Sub-plan: demo-step
+
+A key hint shows Ctrl+K to the user.
+
+## Steps
+
+### Step 0
+
+Edit `tools/demo.py`.
+
+```yaml
+local_checks:
+  - command: python3 -c "print(1)"
+    timeout: 30
+```
+"""
+
+STATUS_BAR_HINT_SUBPLAN = """\
+---
+plan: demo-step
+verification_tier: compile-only
+---
+
+# Sub-plan: demo-step
+
+The status bar displays a hint for the current mode.
+
+## Steps
+
+### Step 0
+
+Edit `tools/demo.py`.
+
+```yaml
+local_checks:
+  - command: python3 -c "print(1)"
+    timeout: 30
+```
+"""
+
+TOOLTIP_SUBPLAN = """\
+---
+plan: demo-step
+verification_tier: compile-only
+---
+
+# Sub-plan: demo-step
+
+Show a tooltip on hover.
+
+## Steps
+
+### Step 0
+
+Edit `tools/demo.py`.
+
+```yaml
+local_checks:
+  - command: python3 -c "print(1)"
+    timeout: 30
+```
+"""
+
+
+def test_hint_prose_no_guarantee_is_not_ui_affordance(tmp_path: Path) -> None:
+    """Prose "a hint, not a guarantee" must not trigger UI-promise."""
+    home = tmp_path / "home"
+    home.mkdir()
+
+    result = _run(home, MASTER, HINT_PROSE_SUBPLAN, "hint-prose")
+
+    assert result.returncode == 0, (
+        f"exit {result.returncode}\nstdout: {result.stdout}\n"
+        f"stderr: {result.stderr}"
+    )
+    assert "UI affordance" not in result.stdout, result.stdout
+    assert "promise-without-wiring" not in result.stdout, result.stdout
+
+
+def test_hint_prose_lookup_is_not_ui_affordance(tmp_path: Path) -> None:
+    """Prose "the lookup is only a hint" must not trigger UI-promise."""
+    home = tmp_path / "home"
+    home.mkdir()
+
+    result = _run(home, MASTER, HINT_PROSE_LOOKUP_SUBPLAN, "hint-lookup")
+
+    assert result.returncode == 0, (
+        f"exit {result.returncode}\nstdout: {result.stdout}\n"
+        f"stderr: {result.stderr}"
+    )
+    assert "UI affordance" not in result.stdout, result.stdout
+    assert "promise-without-wiring" not in result.stdout, result.stdout
+
+
+def test_key_hint_still_fires_ui_promise(tmp_path: Path) -> None:
+    """"A key hint shows Ctrl+K" is a real UI affordance: exit 1."""
+    home = tmp_path / "home"
+    home.mkdir()
+
+    result = _run(home, MASTER, KEY_HINT_SUBPLAN, "key-hint")
+
+    assert result.returncode == 1, (
+        f"expected a finding, got exit {result.returncode}\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "UI affordance" in result.stdout, result.stdout
+
+
+def test_status_bar_displays_hint_fires_ui_promise(tmp_path: Path) -> None:
+    """"The status bar displays a hint" is a real UI affordance: exit 1."""
+    home = tmp_path / "home"
+    home.mkdir()
+
+    result = _run(home, MASTER, STATUS_BAR_HINT_SUBPLAN, "status-hint")
+
+    assert result.returncode == 1, (
+        f"expected a finding, got exit {result.returncode}\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "UI affordance" in result.stdout, result.stdout
+
+
+def test_tooltip_still_fires_ui_promise(tmp_path: Path) -> None:
+    """"tooltip" is a UI affordance: exit 1."""
+    home = tmp_path / "home"
+    home.mkdir()
+
+    result = _run(home, MASTER, TOOLTIP_SUBPLAN, "tooltip")
+
+    assert result.returncode == 1, (
+        f"expected a finding, got exit {result.returncode}\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "UI affordance" in result.stdout, result.stdout
+
+
 # ── D9 importer coverage: HARD, or INFO when the batch is verified ───────────
 #
 # ``lint_shared_module_gate`` (V1's D9: a step's last gate must also run the
@@ -493,4 +694,108 @@ def test_verified_autodetects_a_batch_verification_subplan(
     assert "INFO:" in result.stdout, result.stdout
     assert "tests/test_server.py" in result.stdout, result.stdout
     assert "WARN:" not in result.stdout, result.stdout
+    assert "HARD" not in result.stdout, result.stdout
+
+
+# ── Directory-arg coverage: a gate that runs a directory covers all tests ────
+#
+# ``_is_whole_suite_command`` treats ``pytest tests`` as a whole-suite gate
+# (the directory arg runs every test under it).  ``_gate_covers_module_and_callers``
+# also handles directory args for edge cases that bypass the whole-suite check.
+
+def test_is_whole_suite_command_directory_arg() -> None:
+    """``pytest tests`` and ``pytest tests/`` are whole-suite commands."""
+    mod = _load_plan_check()
+    assert mod._is_whole_suite_command("pytest tests") is True
+    assert mod._is_whole_suite_command("pytest tests/") is True
+    assert mod._is_whole_suite_command("python -m pytest -q tests") is True
+    assert mod._is_whole_suite_command("python3 -m pytest -q tests/") is True
+    # A file-scoped gate is NOT a whole-suite command.
+    assert mod._is_whole_suite_command("pytest tests/test_x.py") is False
+    # A sub-directory gate IS a whole-suite command.
+    assert mod._is_whole_suite_command("pytest tests/pins") is True
+
+
+def test_gate_covers_directory_arg(tmp_path: Path) -> None:
+    """A directory gate covers every test file under it."""
+    mod = _load_plan_check()
+    # Create test files on disk.
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_x.py").write_text("pass\n")
+    sub = tests / "sub"
+    sub.mkdir()
+    (sub / "test_y.py").write_text("pass\n")
+    test_x = str(tests / "test_x.py")
+    test_y = str(sub / "test_y.py")
+    # _gate_covers_module_and_callers requires covering BOTH module AND callers.
+    # Directory gate covers both.
+    assert mod._gate_covers_module_and_callers(
+        "python -m pytest -q tests", {test_x}, {test_y}, tmp_path,
+    ) is True
+    # Sub-directory gate covers only the sub-directory test.
+    assert mod._gate_covers_module_and_callers(
+        "pytest tests/sub", {test_y}, {test_y}, tmp_path,
+    ) is True
+    assert mod._gate_covers_module_and_callers(
+        "pytest tests/sub", {test_x}, {test_y}, tmp_path,
+    ) is False
+    # File gate covers only that file.
+    assert mod._gate_covers_module_and_callers(
+        "pytest tests/test_x.py", {test_x}, {test_x}, tmp_path,
+    ) is True
+    assert mod._gate_covers_module_and_callers(
+        "pytest tests/test_x.py", {test_x}, {test_y}, tmp_path,
+    ) is False
+
+
+def test_directory_gate_whole_suite_exempts_shared_module(
+    tmp_path: Path,
+) -> None:
+    """A gate running ``pytest tests`` is a whole-suite command — D9 exits
+    early without firing, even when the changed module has importers."""
+    home = tmp_path / "home"
+    home.mkdir()
+    d = home / "dir"
+    d.mkdir(parents=True, exist_ok=True)
+    _write_shared_fixture(d)
+    master_path = d / "MASTER.md"
+    master_path.write_text(MASTER, encoding="utf-8")
+    sub = """\
+---
+plan: demo-step
+verification_tier: compile-only
+scope_paths:
+  - pkg/cli.py
+---
+
+# Sub-plan: demo-step
+
+## Steps
+
+### Step 0
+
+Edit `pkg/cli.py`.
+
+```yaml
+local_checks:
+  - command: python3 -m pytest -q tests
+    timeout: 30
+```
+"""
+    sub_path = d / "2026-10-18-demo-step.md"
+    sub_path.write_text(sub, encoding="utf-8")
+    env = {"HOME": str(home), "PATH": os.environ["PATH"]}
+    cmd = [
+        sys.executable, "-I", str(PLAN_CHECK),
+        "--master", str(master_path),
+        "--project-root", str(d),
+        str(sub_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=str(d))
+    assert result.returncode == 0, (
+        f"exit {result.returncode}\nstdout: {result.stdout}\n"
+        f"stderr: {result.stderr}"
+    )
+    assert "Traceback" not in result.stdout, result.stdout
     assert "HARD" not in result.stdout, result.stdout
