@@ -874,3 +874,250 @@ def test_test_file_under_any_dir_dot_slash_covers() -> None:
     assert mod._test_file_under_any_dir(
         "tests/test_x.py", ["tests"],
     ) is True
+
+
+# ── Red-first step 0: "pinned" in heading alone is not red-first ─────────
+#
+# ``lint_redfirst_step0_per_step_gate_demands_green`` checked heading +
+# commit lines for ``\bpin(?:s|ned|ning)?\b`` and treated a match as
+# red-first on its own.  A coverage-restoring step whose heading is
+# "restore the pinned assertions" was flagged HARD although it writes no
+# failing test.  The fix: pin/reproduce words count as red-first only when
+# the step body also carries a failing-test signal (must fail, xfail, etc.).
+
+REDFIRST_PINNED_ADJECTIVE = """\
+---
+plan: demo-step
+verification_tier: compile-only
+---
+
+# Sub-plan: demo-step
+
+## Steps
+
+### Step 0 — test(claim): restore the pinned assertions 18a deleted
+
+The existing tests all pass at commit.  This step restores coverage that
+was removed in an earlier edit.
+
+```yaml
+local_checks:
+  - command: pytest tests/test_restore.py -q
+    timeout: 30
+```
+"""
+
+REDFIRST_PIN_WITH_FAIL = """\
+---
+plan: demo-step
+verification_tier: compile-only
+---
+
+# Sub-plan: demo-step
+
+## Steps
+
+### Step 0 — test: pin the bug with a failing test
+
+The new test must fail — the fix lands in step 1.
+
+```yaml
+local_checks:
+  - command: pytest tests/test_pin.py -q
+    timeout: 30
+```
+"""
+
+REDFIRST_RED_FIRST_HEADING = """\
+---
+plan: demo-step
+verification_tier: compile-only
+---
+
+# Sub-plan: demo-step
+
+## Steps
+
+### Step 0 — red-first: pin D-12
+
+Write the failing reproducer.
+
+```yaml
+local_checks:
+  - command: pytest tests/test_d12.py -q
+    timeout: 30
+```
+"""
+
+REDFIRST_PINNED_XFAIL_EXEMPT = """\
+---
+plan: demo-step
+verification_tier: compile-only
+---
+
+# Sub-plan: demo-step
+
+## Steps
+
+### Step 0 — test: pin the expected failure
+
+The pinned test uses xfail(strict=True) so the gate stays green.
+
+```yaml
+local_checks:
+  - command: pytest tests/test_pin_xfail.py -q
+    timeout: 30
+```
+"""
+
+
+def test_redfirst_pinned_adjective_no_finding(tmp_path: Path) -> None:
+    """"pinned" as an adjective in a step-0 heading must not flag red-first."""
+    mod = _load_plan_check()
+    findings = mod.lint_redfirst_step0_per_step_gate_demands_green(
+        REDFIRST_PINNED_ADJECTIVE, "demo-step",
+    )
+    assert findings == [], findings
+
+
+def test_redfirst_pin_with_failing_signal_finds(tmp_path: Path) -> None:
+    """pin + "must fail" in the body is red-first: HARD finding."""
+    mod = _load_plan_check()
+    findings = mod.lint_redfirst_step0_per_step_gate_demands_green(
+        REDFIRST_PIN_WITH_FAIL, "demo-step",
+    )
+    assert len(findings) == 1, findings
+    assert "HARD" in findings[0], findings[0]
+    assert "red-first" in findings[0].lower() or "demands green" in findings[0].lower(), findings[0]
+
+
+def test_redfirst_red_first_heading_still_finds(tmp_path: Path) -> None:
+    """"red-first" in the heading is sufficient on its own: HARD finding."""
+    mod = _load_plan_check()
+    findings = mod.lint_redfirst_step0_per_step_gate_demands_green(
+        REDFIRST_RED_FIRST_HEADING, "demo-step",
+    )
+    assert len(findings) == 1, findings
+    assert "HARD" in findings[0], findings[0]
+
+
+def test_redfirst_pinned_with_xfail_exempt(tmp_path: Path) -> None:
+    """xfail(strict=True) exempts even when the heading says "pin"."""
+    mod = _load_plan_check()
+    # The xfail exemption is checked against the full step body, not the
+    # heading.  Add it to the body text.
+    text_with_xfail = REDFIRST_PINNED_XFAIL_EXEMPT.replace(
+        "The pinned test uses",
+        "The pinned test uses\nxfail(strict=True) so that",
+    )
+    findings = mod.lint_redfirst_step0_per_step_gate_demands_green(
+        text_with_xfail, "demo-step",
+    )
+    assert findings == [], findings
+
+
+# ── Off-base branch: a file deleted on main and re-created is not off-base ──
+#
+# ``lint_scope_path_off_base_branch`` used ``git branch --contains <commit>``
+# to find which refs carry a path.  For a file deleted on main, the deletion
+# commit is on main, so main was listed as "carrying" a file main's tip tree
+# does not have.  The fix: use ``git cat-file -e <ref>:<path>`` to test tree
+# presence instead of commit containment.
+
+
+def _scope_subplan(*paths: str) -> str:
+    """Build a minimal sub-plan text with the given scope_paths."""
+    items = "\n".join(f"    - {p}" for p in paths)
+    return f"""\
+---
+plan: demo-step
+scope_paths:
+{items}
+---
+
+# Sub-plan: demo-step
+"""
+
+
+def _off_base(repo: Path, *paths: str) -> list[str]:
+    """Run lint_scope_path_off_base_branch in *repo* with the given paths."""
+    mod = _load_plan_check()
+    old = mod._GIT_CWD
+    try:
+        mod._GIT_CWD = repo
+        return mod.lint_scope_path_off_base_branch(
+            _scope_subplan(*paths), "demo-step",
+        )
+    finally:
+        mod._GIT_CWD = old
+
+
+def test_off_base_deleted_file_not_flagged(tmp_path: Path) -> None:
+    """A file committed then deleted on main, absent everywhere → 0 findings."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "-b", "main")
+    (repo / "gone.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "gone.py")
+    _git(repo, "commit", "--quiet", "-m", "add gone.py")
+    (repo / "gone.py").unlink()
+    _git(repo, "rm", "gone.py")
+    _git(repo, "commit", "--quiet", "-m", "delete gone.py")
+
+    findings = _off_base(repo, "gone.py")
+
+    assert findings == [], findings
+
+
+def test_off_base_file_only_on_feature_flagged(tmp_path: Path) -> None:
+    """A file present only on branch `feature` → 1 HARD finding."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "-b", "main")
+    (repo / "init.txt").write_text("init\n", encoding="utf-8")
+    _git(repo, "add", "init.txt")
+    _git(repo, "commit", "--quiet", "-m", "init")
+    _git(repo, "checkout", "-b", "feature", "--quiet")
+    (repo / "feature_only.py").write_text("y = 2\n", encoding="utf-8")
+    _git(repo, "add", "feature_only.py")
+    _git(repo, "commit", "--quiet", "-m", "add feature_only.py")
+    _git(repo, "checkout", "main", "--quiet")
+
+    findings = _off_base(repo, "feature_only.py")
+
+    assert len(findings) == 1, findings
+    assert "HARD" in findings[0], findings[0]
+    # "feature" must appear as a ref that carries the file.
+    assert "feature" in findings[0], findings[0]
+    # "main" appears in "base ref 'main (default)'" but must NOT appear in the
+    # "exists on:" list — only feature carries the file.
+    exists_on = findings[0].split("exists on:")[1]
+    assert "main" not in exists_on, findings[0]
+
+
+def test_off_base_file_on_main_ok(tmp_path: Path) -> None:
+    """A file present on main → 0 findings."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "-b", "main")
+    (repo / "exists.py").write_text("z = 3\n", encoding="utf-8")
+    _git(repo, "add", "exists.py")
+    _git(repo, "commit", "--quiet", "-m", "add exists.py")
+
+    findings = _off_base(repo, "exists.py")
+
+    assert findings == [], findings
+
+
+def test_off_base_path_never_in_history_ok(tmp_path: Path) -> None:
+    """A path never in git history → 0 findings (new file)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "-b", "main")
+    (repo / "init.txt").write_text("init\n", encoding="utf-8")
+    _git(repo, "add", "init.txt")
+    _git(repo, "commit", "--quiet", "-m", "init")
+
+    findings = _off_base(repo, "brand_new.py")
+
+    assert findings == [], findings
