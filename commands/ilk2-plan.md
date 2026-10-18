@@ -12,11 +12,11 @@ are enforced: this planner drafts under `~/.ilk2/plans/`, delivers with
 
 **Plans live OUTSIDE the project repo** so the project's git history
 stays clean of plan artifacts. Drafts live under
-`~/.ilk2/plans/<project>/<YYYY-MM-DD[x]>/` — never in the repo, and
+`~/.ilk2/plans/<project>/<batch-id>/` — never in the repo, and
 never in V1's external plans tree.
 
 Follow these steps in order. Do NOT skip the user-approval gate unless
-the operator passed `--yes` (see Arguments below).
+the operator passed `--yes` or `--draft` (see Arguments below).
 
 ## Arguments
 
@@ -26,6 +26,12 @@ the operator passed `--yes` (see Arguments below).
   A flag, not a timer — a timeout cannot distinguish consent from
   absence, and makes the same plan approve differently depending on
   whether you stepped away.
+- `--draft` — write the files, run `plan_check.py` and
+  `ilk2 submit --check`, report, and stop: no approval wait and no submit.
+  The files stay on disk as an unsubmitted draft; delivery later is the
+  same `ilk2 submit` with the same `--meta`. Everything after the flag is
+  the task description. Like `--yes`, it is a flag the operator typed,
+  not a timeout.
 
 ## 1. Load conventions
 
@@ -64,11 +70,13 @@ once per project. This command never registers a project itself.
 Fields you need:
 
 - `project` — the id you will pass to `ilk2 submit --project` in step 8.
-- `drafts dir` — `~/.ilk2/plans/<project>/<YYYY-MM-DD[x]>/`, where
-  `[x]` is empty for the first draft of the day and `2`, `3`, … when
-  this project already has a draft folder for today. **This is where
-  you will write all new plan files** in step 6. Never write them in
-  the repo, and never in V1's external plans tree.
+- `drafts dir` — `~/.ilk2/plans/<project>/<batch-id>/`, where
+  `<batch-id>` is the batch's own id: `YYYY-MM-DD` plus a lower-case
+  letter for the day's batch (`2026-10-18c`). The MASTER file name
+  uses that same id — `MASTER-<batch-id>-execution-plan.md` — so the
+  folder and the master it holds are named by one thing. **This is
+  where you will write all new plan files** in step 6. Never write
+  them in the repo, and never in V1's external plans tree.
 
 ### Meta-project mode
 
@@ -96,7 +104,7 @@ misleading results.
 Bootstrap the drafts dir if it does not exist:
 
 - `mkdir -p` the drafts dir resolved above
-- Tell the user: "Created `~/.ilk2/plans/<project>/<date>/`."
+- Tell the user: "Created `~/.ilk2/plans/<project>/<batch-id>/`."
 
 If a `MASTER-*.md` already exists in this project's drafts dir, check
 whether you should add to the latest master or write a new one for a new
@@ -107,9 +115,12 @@ project.
 ## 3. Read the task description
 
 Whatever the user typed after `/ilk2-plan` in the chat is the task
-description. If it begins with `--yes` or `-y` (whitespace-separated),
-consume the flag, set a local "skip approval" toggle, and use the rest
-as the task description. If empty after stripping the flag:
+description. If it begins with `--yes` / `-y` and/or `--draft`
+(whitespace-separated, any order), consume the flags, set the matching
+local toggles — "skip approval" for `--yes`/`-y`, "draft only" for
+`--draft` — and use the rest as the task description. `--draft` also
+sets the skip-approval toggle: a draft is written without the step-5
+pause and is never submitted. If empty after stripping the flags:
 - Stop and ask: "What's the task / batch you'd like me to plan?"
 
 If the task description is short and ambiguous, ask 1-3 clarifying
@@ -135,6 +146,32 @@ when only its model layer is gated — each pillar must carry:
 
 If the linter finds issues, surface them and ask the user to fix the spec
 before planning. This prevents under-gated pillars from reaching the loop.
+
+## 3b. Record the batch's scope from its source (before drafting)
+
+The trial (docs/07 §7.6) measures each batch against its *requested*
+scope, so record that scope now — before you decide any sub-plans or
+steps — and keep it as recorded. Three fields, written into the MASTER
+frontmatter in step 6 and passed again at delivery (step 8b):
+
+- `source:` — where the requested scope came from: the issue numbers,
+  the spec path, the inbox entry, or `operator conversation, <date>`.
+- `source_tickets:` — how many tickets the source names.
+- `source_ac_groups:` — how many acceptance-criteria groups the source
+  asks for. A group is one independently checkable outcome the source
+  names. Count from the source text, not from the plan.
+
+The counts are a recorded judgment, made once, before planning. Never
+revise them to match the plan: if the batch you go on to write covers
+more or fewer outcomes than the source asked for, that gap is a finding
+for the step-9 report, not a reason to rewrite the counts.
+
+Delivery carries them as `--meta`, kept with the batch and returned by
+`ilk2 status`:
+
+```bash
+ilk2 submit --project <P> --meta '{"scope": {"source": "...", "tickets": N, "ac_groups": M}}' <master>
+```
 
 ## 4. Read existing plans (collision avoidance)
 
@@ -427,8 +464,9 @@ Plus:
   accordingly — treat each `device-manual` sub-plan as a human debugging
   session, not a quick diff review (see decomposition §14.3).
 
-If `--yes` was passed, print `Approval gate skipped (--yes).` and
-proceed to step 6 without waiting. Otherwise:
+If `--yes` or `--draft` was passed, print `Approval gate skipped (--yes).`
+or `Approval gate skipped (--draft).` and proceed to step 6 without
+waiting. Otherwise:
 
 ASK the user explicitly: "OK to proceed with this grouping, or want
 to adjust?"
@@ -438,13 +476,14 @@ Iterate until they approve. Do NOT write any files yet.
 ## 6. Write the plan files
 
 Once approved, write all files in one batch under the drafts dir resolved
-in step 2 (i.e. `~/.ilk2/plans/<project>/<YYYY-MM-DD[x]>/`):
+in step 2 (i.e. `~/.ilk2/plans/<project>/<batch-id>/`):
 
-- `<drafts dir>/MASTER-YYYY-MM-DD-execution-plan.md`:
+- `<drafts dir>/MASTER-<batch-id>-execution-plan.md`:
   - Front-matter per SKILL.md spec, keeping only what the plan's readers
     need: `title`, `slug`, `created`, `priority`, `base_branch`, the
     optional `branch` child-branch policy, `goal`, `out_of_scope`,
-    `cross_cutting_invariants`.
+    `cross_cutting_invariants`, and the step-3b scope record
+    (`source:`, `source_tickets:`, `source_ac_groups:`).
   - **Write no runner-owned frontmatter.** No step cursor, no recorded
     base sha, `pause_after_ship`, `supervised_only` or `ilk_profile` —
     none of them. Submission is the hand-off; after it nothing edits
@@ -499,7 +538,7 @@ in step 2 (i.e. `~/.ilk2/plans/<project>/<YYYY-MM-DD[x]>/`):
   the list lives here. A verification step may produce no commit, and
   that is accepted — never instruct it to re-run the suite itself.
 
-- One file per sub-plan: `<drafts dir>/YYYY-MM-DD-<slug>.md`, derived from
+- One file per sub-plan: `<drafts dir>/<batch-id>-<slug>.md`, derived from
   `<skill-root>/ilk-loop/templates/subplan-template.md`. Fill in
   REAL content, not placeholders:
   - Front-matter with accurate `tickets:` and `estimated_steps:` values
@@ -507,6 +546,19 @@ in step 2 (i.e. `~/.ilk2/plans/<project>/<YYYY-MM-DD[x]>/`):
     `device-manual` (see decomposition-principles §12 for definitions and
     when each tier is trustworthy). Absent ⇒ treated as `loop-verified`
     for back-compat, but every new sub-plan should declare it explicitly.
+  - **A docs-only sub-plan must not claim `loop-verified`.** A sub-plan
+    that changes only documentation and declares
+    `verification_tier: loop-verified` with `must_add_tests: false` and
+    no `unit_test_targets` is a HARD finding from `plan_check.py`: the
+    tier claims a runtime gate while forbidding its evidence. Pick one
+    of the three honest exits instead —
+    1. declare `compile-only` for the docs-only sub-plan (it makes no
+       runtime claim),
+    2. name in `unit_test_targets` the existing tests that guard those
+       docs (doc-consistency tests), or
+    3. fold the docs into the code sub-plan they describe.
+
+    Do not weaken the checker.
   - **In meta mode:** `repo: <member-name>` (REQUIRED; must match a
     `name` in the marker's `repos` list). In single mode the field is
     absent — do not invent values.
@@ -856,7 +908,9 @@ advancing to step 8.
 An **optional authoring lint** over every newly-written sub-plan — the
 heuristics that used to be prose (and were skipped, stalling uccargo
 twice on 2026-06-13). Nothing here is a gate: the enforced QC is
-`ilk2 submit --check` (7h). Run it when you want the extra eyes:
+`ilk2 submit --check` (7h). Run it when you want the extra eyes. Under
+`--draft`, run it — that mode's report includes both this and 7h, so
+neither is optional there:
 
 ```bash
 python "<skill-root>/ilk2-plan/scripts/plan_check.py" \
@@ -900,6 +954,17 @@ surface counts in the step-9 report):
   `local_checks` (neither frontmatter nor per-step). An escaped-bug fix
   must have a reproducing local_check to prevent the same class of bug
   from escaping a gate twice. See decomposition-principles.md §18.
+- **tier forbids its evidence** (**hard finding**) — a sub-plan declares
+  `verification_tier: loop-verified` while `must_add_tests: false` and
+  `unit_test_targets` is empty or absent. The tier claims a runtime gate
+  while both fields forbid the evidence that claim requires. The common
+  shape is a docs-only sub-plan; the three exits are the ones step 6
+  names (declare `compile-only`, arm `unit_test_targets` with the
+  doc-consistency tests, or fold the docs into the code sub-plan they
+  describe). `batch_verification: true` is exempt — its evidence is the
+  suite its step runs, not a test it adds. Measured:
+  kira-cloudflare issue-5445-work, 2026-09-15. See
+  decomposition-principles.md §12.
 - **e2e/device-polling local_check lacks env_prereq** — a sub-plan declares an
   e2e, browser-automation, or service-poll `local_check` (e.g. `node e2e/*.mjs`,
   `playwright test`, devtools, poll phrasing) but has no `env_prereqs`
@@ -977,7 +1042,7 @@ Run ilk2's own check against the authored batch here, before step 8 —
 the same command step 8a delivers with, used as this planner's QC:
 
 ```bash
-ilk2 submit --check --project <project> <drafts dir>/MASTER-YYYY-MM-DD-execution-plan.md
+ilk2 submit --check --project <project> <drafts dir>/MASTER-<batch-id>-execution-plan.md
 ```
 
 **Treat its refusals AND its plan-shape warnings as failures of your own
@@ -1011,7 +1076,7 @@ what makes the batch exist.
 ### 8a. Check (creates nothing)
 
 ```bash
-ilk2 submit --check --project <project> <drafts dir>/MASTER-YYYY-MM-DD-execution-plan.md
+ilk2 submit --check --project <project> <drafts dir>/MASTER-<batch-id>-execution-plan.md
 ```
 
 `--check` validates exactly as a submit would and creates nothing. It
@@ -1033,9 +1098,20 @@ submitting past it.
 
 ### 8b. Submit
 
+If `--draft` was passed, STOP here. Report what 7g and 7h found and
+where the files sit, and say that delivery is the command below with the
+same `--meta`. No submit, and no batch id — the drafts stay on disk
+until a later invocation delivers them.
+
+Otherwise, submit with the scope record from step 3b:
+
 ```bash
-ilk2 submit --project <project> <drafts dir>/MASTER-YYYY-MM-DD-execution-plan.md
+ilk2 submit --project <project> --meta '{"scope": {"source": "...", "tickets": N, "ac_groups": M}}' <drafts dir>/MASTER-<batch-id>-execution-plan.md
 ```
+
+`--meta` is kept with the batch and returned by `ilk2 status`. Fill the
+three fields from the step-3b record exactly as written there — never
+re-derive them from the plan.
 
 This creates the batch and prints its batch id — keep it for step 9.
 Optional flags, when the batch needs them:
@@ -1055,7 +1131,9 @@ was submitted.
 End your turn with:
 
 1. A brief summary: "Wrote 1 master plan + N sub-plans covering M items
-   to `~/.ilk2/plans/<project>/<date>/`, submitted as batch `<id>`."
+   to `~/.ilk2/plans/<project>/<batch-id>/`, submitted as batch `<id>`."
+   Under `--draft`, say instead that the draft is on disk unsubmitted and
+   that delivery is `ilk2 submit` with the same `--meta`.
 2. QC pass results: plan-shape warnings fixed (count), lint findings
    (count, incl. diagnostic step-0), invariants woven (count),
    env_prereqs findings (count), cold-read gaps surfaced (count),
@@ -1097,8 +1175,14 @@ End your turn with:
 ## Boundary rules
 
 - **Never skip step 5 (user approval)** unless the operator passed
-  `--yes` — grouping decisions are subjective; humans always sign off.
-- **Never write files in step 5** — only after approval.
+  `--yes` or `--draft` — grouping decisions are subjective; humans
+  always sign off.
+- **Never write files in step 5** — only after approval (or after the
+  operator's `--yes` / `--draft`).
+- **Never revise the step-3b scope counts to match the plan** —
+  `source_tickets` and `source_ac_groups` are a recorded judgment, made
+  once from the source text. A gap between them and what the plan
+  covers belongs in the step-9 report.
 - **Never skip the step-7 QC passes** — they are quality gates between
   writing the files and delivering them to ilk2. Skipping sends
   under-specified or weak-contract sub-plans to worker sessions that
