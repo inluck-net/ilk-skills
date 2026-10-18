@@ -289,3 +289,208 @@ def test_discover_tests_by_import_fallback_matches_any_segment(
     found = mod._discover_tests_by_import("cli", repo)
 
     assert str(repo / "tests" / "test_x.py") in found, sorted(found)
+
+
+# ── D9 importer coverage: HARD, or INFO when the batch is verified ───────────
+#
+# ``lint_shared_module_gate`` (V1's D9: a step's last gate must also run the
+# tests of every module that imports what the step changes) is HARD when the
+# batch has no verification sub-plan — nothing else catches an importer's
+# breakage.  When the batch HAS one, ilk2's verification step runs the full
+# suite at the batch head and attributes any new failure to the step that
+# caused it, so the finding is advisory: ``INFO:``, exit 0.
+
+# A step whose scope_path changes a shared module while its gate runs
+# nothing about it.  ``pkg/cli.py`` is imported by ``pkg/server.py``, and the
+# committed ``tests/test_server.py`` exercises that import; the gate below
+# runs none of those tests.
+SHARED_MODULE_SUBPLAN = """\
+---
+plan: demo-step
+verification_tier: compile-only
+scope_paths:
+  - pkg/cli.py
+---
+
+# Sub-plan: demo-step
+
+## Steps
+
+### Step 0
+
+Edit `pkg/cli.py`.
+
+```yaml
+local_checks:
+  - command: python3 -c "print(1)"
+    timeout: 30
+```
+"""
+
+# The batch's verification sub-plan: exactly one step, the full suite, and
+# the ``batch_verification: true`` marker the auto-detect keys on.
+VERIFY_SUBPLAN = """\
+---
+plan: demo-verify
+verification_tier: loop-verified
+batch_verification: true
+---
+
+# Sub-plan: demo-verify
+
+## Steps
+
+### Step 0
+
+Run the full suite at the batch head.
+
+```yaml
+local_checks:
+  - command: python3 -m pytest -q
+    timeout: 120
+```
+"""
+
+MASTER_WITH_VERIFY = """\
+---
+master_plan: 2026-10-18-demo-batch
+base_branch: main
+---
+
+# MASTER: demo batch
+
+| # | sub-plan | purpose | tier | priority | notes | steps |
+|---|----------|---------|------|----------|-------|-------|
+| 1 | 2026-10-18-demo-step | one step | compile-only | P0 | demo | 1 |
+| 2 | 2026-10-18-demo-verify | batch verification | loop-verified | P0 | owed | 1 |
+"""
+
+
+def _write_shared_fixture(root: Path) -> None:
+    """``pkg/cli.py`` (changed) imported by ``pkg/server.py``, with a
+    committed test of that import — the D9 shape, on branch ``main`` so the
+    scope-path branch checks stay quiet and only D9 can speak."""
+    (root / "pkg").mkdir(parents=True, exist_ok=True)
+    (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "pkg" / "cli.py").write_text("def f():\n    return 1\n",
+                                         encoding="utf-8")
+    # A production importer: ``from cli import`` is what _find_importers greps.
+    (root / "pkg" / "server.py").write_text("from cli import f\n",
+                                            encoding="utf-8")
+    tests = root / "tests"
+    tests.mkdir(exist_ok=True)
+    # Committed, and it imports the changed module.
+    tests.joinpath("test_server.py").write_text("from pkg.cli import f\n",
+                                               encoding="utf-8")
+    _git(root, "init", "--quiet")
+    _git(root, "add", "pkg", "tests")
+    _git(root, "commit", "--quiet", "-m", "init")
+    _git(root, "branch", "-M", "main")
+
+
+def _run_shared(
+    home: Path,
+    name: str,
+    *,
+    verified: bool = False,
+    with_verify_subplan: bool = False,
+    master: str = MASTER,
+) -> subprocess.CompletedProcess:
+    """Run plan_check against the shared-module fixture under *home/name*.
+
+    ``HOME`` is set to *home* (a fresh temp dir), never the real home, and
+    ``cwd`` is the fixture dir.
+    """
+    d = home / name
+    d.mkdir(parents=True, exist_ok=True)
+    _write_shared_fixture(d)
+    master_text = MASTER_WITH_VERIFY if with_verify_subplan else master
+    master_path = d / "MASTER.md"
+    master_path.write_text(master_text, encoding="utf-8")
+    sub_path = d / "2026-10-18-demo-step.md"
+    sub_path.write_text(SHARED_MODULE_SUBPLAN, encoding="utf-8")
+    paths = [str(sub_path)]
+    if with_verify_subplan:
+        verify_path = d / "2026-10-18-demo-verify.md"
+        verify_path.write_text(VERIFY_SUBPLAN, encoding="utf-8")
+        paths.append(str(verify_path))
+    env = {
+        "HOME": str(home),
+        "PATH": os.environ["PATH"],
+    }
+    cmd = [
+        sys.executable,
+        "-I",
+        str(PLAN_CHECK),
+        "--master",
+        str(master_path),
+        "--project-root",
+        str(d),
+    ]
+    if verified:
+        cmd.append("--verified")
+    cmd.extend(paths)
+    return subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=str(d))
+
+
+def test_shared_module_gate_is_hard_without_verified(tmp_path: Path) -> None:
+    """A step gate that misses a committed importer test is HARD: exit 1.
+
+    No verification sub-plan in the batch, so nothing else would catch the
+    importer's breakage — the rule must stay hard.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+
+    result = _run_shared(home, "hard", verified=False)
+
+    assert result.returncode == 1, (
+        f"expected a finding, got exit {result.returncode}\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "Traceback" not in result.stdout, result.stdout
+    assert "Traceback" not in result.stderr, result.stderr
+    assert "WARN: HARD 2026-10-18-demo-step" in result.stdout, result.stdout
+    assert "tests/test_server.py" in result.stdout, result.stdout
+    assert "INFO:" not in result.stdout, result.stdout
+
+
+def test_shared_module_gate_is_info_with_verified(tmp_path: Path) -> None:
+    """``--verified`` demotes the same finding to INFO and clears the exit."""
+    home = tmp_path / "home"
+    home.mkdir()
+
+    result = _run_shared(home, "info", verified=True)
+
+    assert result.returncode == 0, (
+        f"exit {result.returncode}\nstdout: {result.stdout}\n"
+        f"stderr: {result.stderr}"
+    )
+    assert "Traceback" not in result.stdout, result.stdout
+    assert "Traceback" not in result.stderr, result.stderr
+    assert "INFO:" in result.stdout, result.stdout
+    assert "tests/test_server.py" in result.stdout, result.stdout
+    assert "WARN:" not in result.stdout, result.stdout
+    assert "HARD" not in result.stdout, result.stdout
+
+
+def test_verified_autodetects_a_batch_verification_subplan(
+    tmp_path: Path,
+) -> None:
+    """``--master`` plus a linted sub-plan declaring
+    ``batch_verification: true`` behaves as ``--verified``: INFO, exit 0."""
+    home = tmp_path / "home"
+    home.mkdir()
+
+    result = _run_shared(home, "auto", verified=False, with_verify_subplan=True)
+
+    assert result.returncode == 0, (
+        f"exit {result.returncode}\nstdout: {result.stdout}\n"
+        f"stderr: {result.stderr}"
+    )
+    assert "Traceback" not in result.stdout, result.stdout
+    assert "Traceback" not in result.stderr, result.stderr
+    assert "INFO:" in result.stdout, result.stdout
+    assert "tests/test_server.py" in result.stdout, result.stdout
+    assert "WARN:" not in result.stdout, result.stdout
+    assert "HARD" not in result.stdout, result.stdout

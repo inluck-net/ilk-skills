@@ -134,6 +134,68 @@ def test_ilk2_plan_verification_subplan_is_omittable() -> None:
         )
 
 
+def test_ilk2_plan_leaves_no_section_for_the_loop_to_fill() -> None:
+    """ilk2 never edits a plan file after submission, so a section the
+    loop fills during execution is dead weight and the instruction to
+    write one misleads the planner (gh-resolve 18b)."""
+    text = _text(ILK2_PLAN)
+    assert "loop fills" not in text, (
+        "commands/ilk2-plan.md still tells the planner to leave a section "
+        "for the loop to fill"
+    )
+    assert 'Empty "Findings"' not in text, (
+        "commands/ilk2-plan.md still asks for an empty Findings section"
+    )
+
+
+def test_ilk2_plan_verification_step_names_expected_contract_changes() -> None:
+    """The verification step's text lists the batch's EXPECTED contract
+    changes (behaviour changed on purpose), one line each, so the worker
+    can tell an intended change from a regression in the suite's
+    failures (gh-resolve 18b). The worker starts from that step's text —
+    the MASTER is readable, but it is not what it starts from."""
+    text = _text(ILK2_PLAN)
+    assert "expected contract changes" in text, (
+        "the verification step must list the batch's expected contract changes"
+    )
+    for needle in ("renamed verbs", "removed fields", "changed defaults"):
+        assert needle in text, (
+            f"the expected-contract-changes list must name {needle!r} as an "
+            f"example of an intended change"
+        )
+
+
+def test_ilk2_plan_passes_verified_when_the_batch_verifies() -> None:
+    """With a verification sub-plan, the checker runs with `--verified`:
+    its importer-coverage findings are advisory, because ilk2's
+    verification step and attribution cover them. Without one they stay
+    hard and the step gates must run the importers' tests."""
+    text = _text(ILK2_PLAN)
+    assert "--verified" in text, (
+        "commands/ilk2-plan.md must run plan_check with --verified when the "
+        "batch has a verification sub-plan"
+    )
+    assert "importers' tests" in text, (
+        "without a verification sub-plan the importer-coverage rule stays "
+        "hard: the step gates must run the importers' tests"
+    )
+
+
+def test_ilk2_plan_reads_verify_command_from_ilk2_project_show() -> None:
+    """The project's `verify_command` comes from `ilk2 project show
+    <project>` (its `config.verify_command`), not from the store."""
+    text = _text(ILK2_PLAN)
+    assert "ilk2 project show" in text, (
+        "commands/ilk2-plan.md must read verify_command via ilk2 project show"
+    )
+    assert "config.verify_command" in text, (
+        "the read must name the config.verify_command field"
+    )
+    assert "not from the store" in text, (
+        "the planner must not read verify_command from the store"
+    )
+
+
 def test_ilk2_plan_runs_its_own_checker_not_v1s() -> None:
     """The planner's QC lints must call ilk2's own checker, not V1's.
 

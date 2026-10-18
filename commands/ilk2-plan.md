@@ -388,8 +388,10 @@ broad gate; they stay change-scoped.
 
 **Write one where the project verifies, and not otherwise.** The project
 must have a `verify_command` (ilk2 replaces V1's verification gates with
-it; set it with `ilk2 project set`) **and** the project's own instructions
-(its `AGENTS.md` / `CLAUDE.md`) must not say to omit it. Write one anyway
+it; set it with `ilk2 project set`), **and** the project's own
+instructions (its `AGENTS.md` / `CLAUDE.md`) must not say to omit it.
+Read the current value with `ilk2 project show <project>` — its
+`config.verify_command` — not from the store. Write one anyway
 when the task asks for one. Otherwise write **no** verification sub-plan,
 and say in the MASTER which reason applied — no `verify_command`, or the
 project's instructions omit it (name both when both do). A master that
@@ -467,7 +469,9 @@ in step 2 (i.e. `~/.ilk2/plans/<project>/<YYYY-MM-DD[x]>/`):
   and `plan: <slug>-verify` so ilk2 marks it as the batch's verification
   plan. Its single step's `local_checks` is the project's full suite —
   the project's `verify_command`, the one invocation ilk2 runs at the
-  batch head. Do not hand-type a narrower selection, and do not write
+  batch head. Read that command from `ilk2 project show <project>`
+  (its `config.verify_command`), not from the store; do not hand-type a
+  narrower selection, and do not write
   your own baseline or attribution runner: ilk2 judges the run against
   the batch base itself.
 
@@ -477,17 +481,23 @@ in step 2 (i.e. `~/.ilk2/plans/<project>/<YYYY-MM-DD[x]>/`):
   imported and replaced by the project's full suite; a step left with
   no gate that way is refused until the project has a `verify_command`
   (set it with `ilk2 project set`). A master that owes this sub-plan and
-  has no such registry entry is a HARD lint finding.
+  whose project shows no `config.verify_command` is a HARD lint finding.
 
   When none is owed, write no verification sub-plan: the registry ends at
   the last work sub-plan, and the MASTER says which reason applied — no
   `verify_command`, or the project's instructions omit it.
 
-  The step's instructions say only this: the driver has already run the
-  gates at the batch head and compared the failures with the batch
-  base; fix what that comparison names, or change nothing if it names
-  nothing. A verification step may produce no commit, and that is
-  accepted — never instruct it to re-run the suite itself.
+  The step's instructions say two things. First, the run context: the
+  driver has already run the gates at the batch head and compared the
+  failures with the batch base; fix what that comparison names, or
+  change nothing if it names nothing. Second, write the list of
+  expected contract changes — the behaviour the batch changes on
+  purpose (renamed verbs, removed fields, changed defaults), one line
+  each — so the worker can tell an intended change from a regression in
+  the suite's failures. The worker does get the MASTER as a readable
+  document, but the verification step's text is what it starts from, so
+  the list lives here. A verification step may produce no commit, and
+  that is accepted — never instruct it to re-run the suite itself.
 
 - One file per sub-plan: `<drafts dir>/YYYY-MM-DD-<slug>.md`, derived from
   `<skill-root>/ilk-loop/templates/subplan-template.md`. Fill in
@@ -579,8 +589,11 @@ in step 2 (i.e. `~/.ilk2/plans/<project>/<YYYY-MM-DD[x]>/`):
     tells the worker to ship or write a `#ship` commit; the driver
     ships after the last step's gate passes, and a worker-session ship
     is refused.
-  - Empty "Findings" section (loop fills during execution)
   - Reference reading section (any docs the executor should pre-load)
+
+  Write every section complete. ilk2 never edits a plan file after
+  submission, so no section is written blank for someone else to
+  complete later.
 
 ## 7. Final QC
 
@@ -649,6 +662,7 @@ per-step `local_checks` yaml block. Warn on each occurrence:
   required test (the last step must widen beyond the new file to the
   module's tests plus its resolved callers' tests).  A warning only for a
   sub-plan with no per-step last gate (frontmatter-only or no `### Step`).
+  Advisory (`INFO:`) under `--verified` — see 7g.
 - **Whole-project-only compile gate** (decomposition-principles §16) —
   a sub-plan whose ONLY `local_check` is a whole-project compile
   command (`tsc`, `mypy`, `cargo build`, `npm run build`,
@@ -852,6 +866,23 @@ python "<skill-root>/ilk2-plan/scripts/plan_check.py" \
 Pass `--master` — it enables the master-level checks (slug-collision and
 the branch checks) which cannot run from sub-plan text alone.
 
+When the batch has a verification sub-plan (step 5), also pass
+`--verified`:
+
+```bash
+python "<skill-root>/ilk2-plan/scripts/plan_check.py" \
+  --verified --master <MASTER .md> <each new sub-plan .md>
+```
+
+With it, the importer-coverage findings (`lint_shared_module_gate`, D9)
+are advisory: printed as `INFO:` and not counted toward the exit code,
+because ilk2's verification step and attribution cover them. Without a
+verification sub-plan, do **not** pass it — those findings stay hard,
+and the step gates must run the importers' tests. The checker
+auto-detects the same condition (`--master` plus a linted sub-plan
+declaring `batch_verification: true`), but say so explicitly so the
+invocation is readable.
+
 It emits finding classes (warnings except where marked **hard finding**;
 surface counts in the step-9 report):
 
@@ -915,7 +946,8 @@ surface counts in the step-9 report):
   the last step's gate misses a required test (the last step must widen
   beyond the new file to the module's tests plus its resolved callers'
   tests).  A warning only for a sub-plan with no per-step last gate
-  (frontmatter-only or no `### Step`). The finding names the importing files.
+  (frontmatter-only or no `### Step`).  Advisory (`INFO:`) under
+  `--verified` — see above. The finding names the importing files.
   Uses a caller-aware detector (grep for `from <mod> import`
   / `import <mod>`, excluding test files); if the oracle cannot run, it
   reports nothing rather than firing. See decomposition-principles.md §8.

@@ -42,6 +42,11 @@ CLI:
     python plan_check.py --spec <spec.md> [<spec.md> ...]
         runs the spec pillar -> outcome-AC traceability check instead.
 
+    ``--verified`` (or auto-detected: ``--master`` plus a linted sub-plan
+    declaring ``batch_verification: true``) makes ``lint_shared_module_gate``
+    advisory — its findings print as ``INFO:`` lines and do not count toward
+    the exit code.  Every other check is unaffected.
+
 Reads files with ``utf-8-sig`` (zh-CN Windows configs may carry a BOM).
 """
 
@@ -3929,15 +3934,62 @@ def _has_batch_verification_marker(text: str) -> bool:
     return False
 
 
+def _check_split(text: str, slug: str) -> tuple[list[str], list[str]]:
+    """Run ``ALL_CHECKS`` over one sub-plan body, split (blocking, advisory).
+
+    ``lint_shared_module_gate`` is the only advisory check.  Its findings are
+    demoted to ``INFO:`` — and dropped from the exit code — when the batch is
+    verified; see ``main`` for why.  Everything else is blocking regardless.
+    """
+    blocking: list[str] = []
+    advisory: list[str] = []
+    for check in ALL_CHECKS:
+        bucket = advisory if check is lint_shared_module_gate else blocking
+        bucket.extend(check(text, slug))
+    return blocking, advisory
+
+
 def lint_subplan(body: str, slug: str) -> list[str]:
     """Run all sub-plan checks against a body string (no file I/O).
 
     Convenience wrapper for tests and callers that already have the text.
     """
-    findings: list[str] = []
-    for check in ALL_CHECKS:
-        findings.extend(check(body, slug))
-    return findings
+    blocking, advisory = _check_split(body, slug)
+    return blocking + advisory
+
+
+def lint_file_split(
+    path: str | Path, master_text: str = "",
+) -> tuple[list[str], list[str]]:
+    """Run all checks against one sub-plan file, split (blocking, advisory).
+
+    When *master_text* is provided, the slug-collision check is also run,
+    and the base-ref resolution check uses the master's declared
+    ``base_branch:``.
+    """
+    p = Path(path)
+    slug = p.stem
+    text = p.read_text(encoding="utf-8-sig")
+    blocking, advisory = _check_split(text, slug)
+    # Slug-collision check requires master_text context.
+    if master_text:
+        master_plan_slug = ""
+        m = _MASTER_PLAN_RE.search(master_text)
+        if m:
+            master_plan_slug = m.group(1).strip()
+        blocking.extend(lint_slug_collision(text, slug, master_plan_slug))
+        # Thread base_branch into the off-base check.
+        base_branch = _extract_base_branch(master_text)
+        is_default = base_branch is None
+        blocking.extend(lint_scope_path_off_base_branch(
+            text, slug,
+            base_ref=base_branch or "main",
+            _is_default_base=is_default,
+        ))
+    else:
+        # No master_text — run the off-base check with default "main".
+        blocking.extend(lint_scope_path_off_base_branch(text, slug))
+    return blocking, advisory
 
 
 def lint_file(path: str | Path, master_text: str = "") -> list[str]:
@@ -3947,31 +3999,8 @@ def lint_file(path: str | Path, master_text: str = "") -> list[str]:
     and the base-ref resolution check uses the master's declared
     ``base_branch:``.
     """
-    p = Path(path)
-    slug = p.stem
-    text = p.read_text(encoding="utf-8-sig")
-    findings: list[str] = []
-    for check in ALL_CHECKS:
-        findings.extend(check(text, slug))
-    # Slug-collision check requires master_text context.
-    if master_text:
-        master_plan_slug = ""
-        m = _MASTER_PLAN_RE.search(master_text)
-        if m:
-            master_plan_slug = m.group(1).strip()
-        findings.extend(lint_slug_collision(text, slug, master_plan_slug))
-        # Thread base_branch into the off-base check.
-        base_branch = _extract_base_branch(master_text)
-        is_default = base_branch is None
-        findings.extend(lint_scope_path_off_base_branch(
-            text, slug,
-            base_ref=base_branch or "main",
-            _is_default_base=is_default,
-        ))
-    else:
-        # No master_text — run the off-base check with default "main".
-        findings.extend(lint_scope_path_off_base_branch(text, slug))
-    return findings
+    blocking, advisory = lint_file_split(path, master_text=master_text)
+    return blocking + advisory
 
 
 def main() -> int:
@@ -3991,6 +4020,13 @@ def main() -> int:
     parser.add_argument(
         "--spec", action="store_true",
         help="Run spec pillar traceability check instead of per-sub-plan checks.",
+    )
+    parser.add_argument(
+        "--verified", action="store_true",
+        help=(
+            "The batch carries a verification sub-plan: "
+            "lint_shared_module_gate findings are advisory (INFO), not HARD."
+        ),
     )
     args = parser.parse_args()
 
@@ -4025,12 +4061,48 @@ def main() -> int:
     if args.master:
         master_text = Path(args.master).read_text(encoding="utf-8-sig")
 
+    # ── --verified: D9's importer-coverage rule becomes advisory ──────────
+    #
+    # ``lint_shared_module_gate`` (V1's D9: a step's last gate must also run
+    # the tests of every module that imports what the step changes) gave 7
+    # HARD findings on gh-resolve's first converted batch (18b), each asking
+    # a step gate to run 155-177 of 652 test files — about a quarter of the
+    # suite per step.  That contradicts the planner's own rule that only the
+    # verification sub-plan runs a broad gate.
+    #
+    # Under ilk2 the rule is redundant WHEN THE BATCH HAS A VERIFICATION
+    # SUB-PLAN: ilk2's verification step runs the full suite at the batch
+    # head and attributes any new failure to the step that caused it, which
+    # gets a repair plan.  So under --verified the finding is INFO, not HARD.
+    # Auto-detect the same condition from the batch itself: --master plus a
+    # linted sub-plan declaring ``batch_verification: true`` is exactly "this
+    # batch has a verification sub-plan".  WITHOUT one, nothing else catches
+    # an importer's breakage, so the rule stays hard.
+    verified = args.verified
+    if not verified and master_text:
+        for path in args.paths:
+            if _has_batch_verification_marker(
+                Path(path).read_text(encoding="utf-8-sig")
+            ):
+                verified = True
+                break
+
     total = 0
     subplans: list[tuple[str, str]] = []
     for path in args.paths:
-        for msg in lint_file(path, master_text=master_text):
+        blocking, advisory = lint_file_split(path, master_text=master_text)
+        for msg in blocking:
             print(f"WARN: {msg}")
             total += 1
+        for msg in advisory:
+            if verified:
+                # Advisory: keep the finding visible, drop its severity and
+                # its vote on the exit code.  The leading ``HARD`` goes with
+                # the severity — ``INFO: HARD ...`` would contradict itself.
+                print(f"INFO: {msg.removeprefix('HARD ')}")
+            else:
+                print(f"WARN: {msg}")
+                total += 1
         p = Path(path)
         subplans.append((p.stem, p.read_text(encoding="utf-8-sig")))
 
