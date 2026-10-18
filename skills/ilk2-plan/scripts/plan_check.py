@@ -2048,12 +2048,29 @@ def _extract_test_file_tokens(cmd: str) -> list[str]:
     ]
 
 
+def _strip_dot_slash_prefix(path: str) -> str:
+    """Strip leading ``./`` prefixes only (not ``../`` or ``.hidden``).
+
+    ``str.lstrip("./")`` strips a *set* of characters (``.`` and ``/``),
+    so ``../tests`` becomes ``tests`` and ``.github/tests`` becomes
+    ``github/tests``.  This helper strips only the literal prefix ``./``,
+    repeated until the string no longer starts with it.
+    """
+    while path.startswith("./"):
+        path = path[2:]
+    return path
+
+
 def _extract_directory_args(cmd: str) -> list[str]:
     """Extract directory-tree arguments from a command string.
 
     A directory argument (e.g. ``tests``, ``tests/pins/``) covers every test
     file under it.  Normalises ``./`` prefixes and trailing ``/``.
     Skips flags and non-path tokens (program names, runners).
+
+    Directory args starting with ``..`` (outside the project) are
+    returned as-is so callers can distinguish them from project-local
+    paths.
     """
     tokens = cmd.strip().split()
     dirs: list[str] = []
@@ -2067,7 +2084,7 @@ def _extract_directory_args(cmd: str) -> list[str]:
                 skip_next = True
             continue
         if _is_directory_arg(t):
-            norm = t.lstrip("./")
+            norm = _strip_dot_slash_prefix(t)
             if norm.endswith("/"):
                 norm = norm[:-1]
             dirs.append(norm)
@@ -2090,7 +2107,7 @@ def _test_file_under_any_dir(
         root_str = str(project_root)
         if norm_test.startswith(root_str + "/"):
             norm_test = norm_test[len(root_str) + 1:]
-    norm_test = norm_test.lstrip("./")
+    norm_test = _strip_dot_slash_prefix(norm_test)
     for d in dirs:
         if norm_test.startswith(d + "/") or norm_test == d:
             return True
