@@ -799,3 +799,78 @@ local_checks:
     )
     assert "Traceback" not in result.stdout, result.stdout
     assert "HARD" not in result.stdout, result.stdout
+
+
+# ── _strip_dot_slash_prefix: ./ removed as a prefix, not as a char set ────
+#
+# ``str.lstrip("./")`` strips a SET of characters (``.`` and ``/``), so
+# ``../tests`` becomes ``tests`` and ``.github/tests`` becomes
+# ``github/tests``.  The helper must strip only the literal prefix ``./``.
+
+
+def test_strip_dot_slash_prefix_basic() -> None:
+    """``./tests`` → ``tests``; idempotent on repeated calls."""
+    mod = _load_plan_check()
+    assert mod._strip_dot_slash_prefix("./tests") == "tests"
+    assert mod._strip_dot_slash_prefix("tests") == "tests"
+    assert mod._strip_dot_slash_prefix("./tests/pins/") == "tests/pins/"
+
+
+def test_strip_dot_slash_prefix_preserves_parent() -> None:
+    """``../tests`` is NOT stripped — it references a parent directory."""
+    mod = _load_plan_check()
+    assert mod._strip_dot_slash_prefix("../tests") == "../tests"
+    assert mod._strip_dot_slash_prefix("../../tests") == "../../tests"
+
+
+def test_strip_dot_slash_prefix_preserves_dotdir() -> None:
+    """``.github/tests`` is NOT stripped — the dot is part of the dir name."""
+    mod = _load_plan_check()
+    assert mod._strip_dot_slash_prefix(".github/tests") == ".github/tests"
+    assert mod._strip_dot_slash_prefix("./.hidden/dir") == ".hidden/dir"
+
+
+def test_extract_directory_args_mixed_prefixes() -> None:
+    """The real-world command from the defect report returns correct dirs."""
+    mod = _load_plan_check()
+    result = mod._extract_directory_args(
+        "python -m pytest ../tests .github/tests ./tests/pins/"
+    )
+    assert result == ["../tests", ".github/tests", "tests/pins"], result
+
+
+def test_extract_directory_args_dot_slash_only() -> None:
+    """``./tests`` normalises to ``tests``."""
+    mod = _load_plan_check()
+    assert mod._extract_directory_args("pytest ./tests") == ["tests"]
+    assert mod._extract_directory_args("pytest ./tests/") == ["tests"]
+
+
+def test_test_file_under_any_dir_parent_dir_does_not_cover() -> None:
+    """A gate on ``../tests`` does NOT cover ``tests/test_x.py`` in the project."""
+    mod = _load_plan_check()
+    assert mod._test_file_under_any_dir(
+        "tests/test_x.py", ["../tests"],
+    ) is False
+
+
+def test_test_file_under_any_dir_dotdir_covers() -> None:
+    """A gate on ``.github/tests`` covers ``.github/tests/test_a.py``."""
+    mod = _load_plan_check()
+    assert mod._test_file_under_any_dir(
+        ".github/tests/test_a.py", [".github/tests"],
+    ) is True
+    # But NOT ``github/tests/test_a.py`` (the old bug would match this).
+    assert mod._test_file_under_any_dir(
+        "github/tests/test_a.py", [".github/tests"],
+    ) is False
+
+
+def test_test_file_under_any_dir_dot_slash_covers() -> None:
+    """``./tests`` normalised to ``tests`` still covers ``tests/test_x.py``."""
+    mod = _load_plan_check()
+    # The dir arg is already normalised by _extract_directory_args, so
+    # _test_file_under_any_dir receives ``tests``, not ``./tests``.
+    assert mod._test_file_under_any_dir(
+        "tests/test_x.py", ["tests"],
+    ) is True
