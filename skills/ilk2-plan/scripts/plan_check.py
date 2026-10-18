@@ -875,9 +875,6 @@ def lint_e2e_check_without_env_prereq(text: str, slug: str) -> list[str]:
 #     arg that looks like a specific file or directory
 #   - ``bash tests/*.sh`` or ``sh tests/*.sh`` (shell glob on test dir)
 #   - ``npm test`` / ``yarn test`` / ``bun test`` with no specific file arg
-#
-# The body must contain a "baseline-green" note referencing the platform
-# (e.g. "baseline-green on Windows 2026-06-28").
 
 _WHOLE_SUITE_CMD_RE = re.compile(
     r"""
@@ -2090,11 +2087,6 @@ def lint_shared_module_gate(text: str, slug: str) -> list[str]:
     not run the callers' tests, hides integration bugs.  A gate that covers
     both the changed module's tests AND the resolved importers' tests satisfies
     the rule — a whole-suite gate is not required.
-
-    Composes with ``lint_wholesuite_gate_baseline``: if the author widens the
-    gate to a directory or whole suite, the baseline lint may require a
-    ``baseline-green on <platform>`` note.  The finding text names this
-    interaction so the author isn't whipsawed.
     """
     findings: list[str] = []
     scope_paths = _extract_scope_paths(text)
@@ -2277,10 +2269,7 @@ def lint_shared_module_gate(text: str, slug: str) -> list[str]:
             f"{slug}: scope_path '{sp}' changes module '{module}' which is "
             f"imported by: {importer_names}.  The union of all gates does "
             f"not cover every required test.{missing_str}  Add a gate that "
-            f"runs the missing tests (or the full suite).  Note: widening "
-            f"the gate to a directory or whole suite will also require a "
-            f"'baseline-green on <platform>' note "
-            f"(see lint_wholesuite_gate_baseline)."
+            f"runs the missing tests (or the full suite)."
         )
 
     return findings

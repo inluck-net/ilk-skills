@@ -125,9 +125,9 @@ from it.
 ### Spec-input validation (when task comes from `/ilk-spec`)
 
 If the task description contains spec pillar blocks (bold headings like
-`**Pillar: X**`), run `plan_lint.py --spec` against the spec text before
-proceeding to grouping. A pillar is NOT "done" when only its model layer is
-gated — each pillar must carry:
+`**Pillar: X**`), run `"<skill-root>/ilk2-plan/scripts/plan_check.py" --spec`
+against the spec text before proceeding to grouping. A pillar is NOT "done"
+when only its model layer is gated — each pillar must carry:
 
 1. A `verification_tier` tag (`loop-verified` / `compile-only` / `device-manual`).
 2. At least one outcome-level AC (player/user-facing verb, not just
@@ -301,7 +301,7 @@ Two lints enforce this mechanically at step 7g:
   whose sub-plans' paths resolve to different branches, or whose
   master lacks `base_branch:` entirely.
 
-Both run under `plan_lint.py --master`. The plan-time gate catches the
+Both run under `plan_check.py --master`. The plan-time gate catches the
 defect at proposal review — the cheaper interception point.
 
 Surface the branch resolution in the step-5 proposal as a "Branch
@@ -327,7 +327,7 @@ Apply the rubric from `decomposition-principles.md` while drafting:
 - Does each sub-plan pass the fresh-session test (principle 5)?
 
 New planning rules (docs/07 §7.4.2) — the planner fails its own QC on
-each of these, enforced in 7i below through `ilk2 submit --check`:
+each of these, enforced in 7h below through `ilk2 submit --check`:
 
 1. **Step size.** A step is about 25-30 worker-minutes. Both measures
    are per plan, per step: a sub-plan's steps share its scope and its
@@ -585,13 +585,12 @@ in step 2 (i.e. `~/.ilk2/plans/<project>/<YYYY-MM-DD[x]>/`):
 ## 7. Final QC
 
 Run these passes against every newly-written sub-plan BEFORE
-delivering. The enforced instrument is `ilk2 submit --check` (7i): its
+delivering. The enforced instrument is `ilk2 submit --check` (7h): its
 refusals **and** its plan-shape warnings are failures of this QC, and
 the plan is fixed before it is submitted. 7a / 7d-env / 7e findings are
 warnings (surface to the user); 7b mutates files; **7c (meta projects
 only) and 7d-errors** are hard gates — never advance to step 8 with an
-unresolved hard finding. 7g and 7h are optional authoring lints (see
-7i).
+unresolved hard finding. 7g is an optional authoring lint (see 7h).
 
 ### 7a. `local_checks` anti-pattern lint
 
@@ -601,12 +600,12 @@ per-step `local_checks` yaml block. Warn on each occurrence:
 - `| head` / `| tail` / `| awk 'NR==1'` after a check command —
   pipeline exit-status is lost; rewrite as `grep -q PATTERN file`
   (single command, real exit code) or split into separate entries.
-  **Automated:** `plan_lint.py` `lint_exit_status_discarded` flags this
+  **Automated:** `plan_check.py` `lint_exit_status_discarded` flags this
   at step 7g
 - Broken process-wait idiom: `while ... | grep -q ... | grep -v grep`
   — `grep -q` closes the pipe on first match, so the loop tests the
   second grep's status, not the first's. Use `pgrep` or `kill -0 $pid`.
-  **Automated:** `plan_lint.py` `lint_broken_process_wait` flags this
+  **Automated:** `plan_check.py` `lint_broken_process_wait` flags this
   at step 7g
 - **Re-launching a backgrounded command to read its output** — when a
   long command is auto-backgrounded by the harness (exceeds
@@ -638,7 +637,7 @@ per-step `local_checks` yaml block. Warn on each occurrence:
   step 1 so the first step ends in a constructive commit, or give
   step 0 a concrete artifact + `local_checks` it must produce. This
   check reads each sub-plan's step structure, not just `local_checks`.
-- **Red-first step 0 whose per-step gate demands green** (`plan_lint`:
+- **Red-first step 0 whose per-step gate demands green** (`plan_check`:
   `lint_redfirst_step0_per_step_gate_demands_green`) — a red-first step 0
   whose per-step gate runs its own test file with exit-0 semantics is
   required to fail. Either mark the pins `@pytest.mark.xfail(strict=True)`
@@ -838,21 +837,20 @@ field:
 Finding counts go in the final report. Errors should be fixed before
 advancing to step 8.
 
-### 7g. Degrade-discipline lints (`plan_lint.py`, optional)
+### 7g. Degrade-discipline lints (`plan_check.py`, optional)
 
 An **optional authoring lint** over every newly-written sub-plan — the
 heuristics that used to be prose (and were skipped, stalling uccargo
-twice on 2026-06-13). V1's checker is all that exists until a standalone
-ilk2 authoring checker does, so nothing here is a gate: the enforced QC
-is `ilk2 submit --check` (7i). Run it when you want the extra eyes:
+twice on 2026-06-13). Nothing here is a gate: the enforced QC is
+`ilk2 submit --check` (7h). Run it when you want the extra eyes:
 
 ```bash
-python "<skill-root>/ilk-loop/scripts/plan_lint.py" \
+python "<skill-root>/ilk2-plan/scripts/plan_check.py" \
   --master <MASTER .md> <each new sub-plan .md>
 ```
 
 Pass `--master` — it enables the master-level checks (slug-collision and
-the retired-flag scope guard) which cannot run from sub-plan text alone.
+the branch checks) which cannot run from sub-plan text alone.
 
 It emits finding classes (warnings except where marked **hard finding**;
 surface counts in the step-9 report):
@@ -866,9 +864,6 @@ surface counts in the step-9 report):
   the sub-plan documents a safe default/fallback. On a headless loop `blocked`
   = stall + human; prefer degrade-to-default (see
   decomposition-principles.md → "Degrade-to-default over block").
-- **contract-change-review** — a sub-plan's `scope_paths` touch a
-  contract-governed file but the body doesn't reference the contract docs.
-  See 7h below.
 - **escaped-bug-regression-gate** — a sub-plan has `regression_for:` set
   (declares it fixes a human-found escaped bug) but carries zero
   `local_checks` (neither frontmatter nor per-step). An escaped-bug fix
@@ -881,12 +876,6 @@ surface counts in the step-9 report):
   burn its timeout into `local-checks-stuck` when the dependency is unreachable.
   Add an `env_prereqs` entry with a fast-fail `verify_cmd` (see
   decomposition-principles.md §10).
-- **whole-suite gate baseline** — a `local_checks` command runs a pre-existing
-  whole test suite (bare `pytest`/`vitest` with no file arg, `bash tests/*.sh`,
-  `npm test`) with no "baseline-green on \<platform\>" note in the sub-plan
-  body. If that suite is baseline-red on the run platform (e.g. POSIX-only
-  perms check on Windows), every step will false-block. See
-  decomposition-principles.md §16.
 - **POSIX-only test assertion** — a `local_check` shell command (or referenced
   `.sh` test) asserts a POSIX file mode (`rw-------`, `stat -c %A`, `chmod`
   perm check) without a `uname`/`OSTYPE` platform guard. Cannot pass on
@@ -926,10 +915,8 @@ surface counts in the step-9 report):
   the last step's gate misses a required test (the last step must widen
   beyond the new file to the module's tests plus its resolved callers'
   tests).  A warning only for a sub-plan with no per-step last gate
-  (frontmatter-only or no `### Step`). The finding names the importing files
-  and warns that widening the gate to a directory or whole suite will also
-  require a 'baseline-green on \<platform\>' note (see whole-suite gate
-  baseline above). Uses a caller-aware detector (grep for `from <mod> import`
+  (frontmatter-only or no `### Step`). The finding names the importing files.
+  Uses a caller-aware detector (grep for `from <mod> import`
   / `import <mod>`, excluding test files); if the oracle cannot run, it
   reports nothing rather than firing. See decomposition-principles.md §8.
 - **gate executable off driver PATH** — a `local_checks` command's leading
@@ -937,11 +924,6 @@ surface counts in the step-9 report):
   `path_prelude`). The finding names both the executable and the searched
   directory list. Shell builtins, keywords, and `VAR=value` prefixes are
   skipped. See decomposition-principles.md §23.
-- **retired-flag scope guard** (**hard finding**, needs `--master`) — fires
-  when the MASTER sets a retired runner flag such as `supervised_only: true`.
-  Never resolve it by inventing a rationale; do not write the flag at all,
-  and use a human review gate outside the batch if that is what you wanted.
-  See decomposition-principles.md §13.
 - **scope_path off base branch** (**hard finding**, needs `--master`) — a
   sub-plan's `scope_paths` entry exists on a ref other than the master's
   declared `base_branch:`. The loop commits to whichever branch is checked
@@ -953,29 +935,11 @@ surface counts in the step-9 report):
   the master lacks `base_branch:` entirely. Every sub-plan in a batch
   must target files on the same branch. See decomposition-principles.md §22.
 
-`plan_lint.py` exits non-zero when it finds anything; treat findings as
+`plan_check.py` exits non-zero when it finds anything; treat findings as
 authoring advice worth fixing before delivery (a contradiction here is
-what actually stalled the loop). They do not block delivery — 7i does.
+what actually stalled the loop). They do not block delivery — 7h does.
 
-### 7h. Contract-change review (`plan_lint.py`)
-
-The same `plan_lint.py` invocation from 7g also checks **contract-change
-discipline**: if a sub-plan's `scope_paths` touch a contract-governed
-file, the sub-plan body MUST reference at least one of:
-
-- `skills/ilk-loop/references/orchestration-collaboration.md`
-- `skills/ilk-loop/references/detached-component-contracts.md`
-
-This enforces the "Adding a new reader or writer" checklist from
-`detached-component-contracts.md` — a new reader/writer of a shared contract
-can't be authored without consulting the contract docs. See
-`orchestration-collaboration.md` L1-L4 for the invariant layer this protects.
-The governed-file list itself lives in `plan_lint.py`, with the kernel it
-protects; this command does not restate it, so the two cannot drift.
-
-A finding here is a warning (surface in the step-9 report).
-
-### 7i. Plan-shape QC (`ilk2 submit --check`)
+### 7h. Plan-shape QC (`ilk2 submit --check`)
 
 Run ilk2's own check against the authored batch here, before step 8 —
 the same command step 8a delivers with, used as this planner's QC:
@@ -1002,9 +966,8 @@ The plan-shape warnings, named as ilk2 reports them:
 - `serial-chain` — `depends_on` orders every plan although some ordered
   pairs share no files.
 
-`plan_lint.py --master` (7g, 7h) stays an **optional authoring lint**
-until a standalone checker exists; `ilk2 submit --check` is what this QC
-enforces.
+`plan_check.py --master` (7g) is an **optional authoring lint**;
+`ilk2 submit --check` is what this QC enforces.
 
 ## 8. Deliver the batch to ilk2
 
@@ -1031,9 +994,9 @@ it links, a step with no gate, a gate whose executable does not resolve,
 a `local_checks` block that cannot be read, a step whose declared writes
 touch the project's `deny_paths`, and a gate that cannot run at the base.
 Take the printed `problems` list as authoritative over this summary.
-Warnings (the plan-shape thresholds of 7i) never refuse a batch — ilk2
+Warnings (the plan-shape thresholds of 7h) never refuse a batch — ilk2
 only reports them — but they are QC failures for this planner: if one
-stands here, 7i did not finish. Go back and fix the plan rather than
+stands here, 7h did not finish. Go back and fix the plan rather than
 submitting past it.
 
 ### 8b. Submit
@@ -1113,7 +1076,7 @@ End your turn with:
   would land in the wrong repo.
 - **Never deliver while a refusal stands** — `--check` is the gate
   between authoring and submission, and its refusals are structural.
-  Its plan-shape warnings are this planner's QC failures too (7i): fix
+  Its plan-shape warnings are this planner's QC failures too (7h): fix
   the plan and re-check rather than submitting past them.
 - **Never write inside the project repo** — drafts live under
   `~/.ilk2/plans/`. Any sub-plan mutations from step 7b (invariant
