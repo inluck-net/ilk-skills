@@ -20,12 +20,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLAN_CHECK = REPO_ROOT / "skills" / "ilk2-plan" / "scripts" / "plan_check.py"
 
-# V1-loop script-folder modules plan_lint imported.  plan_check must inline
-# their behaviour, not import them.
+# V1-loop script-folder modules plan_lint imported.  plan_check must not
+# import them from the V1 folder.  ``test_importers`` is deliberately NOT in
+# this list: plan_check now ships its own copy beside it
+# (``skills/ilk2-plan/scripts/test_importers.py``) and calls it the way
+# plan_lint does — see ``test_calls_its_own_test_importers``.
 V1_SIBLING_MODULES = (
     "run_local_checks",
     "plan_slug",
-    "test_importers",
     "ilk_paths",
     "ship_config",
     "gate_cost",
@@ -124,6 +126,49 @@ def _run(home: Path, master: str, subplan: str, name: str) -> subprocess.Complet
     return subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=str(d))
 
 
+LOCAL_TEST_IMPORTERS = (
+    REPO_ROOT / "skills" / "ilk2-plan" / "scripts" / "test_importers.py"
+)
+
+
+def _load_plan_check():
+    """Import plan_check.py as a module (it is a script, not a package)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "plan_check_under_test", PLAN_CHECK,
+    )
+    assert spec is not None and spec.loader is not None, PLAN_CHECK
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _write_import_fixture(root: Path) -> None:
+    """``pkg/cli.py`` plus two tests that name ``cli`` in a dotted import."""
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "pkg" / "cli.py").write_text("def f():\n    return 1\n",
+                                         encoding="utf-8")
+    tests = root / "tests"
+    tests.mkdir()
+    tests.joinpath("test_x.py").write_text("from pkg.cli import f\n",
+                                          encoding="utf-8")
+    tests.joinpath("test_y.py").write_text("from pkg.cli import f\n",
+                                          encoding="utf-8")
+
+
+def _git(repo: Path, *args: str) -> None:
+    result = subprocess.run(
+        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com",
+         "-c", "commit.gpgsign=false", *args],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"git {args} failed: {result.stderr}"
+
+
 def test_clean_master_and_subplan_exits_zero(tmp_path: Path) -> None:
     """A small MASTER + sub-plan passes: exit code 0 and no traceback."""
     home = tmp_path / "home"
@@ -186,3 +231,61 @@ def test_kept_check_fires_on_a_gate_that_discards_its_exit_status(
     assert "Traceback" not in result.stderr, result.stderr
     assert "discards exit status" in result.stdout, result.stdout
     assert "2026-10-18-demo-step" in result.stdout, result.stdout
+
+
+def test_local_test_importers_copy_is_present() -> None:
+    """The helper lives beside plan_check, marked with where it came from."""
+    assert LOCAL_TEST_IMPORTERS.is_file(), f"{LOCAL_TEST_IMPORTERS} is missing"
+    head = LOCAL_TEST_IMPORTERS.read_text(encoding="utf-8").splitlines()[0]
+    assert head.startswith("#"), head
+    assert "ilk-loop/scripts/test_importers.py" in head, head
+
+
+def test_calls_its_own_test_importers() -> None:
+    """Git-repo discovery goes through the helper copied beside plan_check,
+    the way plan_lint calls it."""
+    source = _source()
+    assert "from test_importers import importer_tests" in source, (
+        "plan_check must call its own scripts/test_importers.py, as plan_lint does"
+    )
+    assert "importer_tests(project_root" in source, (
+        "plan_check must pass the project root and the module file to the helper"
+    )
+
+
+def test_discover_tests_by_import_git_repo_tracks_only(
+    tmp_path: Path,
+) -> None:
+    """A committed test that names the module in a non-first dotted segment
+    is found; the untracked twin is not.
+
+    ``from pkg.cli import f`` names ``cli`` in the LAST segment.  Only
+    git-tracked test files count (``test_importers.importer_tests``).
+    """
+    mod = _load_plan_check()
+    repo = tmp_path / "repo"
+    _write_import_fixture(repo)
+    _git(repo, "init", "--quiet")
+    _git(repo, "add", "pkg", "tests/test_x.py")
+    _git(repo, "commit", "--quiet", "-m", "init")
+    assert (repo / "tests" / "test_y.py").exists()
+
+    found = mod._discover_tests_by_import("cli", repo)
+
+    assert str(repo / "tests" / "test_x.py") in found, sorted(found)
+    assert str(repo / "tests" / "test_y.py") not in found, sorted(found)
+
+
+def test_discover_tests_by_import_fallback_matches_any_segment(
+    tmp_path: Path,
+) -> None:
+    """Not a git repo: the filesystem fallback still finds a
+    package-qualified import."""
+    mod = _load_plan_check()
+    repo = tmp_path / "plain"
+    _write_import_fixture(repo)
+    assert not (repo / ".git").exists()
+
+    found = mod._discover_tests_by_import("cli", repo)
+
+    assert str(repo / "tests" / "test_x.py") in found, sorted(found)
