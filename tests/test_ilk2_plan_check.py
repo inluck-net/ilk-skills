@@ -874,3 +874,143 @@ def test_test_file_under_any_dir_dot_slash_covers() -> None:
     assert mod._test_file_under_any_dir(
         "tests/test_x.py", ["tests"],
     ) is True
+
+
+# ── Red-first step 0: "pinned" in heading alone is not red-first ─────────
+#
+# ``lint_redfirst_step0_per_step_gate_demands_green`` checked heading +
+# commit lines for ``\bpin(?:s|ned|ning)?\b`` and treated a match as
+# red-first on its own.  A coverage-restoring step whose heading is
+# "restore the pinned assertions" was flagged HARD although it writes no
+# failing test.  The fix: pin/reproduce words count as red-first only when
+# the step body also carries a failing-test signal (must fail, xfail, etc.).
+
+REDFIRST_PINNED_ADJECTIVE = """\
+---
+plan: demo-step
+verification_tier: compile-only
+---
+
+# Sub-plan: demo-step
+
+## Steps
+
+### Step 0 — test(claim): restore the pinned assertions 18a deleted
+
+The existing tests all pass at commit.  This step restores coverage that
+was removed in an earlier edit.
+
+```yaml
+local_checks:
+  - command: pytest tests/test_restore.py -q
+    timeout: 30
+```
+"""
+
+REDFIRST_PIN_WITH_FAIL = """\
+---
+plan: demo-step
+verification_tier: compile-only
+---
+
+# Sub-plan: demo-step
+
+## Steps
+
+### Step 0 — test: pin the bug with a failing test
+
+The new test must fail — the fix lands in step 1.
+
+```yaml
+local_checks:
+  - command: pytest tests/test_pin.py -q
+    timeout: 30
+```
+"""
+
+REDFIRST_RED_FIRST_HEADING = """\
+---
+plan: demo-step
+verification_tier: compile-only
+---
+
+# Sub-plan: demo-step
+
+## Steps
+
+### Step 0 — red-first: pin D-12
+
+Write the failing reproducer.
+
+```yaml
+local_checks:
+  - command: pytest tests/test_d12.py -q
+    timeout: 30
+```
+"""
+
+REDFIRST_PINNED_XFAIL_EXEMPT = """\
+---
+plan: demo-step
+verification_tier: compile-only
+---
+
+# Sub-plan: demo-step
+
+## Steps
+
+### Step 0 — test: pin the expected failure
+
+The pinned test uses xfail(strict=True) so the gate stays green.
+
+```yaml
+local_checks:
+  - command: pytest tests/test_pin_xfail.py -q
+    timeout: 30
+```
+"""
+
+
+def test_redfirst_pinned_adjective_no_finding(tmp_path: Path) -> None:
+    """"pinned" as an adjective in a step-0 heading must not flag red-first."""
+    mod = _load_plan_check()
+    findings = mod.lint_redfirst_step0_per_step_gate_demands_green(
+        REDFIRST_PINNED_ADJECTIVE, "demo-step",
+    )
+    assert findings == [], findings
+
+
+def test_redfirst_pin_with_failing_signal_finds(tmp_path: Path) -> None:
+    """pin + "must fail" in the body is red-first: HARD finding."""
+    mod = _load_plan_check()
+    findings = mod.lint_redfirst_step0_per_step_gate_demands_green(
+        REDFIRST_PIN_WITH_FAIL, "demo-step",
+    )
+    assert len(findings) == 1, findings
+    assert "HARD" in findings[0], findings[0]
+    assert "red-first" in findings[0].lower() or "demands green" in findings[0].lower(), findings[0]
+
+
+def test_redfirst_red_first_heading_still_finds(tmp_path: Path) -> None:
+    """"red-first" in the heading is sufficient on its own: HARD finding."""
+    mod = _load_plan_check()
+    findings = mod.lint_redfirst_step0_per_step_gate_demands_green(
+        REDFIRST_RED_FIRST_HEADING, "demo-step",
+    )
+    assert len(findings) == 1, findings
+    assert "HARD" in findings[0], findings[0]
+
+
+def test_redfirst_pinned_with_xfail_exempt(tmp_path: Path) -> None:
+    """xfail(strict=True) exempts even when the heading says "pin"."""
+    mod = _load_plan_check()
+    # The xfail exemption is checked against the full step body, not the
+    # heading.  Add it to the body text.
+    text_with_xfail = REDFIRST_PINNED_XFAIL_EXEMPT.replace(
+        "The pinned test uses",
+        "The pinned test uses\nxfail(strict=True) so that",
+    )
+    findings = mod.lint_redfirst_step0_per_step_gate_demands_green(
+        text_with_xfail, "demo-step",
+    )
+    assert findings == [], findings
