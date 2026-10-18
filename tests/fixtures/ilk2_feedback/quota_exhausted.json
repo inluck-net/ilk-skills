@@ -1,0 +1,48 @@
+{
+  "batch": "b-synth-quota-exhausted",
+  "report_version": 2,
+  "steps": [
+    {
+      "plan": "synth-quota-exhausted",
+      "idx": 1,
+      "title": "run into the provider quota",
+      "kind": "work",
+      "status": "red",
+      "attempts": 1,
+      "red": 1,
+      "interrupted": 0,
+      "minutes": 8.0,
+      "first_edit_min": 2.0,
+      "carried": 0,
+      "peak_context_k": 15,
+      "turns": 4,
+      "s_per_turn": 30.0,
+      "attempt_records": [
+        {
+          "n": 1,
+          "outcome": "quota",
+          "reason": "provider quota exhausted mid-step",
+          "termination": "quota",
+          "gates_first": false,
+          "minutes": 8.0,
+          "edits": {"Edit": 1},
+          "requests": 5,
+          "long_requests": 1,
+          "long_request_min": 4.0,
+          "longest_request_min": 4.0,
+          "model_min": 5.0,
+          "tool_min": 1.5,
+          "first_edit_start_min": 1.5,
+          "first_edit_end_min": 3.0,
+          "gates": {}
+        }
+      ]
+    }
+  ],
+  "refusals": [],
+  "accepted": 0,
+  "of": 1,
+  "minutes_per_accepted_step": null,
+  "first_attempt_share": null,
+  "phase_minutes": {"dispatch": 0.5, "gates": 0.0, "base": 0.2, "merge": 0.0, "attribute": 0.0}
+}

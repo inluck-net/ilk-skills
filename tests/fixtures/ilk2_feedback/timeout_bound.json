@@ -1,0 +1,57 @@
+{
+  "batch": "b-synth-timeout-bound",
+  "report_version": 2,
+  "steps": [
+    {
+      "plan": "synth-timeout-bound",
+      "idx": 1,
+      "title": "grow a clock",
+      "kind": "work",
+      "status": "red",
+      "attempts": 1,
+      "red": 1,
+      "interrupted": 0,
+      "minutes": 60.0,
+      "first_edit_min": 3.0,
+      "carried": 0,
+      "peak_context_k": 42,
+      "turns": 18,
+      "s_per_turn": 45.0,
+      "attempt_records": [
+        {
+          "n": 1,
+          "outcome": "red",
+          "reason": "attempt hit the 3600s cap",
+          "termination": "timeout",
+          "gates_first": false,
+          "minutes": 60.0,
+          "edits": {"Edit": 4, "Write": 1},
+          "requests": 21,
+          "long_requests": 2,
+          "long_request_min": 9.5,
+          "longest_request_min": 11.0,
+          "model_min": 33.0,
+          "tool_min": 12.0,
+          "first_edit_start_min": 2.5,
+          "first_edit_end_min": 6.0,
+          "gates": {
+            "unit": {
+              "adapter": "pytest",
+              "command_digest": "sha256:synth-unit",
+              "outcome": "pass",
+              "new": [],
+              "possibly_inherited": [],
+              "attributed": []
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "refusals": [],
+  "accepted": 0,
+  "of": 1,
+  "minutes_per_accepted_step": null,
+  "first_attempt_share": null,
+  "phase_minutes": {"dispatch": 1.0, "gates": 2.5, "base": 0.5, "merge": 0.0, "attribute": 0.4}
+}

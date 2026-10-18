@@ -1,0 +1,48 @@
+{
+  "batch": "b-synth-interrupted",
+  "report_version": 2,
+  "steps": [
+    {
+      "plan": "synth-interrupted",
+      "idx": 1,
+      "title": "be stopped from outside",
+      "kind": "work",
+      "status": "red",
+      "attempts": 1,
+      "red": 0,
+      "interrupted": 1,
+      "minutes": 6.0,
+      "first_edit_min": 2.0,
+      "carried": 1,
+      "peak_context_k": 20,
+      "turns": 5,
+      "s_per_turn": 28.0,
+      "attempt_records": [
+        {
+          "n": 1,
+          "outcome": "interrupted",
+          "reason": "operator cancelled the attempt",
+          "termination": "cancelled",
+          "gates_first": false,
+          "minutes": 6.0,
+          "edits": {"Edit": 2},
+          "requests": 4,
+          "long_requests": 0,
+          "long_request_min": 0.0,
+          "longest_request_min": 0.0,
+          "model_min": 3.5,
+          "tool_min": 1.0,
+          "first_edit_start_min": 1.5,
+          "first_edit_end_min": 2.5,
+          "gates": {}
+        }
+      ]
+    }
+  ],
+  "refusals": [],
+  "accepted": 0,
+  "of": 1,
+  "minutes_per_accepted_step": null,
+  "first_attempt_share": null,
+  "phase_minutes": {"dispatch": 0.4, "gates": 0.0, "base": 0.1, "merge": 0.0, "attribute": 0.0}
+}
