@@ -376,19 +376,28 @@ member names):
 | ... |
 ```
 
-**Every master MUST end with a batch-verification sub-plan** — the last row
-in the table. It declares `batch_verification: true` and holds **exactly
-one step**, whose gate is the project's full suite. ilk2 recognises it as
-the batch's verification plan and judges it against the batch base: the
-driver runs the gates (the full suite) at the batch head and puts the
-failures, compared with the base, in the worker's evidence. The worker
-fixes what that comparison names, or changes nothing if it names nothing.
-No other sub-plan runs a broad gate; they stay change-scoped. A master
-without one is a HARD lint finding. Add it as the last row in your
-grouping table:
+**A master ends with a batch-verification sub-plan when the project
+verifies** — the last row in the table when one is owed. It declares
+`batch_verification: true` and holds **exactly one step**, whose gate is
+the project's full suite. ilk2 recognises it as the batch's verification
+plan and judges it against the batch base: the driver runs the gates (the
+full suite) at the batch head and puts the failures, compared with the
+base, in the worker's evidence. The worker fixes what that comparison
+names, or changes nothing if it names nothing. No other sub-plan runs a
+broad gate; they stay change-scoped.
+
+**Write one where the project verifies, and not otherwise.** The project
+must have a `verify_command` (ilk2 replaces V1's verification gates with
+it; set it with `ilk2 project set`) **and** the project's own instructions
+(its `AGENTS.md` / `CLAUDE.md`) must not say to omit it. Write one anyway
+when the task asks for one. Otherwise write **no** verification sub-plan,
+and say in the MASTER which reason applied — no `verify_command`, or the
+project's instructions omit it (name both when both do). A master that
+owes one and has no such row is a HARD lint finding. When one is owed, add
+it as the last row in your grouping table:
 
 ```
-| N+1 | <slug>-verify | batch verification — full suite | loop-verified | P0 | not optional; every batch ends with a verified suite | 1 |
+| N+1 | <slug>-verify | batch verification — full suite | loop-verified | P0 | the batch's verdict against the base; written only when owed | 1 |
 ```
 
 Plus:
@@ -453,9 +462,9 @@ in step 2 (i.e. `~/.ilk2/plans/<project>/<YYYY-MM-DD[x]>/`):
     and the recommended run order per tier.
   - "Progress log" table (1 row: the creation entry)
 
-- **The last sub-plan is ilk2's verification sub-plan**, and it has
-  **one step**. Declare `batch_verification: true` and
-  `plan: <slug>-verify` so ilk2 marks it as the batch's verification
+- **When one is owed (step 5), the last sub-plan is ilk2's verification
+  sub-plan**, and it has **one step**. Declare `batch_verification: true`
+  and `plan: <slug>-verify` so ilk2 marks it as the batch's verification
   plan. Its single step's `local_checks` is the project's full suite —
   the project's `verify_command`, the one invocation ilk2 runs at the
   batch head. Do not hand-type a narrower selection, and do not write
@@ -467,8 +476,12 @@ in step 2 (i.e. `~/.ilk2/plans/<project>/<YYYY-MM-DD[x]>/`):
   calls V1's verification tooling is dropped when the batch is
   imported and replaced by the project's full suite; a step left with
   no gate that way is refused until the project has a `verify_command`
-  (set it with `ilk2 project set`). A master without this sub-plan as
-  the last registry entry is a HARD lint finding.
+  (set it with `ilk2 project set`). A master that owes this sub-plan and
+  has no such registry entry is a HARD lint finding.
+
+  When none is owed, write no verification sub-plan: the registry ends at
+  the last work sub-plan, and the MASTER says which reason applied — no
+  `verify_command`, or the project's instructions omit it.
 
   The step's instructions say only this: the driver has already run the
   gates at the batch head and compared the failures with the batch
@@ -1065,11 +1078,13 @@ End your turn with:
    after every attempt."*
 5. **Verification note.** If ANY newly-written sub-plan carries runtime
    `local_checks` (frontmatter or per-step), say so plainly: ilk2 runs
-   each step's declared gates after every attempt and judges the
-   verification sub-plan's full suite against the batch base. There is
-   no launcher flag that turns verification off and no skip path — a
-   step with red gates does not ship. Sub-plans that need a human or a
-   device pass are named in the tier mix below.
+   each step's declared gates after every attempt — a declared gate has
+   no skip path, and a step with red gates does not ship. When the batch
+   owes a verification sub-plan (step 5) and wrote one, add that ilk2
+   judges its full suite against the batch base. When it wrote none,
+   restate the MASTER's reason (no `verify_command`, or the project's
+   instructions omit it). Sub-plans that need a human or a device pass
+   are named in the tier mix below.
 6. **Tier-mix summary.** List the tier breakdown of the batch:
 
    ```

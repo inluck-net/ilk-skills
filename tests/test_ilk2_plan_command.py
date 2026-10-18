@@ -91,6 +91,49 @@ def test_ilk2_plan_qc_runs_submit_check() -> None:
     assert "ilk2 submit --check" in qc, "the QC section must run ilk2 submit --check"
 
 
+def test_ilk2_plan_verification_subplan_needs_verify_command() -> None:
+    """Omission condition 1: without a project `verify_command` there is
+    nothing for the sub-plan's single step to run — write none."""
+    text = _text(ILK2_PLAN)
+    assert "verify_command" in text, "the opt-out must name verify_command"
+    assert "the project's instructions omit it" in text, (
+        "the MASTER must record which omit reason applied"
+    )
+
+
+def test_ilk2_plan_verification_subplan_follows_project_instructions() -> None:
+    """Omission condition 2: the project's own instructions (AGENTS.md /
+    CLAUDE.md) may say to omit the verification sub-plan — this repo's
+    operator preference (AGENTS.md, 2026-10-11) does."""
+    text = _text(ILK2_PLAN)
+    assert "its `AGENTS.md` / `CLAUDE.md`" in text, (
+        "the opt-out must name the project's own instructions"
+    )
+    assert "the project's instructions omit it" in text
+
+
+def test_ilk2_plan_verification_subplan_is_omittable() -> None:
+    """A master does not have to end with a verification sub-plan: the
+    task can still ask for one, and an omission says which reason applied."""
+    text = _text(ILK2_PLAN)
+    assert "the task asks for one" in text, (
+        "the task asking for one must still get a verification sub-plan"
+    )
+    assert "which reason applied" in text, (
+        "an omission must say in the MASTER which reason applied"
+    )
+    for needle in (
+        "Every master MUST end with a batch-verification sub-plan",
+        "not optional; every batch ends with a verified suite",
+        "A master without one is a HARD lint finding",
+        "A master without this sub-plan as the last registry entry",
+    ):
+        assert needle not in text, (
+            f"commands/ilk2-plan.md still makes the verification sub-plan "
+            f"unconditional: contains {needle!r}"
+        )
+
+
 def test_ilk2_plan_has_no_v1_paths_scripts_or_runner() -> None:
     text = _text(ILK2_PLAN)
     for needle in FORBIDDEN:
