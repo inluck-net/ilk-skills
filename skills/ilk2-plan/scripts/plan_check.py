@@ -2693,17 +2693,37 @@ def lint_scope_path_off_base_branch(
             and ("does not exist in" in err_base or "but not in" in err_base)
         )
         if is_absent:
-            # Absent on base but present elsewhere — HARD finding.
-            # Find which refs carry it.
-            rc_refs, out_refs, err_refs = _run_git(
-                ["branch", "--contains", out_list.splitlines()[0]], cwd,
+            # Absent on base and HEAD — check whether any ref's tip tree
+            # actually contains the path.  History is the wrong question:
+            # `git branch --contains <commit>` names refs that contain the
+            # commit, including deletions, so a file deleted on main would
+            # list main as "carrying" it.  Instead, test tree presence with
+            # `git cat-file -e <ref>:<path>`.
+            rc_each, out_each, err_each = _run_git(
+                ["for-each-ref", "--format=%(refname:short)",
+                 "refs/heads", "refs/remotes"],
+                cwd,
             )
-            ref_names = (
-                [r.strip().lstrip("* ") for r in out_refs.splitlines()
-                 if r.strip()]
-                if rc_refs == 0 and out_refs
-                else ["<unknown ref>"]
-            )
+            ref_names: list[str] = []
+            if rc_each == 0 and out_each:
+                for ref in out_each.splitlines():
+                    ref = ref.strip()
+                    if not ref:
+                        continue
+                    # Skip symbolic remote HEADs (e.g. origin/HEAD -> origin/main).
+                    if ref.endswith("/HEAD"):
+                        continue
+                    # Already checked base and HEAD above.
+                    if ref in (resolved_ref, "HEAD"):
+                        continue
+                    rc_check, _, _ = _run_git(
+                        ["cat-file", "-e", f"{ref}:{p}"], cwd,
+                    )
+                    if rc_check == 0:
+                        ref_names.append(ref)
+            if not ref_names:
+                # Path absent from all tip trees — same as a new file, OK.
+                continue
             findings.append(
                 f"HARD {slug}: scope_path '{p}' is absent on "
                 f"base ref '{ref_label}' AND on HEAD, but exists on: "
