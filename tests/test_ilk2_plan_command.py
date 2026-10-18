@@ -214,6 +214,82 @@ def test_ilk2_plan_runs_its_own_checker_not_v1s() -> None:
     )
 
 
+def test_ilk2_plan_records_scope_from_the_source() -> None:
+    """The trial (docs/07 §7.6) measures each batch against its *requested*
+    scope, so the planner records it from the source before drafting and
+    carries it to delivery as `--meta`. The counts are a judgment made
+    once — never revised to match the plan."""
+    text = _text(ILK2_PLAN)
+    for needle in ("source_ac_groups", "source_tickets", "--meta"):
+        assert needle in text, f"commands/ilk2-plan.md does not contain {needle!r}"
+    assert "Count from the source text, not from the plan" in text, (
+        "ac_groups must be counted from the source, not from the plan"
+    )
+    assert "revise them to match the plan" in text, (
+        "the recorded counts must not be revised to match the plan"
+    )
+    assert '{"scope": {"source": "' in text, (
+        "delivery must pass the scope record as --meta JSON"
+    )
+
+
+def test_ilk2_plan_drafts_dir_is_the_batch_id() -> None:
+    """The drafts folder is the batch's own id (`2026-10-18c` — the date
+    plus a lower-case letter for the day's batch), not a date folder
+    disambiguated by `[x]` empty / `2` / `3`."""
+    text = _text(ILK2_PLAN)
+    assert "<batch-id>" in text, (
+        "commands/ilk2-plan.md must name the drafts dir after the batch id"
+    )
+    assert "`2`, `3`" not in text, (
+        "commands/ilk2-plan.md still uses the old `[x]` empty / `2` / `3` "
+        "drafts-dir rule"
+    )
+    assert "2026-10-18c" in text, (
+        "the batch-id rule must show the date-plus-letter shape"
+    )
+
+
+def test_ilk2_plan_docs_only_subplan_picks_an_honest_tier() -> None:
+    """A docs-only sub-plan claiming `loop-verified` with
+    `must_add_tests: false` and no `unit_test_targets` is a HARD finding
+    from plan_check.py. The planner is told what to do instead: declare
+    `compile-only`, arm `unit_test_targets` with the doc-consistency
+    tests, or fold the docs into the code sub-plan they describe."""
+    text = _text(ILK2_PLAN)
+    idx = text.find("docs-only")
+    assert idx != -1, "commands/ilk2-plan.md must carry docs-only guidance"
+    window = text[max(0, idx - 400) : idx + 600]
+    assert "compile-only" in window, (
+        "the docs-only guidance must name compile-only as the honest tier "
+        "for a docs-only sub-plan"
+    )
+    for needle in ("unit_test_targets", "must_add_tests: false"):
+        assert needle in window, (
+            f"the docs-only guidance must name {needle!r} as the forbidden "
+            f"evidence pair"
+        )
+
+
+def test_ilk2_plan_draft_mode_is_an_argument() -> None:
+    """`--draft` writes the files, runs plan_check.py and
+    `ilk2 submit --check`, reports, and stops — no approval wait and no
+    submit. Delivery later is the same `ilk2 submit` with the same
+    `--meta`."""
+    text = _text(ILK2_PLAN)
+    start = text.find("## Arguments")
+    end = text.find("## 1.")
+    assert start != -1 and end != -1 and start < end, "Arguments section not found"
+    args = text[start:end]
+    assert "--draft" in args, "--draft must be an argument of /ilk2-plan"
+    assert "no approval wait and no submit" in text, (
+        "--draft must stop before the approval wait and before submit"
+    )
+    assert "same `ilk2 submit` with the same `--meta`" in text, (
+        "later delivery of a --draft must reuse the same submit and --meta"
+    )
+
+
 def test_ilk2_plan_has_no_v1_paths_scripts_or_runner() -> None:
     text = _text(ILK2_PLAN)
     for needle in FORBIDDEN:
