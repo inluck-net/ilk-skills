@@ -1011,6 +1011,11 @@ def _is_whole_suite_command(cmd: str) -> bool:
                     return False  # a -k/--deselect selector scopes the run
                 continue
             if tok in _NON_PATH_TOKENS:
+                # ``tests``, ``test``, ``src`` etc. are non-path tokens but
+                # still directory args when passed to pytest — they scope the
+                # collection tree, not a single file.
+                if _is_directory_arg(tok):
+                    positional.append(tok)
                 continue
             positional.append(tok)
         if any(_is_directory_arg(t) for t in positional):
@@ -2043,6 +2048,55 @@ def _extract_test_file_tokens(cmd: str) -> list[str]:
     ]
 
 
+def _extract_directory_args(cmd: str) -> list[str]:
+    """Extract directory-tree arguments from a command string.
+
+    A directory argument (e.g. ``tests``, ``tests/pins/``) covers every test
+    file under it.  Normalises ``./`` prefixes and trailing ``/``.
+    Skips flags and non-path tokens (program names, runners).
+    """
+    tokens = cmd.strip().split()
+    dirs: list[str] = []
+    skip_next = False
+    for t in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        if t.startswith("-"):
+            if "=" not in t and t in _VALUE_TAKING_FLAGS:
+                skip_next = True
+            continue
+        if _is_directory_arg(t):
+            norm = t.lstrip("./")
+            if norm.endswith("/"):
+                norm = norm[:-1]
+            dirs.append(norm)
+            continue
+        if t in _NON_PATH_TOKENS:
+            continue
+    return dirs
+
+
+def _test_file_under_any_dir(
+    test_path: str, dirs: list[str], project_root: Path | None = None,
+) -> bool:
+    """True if *test_path* falls under any of the *dirs*.
+
+    *dirs* are relative to *project_root*.  When *test_path* is absolute
+    and *project_root* is given, the comparison strips the root prefix.
+    """
+    norm_test = test_path
+    if project_root is not None:
+        root_str = str(project_root)
+        if norm_test.startswith(root_str + "/"):
+            norm_test = norm_test[len(root_str) + 1:]
+    norm_test = norm_test.lstrip("./")
+    for d in dirs:
+        if norm_test.startswith(d + "/") or norm_test == d:
+            return True
+    return False
+
+
 def _resolve_test_paths(
     test_files: list[str], project_root: Path,
     scope_path: str | None = None,
@@ -2097,9 +2151,17 @@ def _gate_covers_module_and_callers(
 ) -> bool:
     """True if *cmd* runs tests for both the changed module and its callers."""
     test_tokens = _extract_test_file_tokens(cmd)
-    if not test_tokens:
-        return False
-    gate_paths = _resolve_test_paths(test_tokens, project_root)
+    gate_paths = _resolve_test_paths(test_tokens, project_root) if test_tokens else set()
+    # Directory arguments cover every test file under them.
+    dir_args = _extract_directory_args(cmd)
+    all_required = changed_module_test_files | callers_test_files
+    if dir_args and all_required:
+        dir_covers = all(
+            _test_file_under_any_dir(t, dir_args, project_root)
+            for t in all_required
+        )
+        if dir_covers:
+            return True
     covers_module = bool(gate_paths & changed_module_test_files)
     covers_callers = bool(gate_paths & callers_test_files)
     return covers_module and covers_callers

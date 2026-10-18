@@ -695,3 +695,107 @@ def test_verified_autodetects_a_batch_verification_subplan(
     assert "tests/test_server.py" in result.stdout, result.stdout
     assert "WARN:" not in result.stdout, result.stdout
     assert "HARD" not in result.stdout, result.stdout
+
+
+# ── Directory-arg coverage: a gate that runs a directory covers all tests ────
+#
+# ``_is_whole_suite_command`` treats ``pytest tests`` as a whole-suite gate
+# (the directory arg runs every test under it).  ``_gate_covers_module_and_callers``
+# also handles directory args for edge cases that bypass the whole-suite check.
+
+def test_is_whole_suite_command_directory_arg() -> None:
+    """``pytest tests`` and ``pytest tests/`` are whole-suite commands."""
+    mod = _load_plan_check()
+    assert mod._is_whole_suite_command("pytest tests") is True
+    assert mod._is_whole_suite_command("pytest tests/") is True
+    assert mod._is_whole_suite_command("python -m pytest -q tests") is True
+    assert mod._is_whole_suite_command("python3 -m pytest -q tests/") is True
+    # A file-scoped gate is NOT a whole-suite command.
+    assert mod._is_whole_suite_command("pytest tests/test_x.py") is False
+    # A sub-directory gate IS a whole-suite command.
+    assert mod._is_whole_suite_command("pytest tests/pins") is True
+
+
+def test_gate_covers_directory_arg(tmp_path: Path) -> None:
+    """A directory gate covers every test file under it."""
+    mod = _load_plan_check()
+    # Create test files on disk.
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_x.py").write_text("pass\n")
+    sub = tests / "sub"
+    sub.mkdir()
+    (sub / "test_y.py").write_text("pass\n")
+    test_x = str(tests / "test_x.py")
+    test_y = str(sub / "test_y.py")
+    # _gate_covers_module_and_callers requires covering BOTH module AND callers.
+    # Directory gate covers both.
+    assert mod._gate_covers_module_and_callers(
+        "python -m pytest -q tests", {test_x}, {test_y}, tmp_path,
+    ) is True
+    # Sub-directory gate covers only the sub-directory test.
+    assert mod._gate_covers_module_and_callers(
+        "pytest tests/sub", {test_y}, {test_y}, tmp_path,
+    ) is True
+    assert mod._gate_covers_module_and_callers(
+        "pytest tests/sub", {test_x}, {test_y}, tmp_path,
+    ) is False
+    # File gate covers only that file.
+    assert mod._gate_covers_module_and_callers(
+        "pytest tests/test_x.py", {test_x}, {test_x}, tmp_path,
+    ) is True
+    assert mod._gate_covers_module_and_callers(
+        "pytest tests/test_x.py", {test_x}, {test_y}, tmp_path,
+    ) is False
+
+
+def test_directory_gate_whole_suite_exempts_shared_module(
+    tmp_path: Path,
+) -> None:
+    """A gate running ``pytest tests`` is a whole-suite command — D9 exits
+    early without firing, even when the changed module has importers."""
+    home = tmp_path / "home"
+    home.mkdir()
+    d = home / "dir"
+    d.mkdir(parents=True, exist_ok=True)
+    _write_shared_fixture(d)
+    master_path = d / "MASTER.md"
+    master_path.write_text(MASTER, encoding="utf-8")
+    sub = """\
+---
+plan: demo-step
+verification_tier: compile-only
+scope_paths:
+  - pkg/cli.py
+---
+
+# Sub-plan: demo-step
+
+## Steps
+
+### Step 0
+
+Edit `pkg/cli.py`.
+
+```yaml
+local_checks:
+  - command: python3 -m pytest -q tests
+    timeout: 30
+```
+"""
+    sub_path = d / "2026-10-18-demo-step.md"
+    sub_path.write_text(sub, encoding="utf-8")
+    env = {"HOME": str(home), "PATH": os.environ["PATH"]}
+    cmd = [
+        sys.executable, "-I", str(PLAN_CHECK),
+        "--master", str(master_path),
+        "--project-root", str(d),
+        str(sub_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=str(d))
+    assert result.returncode == 0, (
+        f"exit {result.returncode}\nstdout: {result.stdout}\n"
+        f"stderr: {result.stderr}"
+    )
+    assert "Traceback" not in result.stdout, result.stdout
+    assert "HARD" not in result.stdout, result.stdout
