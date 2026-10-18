@@ -134,6 +134,24 @@ def test_ilk2_plan_verification_subplan_is_omittable() -> None:
         )
 
 
+def test_ilk2_plan_runs_its_own_checker_not_v1s() -> None:
+    """The planner's QC lints must call ilk2's own checker, not V1's.
+
+    `commands/ilk2-plan.md` used to invoke
+    `<skill-root>/ilk-loop/scripts/plan_lint.py`, which goes away with V1
+    (docs/07 §7.4.2). It now calls `skills/ilk2-plan/scripts/plan_check.py`
+    — the standalone authoring checker, resolved through `<skill-root>` like
+    the file's other skill paths.
+    """
+    text = _text(ILK2_PLAN)
+    assert "ilk2-plan/scripts/plan_check.py" in text, (
+        "commands/ilk2-plan.md must name skills/ilk2-plan/scripts/plan_check.py"
+    )
+    assert "ilk-loop/scripts" not in text, (
+        "commands/ilk2-plan.md must not call into V1's scripts folder"
+    )
+
+
 def test_ilk2_plan_has_no_v1_paths_scripts_or_runner() -> None:
     text = _text(ILK2_PLAN)
     for needle in FORBIDDEN:
