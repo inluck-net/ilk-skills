@@ -24,6 +24,15 @@ that checker is installed.
 
 Follow these steps in order. Do NOT skip the human-approval gate.
 
+## Paths
+
+`<skill-root>` is the `skills/` directory beside the `commands/` directory that
+holds this file's real path. It is never V1's `~/.ilk/current/skills`.
+
+```bash
+SKILL_ROOT="$(cd "$(dirname "$(realpath ~/.claude/commands/ilk2-spec.md)")/../skills" && pwd)"
+```
+
 ## 1. Load the recipe
 
 Read the authoritative steps and boundary rules:

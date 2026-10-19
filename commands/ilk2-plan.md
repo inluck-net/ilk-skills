@@ -18,6 +18,15 @@ never in V1's external plans tree.
 Follow these steps in order. Do NOT skip the user-approval gate unless
 the operator passed `--yes` or `--draft` (see Arguments below).
 
+## Paths
+
+`<skill-root>` is the `skills/` directory beside the `commands/` directory that
+holds this file's real path. It is never V1's `~/.ilk/current/skills`.
+
+```bash
+SKILL_ROOT="$(cd "$(dirname "$(realpath ~/.claude/commands/ilk2-plan.md)")/../skills" && pwd)"
+```
+
 ## Arguments
 
 - `--yes` / `-y` — skip the step-5 approval wait for this invocation.

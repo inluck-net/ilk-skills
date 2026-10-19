@@ -19,6 +19,15 @@ plan. That is this command's job.
 Follow these steps in order. Do NOT skip the review in step 4 — a postmortem
 that only restates the script's output has not earned its keep.
 
+## Paths
+
+`<skill-root>` is the `skills/` directory beside the `commands/` directory that
+holds this file's real path. It is never V1's `~/.ilk/current/skills`.
+
+```bash
+SKILL_ROOT="$(cd "$(dirname "$(realpath ~/.claude/commands/ilk2-feedback.md)")/../skills" && pwd)"
+```
+
 ## 1. Resolve the batch
 
 - If the user named a batch id after the command, use it.

@@ -27,6 +27,15 @@ paths or scripts, nothing scaffolded or committed in the project repo.
 Follow these steps in order. Do NOT skip the user-approval gate — it lives
 in `/ilk2-plan` step 5, so hand off without `--yes`.
 
+## Paths
+
+`<skill-root>` is the `skills/` directory beside the `commands/` directory that
+holds this file's real path. It is never V1's `~/.ilk/current/skills`.
+
+```bash
+SKILL_ROOT="$(cd "$(dirname "$(realpath ~/.claude/commands/ilk2-lark.md)")/../skills" && pwd)"
+```
+
 ## 1. Load conventions
 
 Read in parallel:

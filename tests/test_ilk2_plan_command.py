@@ -6,7 +6,10 @@ delivery by `ilk2 submit`, and none of V1's paths, scripts or runner.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ILK2_PLAN = REPO_ROOT / "commands" / "ilk2-plan.md"
@@ -302,3 +305,44 @@ def test_ilk_plan_first_line_unchanged() -> None:
         "commands/ilk-plan.md is no longer V1's planner: "
         f"first line is {first!r}"
     )
+
+
+ILK2_COMMAND_FILES = sorted((REPO_ROOT / "commands").glob("ilk2-*.md"))
+assert ILK2_COMMAND_FILES, "no commands/ilk2-*.md files found"
+
+SKILL_ROOT_RE = re.compile(r"<skill-root>/([A-Za-z0-9_./-]+)")
+
+
+@pytest.mark.parametrize("cmd_path", ILK2_COMMAND_FILES, ids=lambda p: p.name)
+def test_ilk2_command_defines_skill_root(cmd_path: Path) -> None:
+    """Every ilk2-* command that uses <skill-root> defines it in a
+    ## Paths section with a realpath shell snippet, and every
+    <skill-root>/... path it names resolves to an existing directory
+    under this repository's skills/."""
+    text = _text(cmd_path)
+    if "<skill-root>" not in text:
+        pytest.skip(f"{cmd_path.name} does not reference <skill-root>")
+
+    # Must have a ## Paths section defining <skill-root> with realpath.
+    assert "## Paths" in text, (
+        f"{cmd_path.name} uses <skill-root> but has no ## Paths section"
+    )
+    paths_section_start = text.index("## Paths")
+    # The section ends at the next ## heading.
+    next_heading = text.find("\n## ", paths_section_start + 1)
+    paths_section = text[paths_section_start:next_heading] if next_heading != -1 else text[paths_section_start:]
+    assert "realpath" in paths_section, (
+        f"{cmd_path.name} ## Paths section must define <skill-root> with realpath"
+    )
+    assert "never V1" in paths_section or "~/.ilk/current/skills" in paths_section, (
+        f"{cmd_path.name} ## Paths section must say <skill-root> is never V1's ~/.ilk/current/skills"
+    )
+
+    # Every <skill-root>/X path the file names must exist under skills/X.
+    for match in SKILL_ROOT_RE.finditer(text):
+        rel = match.group(1)
+        target = REPO_ROOT / "skills" / rel
+        assert target.exists(), (
+            f"{cmd_path.name} references <skill-root>/{rel} but "
+            f"skills/{rel} does not exist in this repo"
+        )
