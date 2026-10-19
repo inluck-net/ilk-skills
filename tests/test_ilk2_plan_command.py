@@ -346,3 +346,18 @@ def test_ilk2_command_defines_skill_root(cmd_path: Path) -> None:
             f"{cmd_path.name} references <skill-root>/{rel} but "
             f"skills/{rel} does not exist in this repo"
         )
+
+
+def test_ilk2_plan_passes_path_prelude_for_ilk2_projects() -> None:
+    """For an ilk2 project, step 7g passes --path-prelude to plan_check.py
+    with the project's path_prelude directories joined by ':' (from
+    `ilk2 project show <project>`), when known."""
+    text = _text(ILK2_PLAN)
+    assert "--path-prelude" in text, (
+        "commands/ilk2-plan.md must document --path-prelude for ilk2 projects"
+    )
+    # The sentence must mention how the directories are obtained.
+    assert "ilk2 project show" in text, (
+        "commands/ilk2-plan.md must name `ilk2 project show` as the source "
+        "of path_prelude directories"
+    )

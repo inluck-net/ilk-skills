@@ -3155,12 +3155,20 @@ def _parse_path_prelude_dirs(prelude: str) -> list[str]:
     return dirs
 
 
-def _get_effective_path_dirs(project: Path) -> tuple[list[str] | None, str]:
+def _get_effective_path_dirs(
+    project: Path,
+    path_prelude: str | None = None,
+) -> tuple[list[str] | None, str]:
     """Compute the effective PATH directories a gate will resolve against.
 
     Returns (dirs, error_message).  On success, ``dirs`` is a list of
     directories and ``error_message`` is "".  On failure, ``dirs`` is None
     and ``error_message`` names what failed (AC-7).
+
+    When *path_prelude* is given (colon-separated directories), those
+    directories are appended after the ``getconf PATH`` floor **instead
+    of** the ``.ilk-launch.json`` prelude.  When None, behaviour is
+    unchanged (reads ``.ilk-launch.json``).
     """
     # 1. getconf PATH — the POSIX-guaranteed floor.
     try:
@@ -3180,9 +3188,14 @@ def _get_effective_path_dirs(project: Path) -> tuple[list[str] | None, str]:
         return None, "getconf PATH timed out"
 
     # 2. Append directories from path_prelude.
-    prelude = _read_path_prelude(project)
-    prelude_dirs = _parse_path_prelude_dirs(prelude)
-    dirs.extend(prelude_dirs)
+    if path_prelude is not None:
+        # CLI --path-prelude: colon-separated dirs, used instead of
+        # .ilk-launch.json.
+        dirs.extend(d for d in path_prelude.split(":") if d)
+    else:
+        prelude = _read_path_prelude(project)
+        prelude_dirs = _parse_path_prelude_dirs(prelude)
+        dirs.extend(prelude_dirs)
 
     return dirs, ""
 
@@ -3244,7 +3257,9 @@ def _cmd_for_display(cmd: str) -> str:
     return " ".join(tokens[i:]) if i > 0 else cmd
 
 
-def lint_gate_executable_on_driver_path(text: str, slug: str) -> list[str]:
+def lint_gate_executable_on_driver_path(
+    text: str, slug: str, path_prelude: str | None = None,
+) -> list[str]:
     """Flag a gate command whose leading executable cannot resolve on the driver's PATH.
 
     AC-4: Finding names the executable AND the search space.
@@ -3263,7 +3278,7 @@ def lint_gate_executable_on_driver_path(text: str, slug: str) -> list[str]:
     project = _resolve_project_root()
 
     # Get the effective PATH once.
-    path_dirs, path_error = _get_effective_path_dirs(project)
+    path_dirs, path_error = _get_effective_path_dirs(project, path_prelude)
 
     for cmd in commands:
         exe = _leading_executable(cmd)
@@ -3547,17 +3562,31 @@ def _extract_plan_field(text: str) -> str:
     return ""
 
 
-def lint_slug_identity_mismatch(text: str, slug: str) -> list[str]:
+def lint_slug_identity_mismatch(
+    text: str, slug: str, batch_id: str | None = None,
+) -> list[str]:
     """HARD finding when frontmatter plan: differs from filename-derived slug.
 
     *slug* is the filename stem (e.g. ``2026-09-21-pv5-verify``).  The
     filename-derived slug strips the date prefix: ``pv5-verify``.
+
+    When *batch_id* is given (from the master filename), the filename-derived
+    slug first strips a leading ``<batch_id>-`` prefix (ilk2 names a
+    sub-plan ``<batch_id>-<slug>.md``).  When absent, falls back to the
+    date-prefix strip as before.
     """
     findings: list[str] = []
     plan_field = _extract_plan_field(text)
     if not plan_field:
         return findings  # no plan: field — other lints catch that
-    filename_slug = _strip_date_prefix(slug)
+    if batch_id:
+        prefix = batch_id + "-"
+        if slug.startswith(prefix):
+            filename_slug = slug[len(prefix):]
+        else:
+            filename_slug = _strip_date_prefix(slug)
+    else:
+        filename_slug = _strip_date_prefix(slug)
     if not filename_slug:
         return findings  # no date prefix to strip — not a dated sub-plan
     if filename_slug == plan_field:
@@ -3785,7 +3814,9 @@ ALL_CHECKS = (
     lint_broken_process_wait,
     lint_tier_forbids_its_evidence,
     lint_duplicate_frontmatter_key,
-    lint_slug_identity_mismatch,
+    # lint_slug_identity_mismatch is NOT in ALL_CHECKS: it needs batch_id,
+    # which ALL_CHECKS cannot provide.  It is called explicitly from
+    # lint_file_split / lint_subplan.
     lint_gate_misses_a_test_that_pins_its_file,
 )
 
@@ -4054,7 +4085,9 @@ def _has_batch_verification_marker(text: str) -> bool:
     return False
 
 
-def _check_split(text: str, slug: str) -> tuple[list[str], list[str]]:
+def _check_split(
+    text: str, slug: str, path_prelude: str | None = None,
+) -> tuple[list[str], list[str]]:
     """Run ``ALL_CHECKS`` over one sub-plan body, split (blocking, advisory).
 
     ``lint_shared_module_gate`` is the only advisory check.  Its findings are
@@ -4065,21 +4098,31 @@ def _check_split(text: str, slug: str) -> tuple[list[str], list[str]]:
     advisory: list[str] = []
     for check in ALL_CHECKS:
         bucket = advisory if check is lint_shared_module_gate else blocking
-        bucket.extend(check(text, slug))
+        if check is lint_gate_executable_on_driver_path:
+            bucket.extend(check(text, slug, path_prelude))
+        else:
+            bucket.extend(check(text, slug))
     return blocking, advisory
 
 
-def lint_subplan(body: str, slug: str) -> list[str]:
+def lint_subplan(
+    body: str, slug: str,
+    path_prelude: str | None = None,
+    batch_id: str | None = None,
+) -> list[str]:
     """Run all sub-plan checks against a body string (no file I/O).
 
     Convenience wrapper for tests and callers that already have the text.
     """
-    blocking, advisory = _check_split(body, slug)
+    blocking, advisory = _check_split(body, slug, path_prelude)
+    blocking.extend(lint_slug_identity_mismatch(body, slug, batch_id))
     return blocking + advisory
 
 
 def lint_file_split(
     path: str | Path, master_text: str = "",
+    path_prelude: str | None = None,
+    batch_id: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Run all checks against one sub-plan file, split (blocking, advisory).
 
@@ -4090,7 +4133,9 @@ def lint_file_split(
     p = Path(path)
     slug = p.stem
     text = p.read_text(encoding="utf-8-sig")
-    blocking, advisory = _check_split(text, slug)
+    blocking, advisory = _check_split(text, slug, path_prelude)
+    # Slug-identity check (needs batch_id, not in ALL_CHECKS).
+    blocking.extend(lint_slug_identity_mismatch(text, slug, batch_id))
     # Slug-collision check requires master_text context.
     if master_text:
         master_plan_slug = ""
@@ -4112,14 +4157,21 @@ def lint_file_split(
     return blocking, advisory
 
 
-def lint_file(path: str | Path, master_text: str = "") -> list[str]:
+def lint_file(
+    path: str | Path, master_text: str = "",
+    path_prelude: str | None = None,
+    batch_id: str | None = None,
+) -> list[str]:
     """Run all checks against one sub-plan file. Returns finding messages.
 
     When *master_text* is provided, the slug-collision check is also run,
     and the base-ref resolution check uses the master's declared
     ``base_branch:``.
     """
-    blocking, advisory = lint_file_split(path, master_text=master_text)
+    blocking, advisory = lint_file_split(
+        path, master_text=master_text,
+        path_prelude=path_prelude, batch_id=batch_id,
+    )
     return blocking + advisory
 
 
@@ -4146,6 +4198,14 @@ def main() -> int:
         help=(
             "The batch carries a verification sub-plan: "
             "lint_shared_module_gate findings are advisory (INFO), not HARD."
+        ),
+    )
+    parser.add_argument(
+        "--path-prelude", default=None, dest="path_prelude",
+        help=(
+            "Colon-separated directories appended after getconf PATH, "
+            "used INSTEAD OF .ilk-launch.json prelude.  For ilk2 projects "
+            "that keep PATH prelude in their own project settings."
         ),
     )
     args = parser.parse_args()
@@ -4178,8 +4238,16 @@ def main() -> int:
         return 1 if total else 0
 
     master_text = ""
+    batch_id: str | None = None
     if args.master:
         master_text = Path(args.master).read_text(encoding="utf-8-sig")
+        # Extract batch_id from master filename: MASTER-<batch_id>-execution-plan.md
+        master_name = Path(args.master).stem
+        m = re.match(r"^MASTER-(.+)-execution-plan$", master_name)
+        if m:
+            batch_id = m.group(1)
+
+    path_prelude: str | None = args.path_prelude
 
     # ── --verified: D9's importer-coverage rule becomes advisory ──────────
     #
@@ -4210,7 +4278,10 @@ def main() -> int:
     total = 0
     subplans: list[tuple[str, str]] = []
     for path in args.paths:
-        blocking, advisory = lint_file_split(path, master_text=master_text)
+        blocking, advisory = lint_file_split(
+            path, master_text=master_text,
+            path_prelude=path_prelude, batch_id=batch_id,
+        )
         for msg in blocking:
             print(f"WARN: {msg}")
             total += 1
