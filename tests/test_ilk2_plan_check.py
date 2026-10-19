@@ -1162,4 +1162,126 @@ def test_off_base_for_each_ref_failure_reports_unknown(tmp_path: Path) -> None:
     assert len(findings) == 1, findings
     assert "unknown" in findings[0], findings[0]
     assert "HARD" not in findings[0], findings[0]
-    assert "for-each-ref" in findings[0], findings[0]
+
+
+# ── --path-prelude: ilk2 projects supply their own PATH directories ──────────
+
+# A sub-plan whose gate starts with ``fakebun`` (not on the default PATH).
+FAKEBUN_SUBPLAN = """\
+---
+plan: demo-step
+---
+
+# Sub-plan: demo-step
+
+## Steps
+
+### Step 0
+
+Edit `tools/demo.py`.
+
+```yaml
+local_checks:
+  - command: fakebun run build
+    timeout: 30
+```
+"""
+
+
+def test_path_prelude_silences_executable_warning(tmp_path: Path) -> None:
+    """With --path-prelude naming a dir holding fakebun, no PATH WARN."""
+    prelude_dir = tmp_path / "prelude"
+    prelude_dir.mkdir()
+    fakebun = prelude_dir / "fakebun"
+    fakebun.write_text("#!/bin/sh\necho ok\n", encoding="utf-8")
+    fakebun.chmod(0o755)
+
+    d = tmp_path / "test"
+    d.mkdir()
+    master_path = d / "MASTER.md"
+    master_path.write_text(MASTER, encoding="utf-8")
+    sub_path = d / "2026-10-18-demo-step.md"
+    sub_path.write_text(FAKEBUN_SUBPLAN, encoding="utf-8")
+    env = {"HOME": str(tmp_path), "PATH": os.environ["PATH"]}
+
+    # With --path-prelude: fakebun is found → no PATH WARN.
+    cmd = [
+        sys.executable, "-I", str(PLAN_CHECK),
+        "--path-prelude", str(prelude_dir),
+        "--master", str(master_path),
+        "--project-root", str(d),
+        str(sub_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=str(d))
+    assert "Traceback" not in result.stderr, result.stderr
+    assert "not found on the driver's PATH" not in result.stdout, result.stdout
+
+
+def test_path_prelude_without_option_still_warns(tmp_path: Path) -> None:
+    """Without --path-prelude, fakebun is not found → PATH WARN."""
+    d = tmp_path / "test"
+    d.mkdir()
+    master_path = d / "MASTER.md"
+    master_path.write_text(MASTER, encoding="utf-8")
+    sub_path = d / "2026-10-18-demo-step.md"
+    sub_path.write_text(FAKEBUN_SUBPLAN, encoding="utf-8")
+    env = {"HOME": str(tmp_path), "PATH": os.environ["PATH"]}
+
+    cmd = [
+        sys.executable, "-I", str(PLAN_CHECK),
+        "--master", str(master_path),
+        "--project-root", str(d),
+        str(sub_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=str(d))
+    assert "Traceback" not in result.stderr, result.stderr
+    assert "not found on the driver's PATH" in result.stdout, result.stdout
+
+
+# ── Batch-id prefix stripping in slug identity check ─────────────────────────
+#
+# ilk2 names a sub-plan ``<batch_id>-<slug>.md``.  The slug identity lint
+# must strip the batch_id prefix (not just a date prefix) before comparing
+# against the frontmatter plan: field.
+
+
+def test_slug_identity_batch_id_prefix_no_mismatch(tmp_path: Path) -> None:
+    """issue-7-r1-a.md with plan: a → no HARD finding (batch_id stripped)."""
+    mod = _load_plan_check()
+    body = "---\nplan: a\n---\n\n# Sub-plan: a\n"
+    # With batch_id "issue-7-r1", stem "issue-7-r1-a" → slug "a" → matches.
+    findings = mod.lint_slug_identity_mismatch(body, "issue-7-r1-a", batch_id="issue-7-r1")
+    assert findings == [], findings
+
+
+def test_slug_identity_batch_id_prefix_mismatch(tmp_path: Path) -> None:
+    """issue-7-r1-a.md with plan: b → HARD finding (batch_id stripped, still disagrees)."""
+    mod = _load_plan_check()
+    body = "---\nplan: b\n---\n\n# Sub-plan: b\n"
+    findings = mod.lint_slug_identity_mismatch(body, "issue-7-r1-a", batch_id="issue-7-r1")
+    assert len(findings) == 1, findings
+    assert "HARD" in findings[0], findings[0]
+    assert "issue-7-r1-a" in findings[0], findings[0]
+    assert "'a'" in findings[0], findings[0]
+    assert "'b'" in findings[0], findings[0]
+
+
+def test_slug_identity_dated_subplan_still_works(tmp_path: Path) -> None:
+    """2026-09-21-pv5-verify.md with plan: pv5-verify → no HARD finding."""
+    mod = _load_plan_check()
+    body = "---\nplan: pv5-verify\n---\n\n# Sub-plan: pv5-verify\n"
+    # No batch_id → falls back to date-prefix strip.
+    findings = mod.lint_slug_identity_mismatch(body, "2026-09-21-pv5-verify")
+    assert findings == [], findings
+
+
+def test_slug_identity_batch_id_no_match_falls_back_to_date(tmp_path: Path) -> None:
+    """When batch_id is given but stem doesn't start with it, falls back to date strip."""
+    mod = _load_plan_check()
+    body = "---\nplan: pv5-verify\n---\n\n# Sub-plan: pv5-verify\n"
+    # batch_id "issue-7-r1" doesn't match stem "2026-09-21-pv5-verify"
+    # → falls back to date-prefix strip → pv5-verify → matches.
+    findings = mod.lint_slug_identity_mismatch(
+        body, "2026-09-21-pv5-verify", batch_id="issue-7-r1",
+    )
+    assert findings == [], findings

@@ -929,6 +929,11 @@ python "<skill-root>/ilk2-plan/scripts/plan_check.py" \
 Pass `--master` — it enables the master-level checks (slug-collision and
 the branch checks) which cannot run from sub-plan text alone.
 
+For an ilk2 project, pass `--path-prelude` with the project's
+`path_prelude` directories joined by `:` (from `ilk2 project show
+<project>`), when known — the checker uses them instead of
+`.ilk-launch.json` to resolve gate executables on the driver's PATH.
+
 When the batch has a verification sub-plan (step 5), also pass
 `--verified`:
 
