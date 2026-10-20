@@ -2,7 +2,7 @@
 
 When `conventions/config.yml` sets `auto_use_ilk_plan: true`, every host
 agent session (Claude Code, Cursor, Codex) SHOULD route implementation
-work through `/ilk2-plan` instead of implementing directly, unless one of
+work through `/ilk-plan` instead of implementing directly, unless one of
 the direct-implement conditions below applies.
 
 **How to tell routing is active:** the presence of this installed managed
@@ -11,7 +11,7 @@ target project for a `conventions/config.yml` or treat its absence as
 "routing off" — the `config.yml` is the toolkit clone's opt-in switch,
 reflected here via the installed block.
 
-## Route to /ilk2-plan when ANY of these is true
+## Route to /ilk-plan when ANY of these is true
 
 - The work will not finish in this session (scope too large, many files).
 - The work should run unattended (background, overnight, scheduled).
@@ -19,11 +19,11 @@ reflected here via the installed block.
 - The work benefits from gated verification between steps (tests, CI,
   manual review checkpoints).
 - The work spans multiple modules or layers (e.g. API + UI + migration).
-- The user explicitly says "plan this" or "use ilk2-plan".
+- The user explicitly says "plan this" or "use ilk-plan".
 
-## Direct-implement (skip /ilk2-plan)
+## Direct-implement (skip /ilk-plan)
 
-The route-to-/ilk2-plan conditions above take precedence: if ANY of them
+The route-to-/ilk-plan conditions above take precedence: if ANY of them
 holds, plan. Otherwise, direct-implement when ANY of these holds:
 
 - The task is single-shot and completable right now in one session — judged
@@ -56,7 +56,7 @@ not yet announced the routing decision, do not touch the codebase.
 
 When the routing decision is clear:
 
-1. Print ONE line: `Routing to /ilk2-plan: <reason>.` or
+1. Print ONE line: `Routing to /ilk-plan: <reason>.` or
    `Direct-implement: <reason>.`
 2. Proceed automatically — do NOT pause for confirmation.
 
