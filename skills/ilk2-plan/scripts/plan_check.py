@@ -1098,7 +1098,8 @@ _NETWORK_TOOL_SIGNAL_RE = re.compile(
     r"""
     urllib
     |requests\.|requests\.get|requests\.post
-    |api\.\w+                          # api.minimax, api.openai, etc.
+    |api\.[\w-]+\.(?:com|ai|io|net|org|dev|chat|co)\b  # api.minimax.chat, api.openai.com
+    |https?://                           # explicit URL
     |_post\b
     |_get\b
     |endpoint
@@ -1111,12 +1112,13 @@ _NETWORK_TOOL_SIGNAL_RE = re.compile(
 
 _MOCK_PATTERN_RE = re.compile(
     r"""
-    patch\s*\(                         # mock.patch(...)
-    |@patch                            # @patch decorator
-    |inject.*fake                      # injected fake
-    |mock.*network                     # mock the network
-    |fake.*response                    # fake response
-    |_post.*mock|mock.*_post           # mock the _post function
+    (?:mock|mocker|unittest\.mock)\.patch(?:\.object)?\s*\(  # mock.patch(...)
+    |@patch                                                   # @patch decorator
+    |\bpatch\s*\(\s*["']                                      # patch("target") string arg
+    |inject.*fake                                             # injected fake
+    |mock.*network                                            # mock the network
+    |fake.*response                                           # fake response
+    |_post.*mock|mock.*_post                                  # mock the _post function
     """,
     re.VERBOSE | re.IGNORECASE,
 )

@@ -1285,3 +1285,110 @@ def test_slug_identity_batch_id_no_match_falls_back_to_date(tmp_path: Path) -> N
         body, "2026-09-21-pv5-verify", batch_id="issue-7-r1",
     )
     assert findings == [], findings
+
+
+# ── Network-tool mock-only gate: Convex idioms are not false positives ────────
+
+CONVEX_SUBPLAN = """\
+---
+plan: convex-step
+verification_tier: loop-verified
+---
+
+# Sub-plan: convex-step
+
+Adds `api.escalationPathwayConfig.updateConfig` and patches with
+`ctx.db.patch(id, { enabled: false })`.
+
+## Steps
+
+### Step 0
+
+Edit `convex/escalationPathwayConfig.ts`.
+
+```yaml
+local_checks:
+  - command: bun run test:non-ui:convex -- convex/__tests__/x.test.ts
+    timeout: 30
+```
+"""
+
+DRAW_PY_SUBPLAN = """\
+---
+plan: draw-step
+verification_tier: loop-verified
+---
+
+# Sub-plan: draw-step
+
+Loads token via `requests.post(` and `_post` helper.
+
+## Steps
+
+### Step 0
+
+Edit `draw.py`.
+
+```yaml
+local_checks:
+  - command: python -m pytest tests/test_draw.py -x
+    timeout: 30
+```
+
+Mocks the network: `patch("draw._post")`.
+"""
+
+MINIMAX_SUBPLAN = """\
+---
+plan: minimax-step
+verification_tier: loop-verified
+---
+
+# Sub-plan: minimax-step
+
+Calls `https://api.minimax.chat/v1` endpoint.
+
+## Steps
+
+### Step 0
+
+Edit `minimax_client.py`.
+
+```yaml
+local_checks:
+  - command: python -m pytest tests/test_minimax.py -x
+    timeout: 30
+```
+
+Uses `@patch` to mock the HTTP call.
+"""
+
+
+def test_network_tool_convex_api_ref_not_flagged() -> None:
+    """Convex's api.<module>.<fn> is not a network tool signal."""
+    mod = _load_plan_check()
+    findings = mod.lint_network_tool_mock_only_gate(CONVEX_SUBPLAN, "convex-step")
+    assert findings == [], findings
+
+
+def test_network_tool_convex_db_patch_not_flagged_as_mock() -> None:
+    """ctx.db.patch(id, ...) is a database write, not a mock.patch."""
+    mod = _load_plan_check()
+    findings = mod.lint_network_tool_mock_only_gate(CONVEX_SUBPLAN, "convex-step")
+    assert findings == [], findings
+
+
+def test_network_tool_draw_py_still_flagged() -> None:
+    """requests.post + _post + patch("draw._post") is the real case."""
+    mod = _load_plan_check()
+    findings = mod.lint_network_tool_mock_only_gate(DRAW_PY_SUBPLAN, "draw-step")
+    assert len(findings) == 1, findings
+    assert "network tool" in findings[0].lower(), findings[0]
+
+
+def test_network_tool_minimax_url_with_patch_decorator_flagged() -> None:
+    """https://api.minimax.chat/v1 + @patch is a network tool with mock-only gate."""
+    mod = _load_plan_check()
+    findings = mod.lint_network_tool_mock_only_gate(MINIMAX_SUBPLAN, "minimax-step")
+    assert len(findings) == 1, findings
+    assert "network tool" in findings[0].lower(), findings[0]
