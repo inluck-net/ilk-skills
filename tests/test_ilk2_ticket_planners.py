@@ -114,6 +114,14 @@ def test_ticket_planners_name_the_ilk2_batch_id_on_status_updates() -> None:
         )
 
 
+def test_ticket_planners_pass_notify_to() -> None:
+    """Both ticket planners pass `--notify-to` at submit time under the same
+    rule as commands/ilk2-plan.md step 8b: `concord:<agent id>` when this
+    session is reachable through Concord."""
+    for path, text in _ticket_planners().items():
+        assert "--notify-to" in text, f"{path.name} does not contain '--notify-to'"
+
+
 def test_new_commands_have_no_v1_planning_or_delivery_paths() -> None:
     for path, text in _all().items():
         for needle in FORBIDDEN:
