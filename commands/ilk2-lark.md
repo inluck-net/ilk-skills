@@ -29,11 +29,33 @@ in `/ilk2-plan` step 5, so hand off without `--yes`.
 
 ## Paths
 
-`<skill-root>` is the `skills/` directory beside the `commands/` directory that
-holds this file's real path. It is never V1's `~/.ilk/current/skills`.
+`<skill-root>` is this clone's `skills/` directory — the one beside the
+`commands/` directory that holds this file's real path. It is never V1's
+`~/.ilk/current/skills`.
+
+Resolve that real path through whichever agent's link exists, first hit
+wins: `~/.claude/commands/ilk2-lark.md`, `~/.codex/commands/ilk2-lark.md`,
+`~/.cursor/commands/ilk2-lark.md`. With none of them installed the block
+exits non-zero, naming the paths it tried.
 
 ```bash
-SKILL_ROOT="$(cd "$(dirname "$(realpath ~/.claude/commands/ilk2-lark.md)")/../skills" && pwd)"
+SKILL_ROOT=""
+for _p in \
+  "$HOME/.claude/commands/ilk2-lark.md" \
+  "$HOME/.codex/commands/ilk2-lark.md" \
+  "$HOME/.cursor/commands/ilk2-lark.md"
+do
+  [ -e "$_p" ] || continue
+  SKILL_ROOT="$(cd "$(dirname "$(realpath "$_p")")/../skills" && pwd)"
+  if [ -n "$SKILL_ROOT" ]; then break; fi
+done
+if [ -z "$SKILL_ROOT" ]; then
+  echo "error: cannot resolve SKILL_ROOT for ilk2-lark; tried:" >&2
+  echo "  $HOME/.claude/commands/ilk2-lark.md" >&2
+  echo "  $HOME/.codex/commands/ilk2-lark.md" >&2
+  echo "  $HOME/.cursor/commands/ilk2-lark.md" >&2
+  exit 1
+fi
 ```
 
 ## 1. Load conventions

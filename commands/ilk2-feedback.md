@@ -21,11 +21,48 @@ that only restates the script's output has not earned its keep.
 
 ## Paths
 
-`<skill-root>` is the `skills/` directory beside the `commands/` directory that
-holds this file's real path. It is never V1's `~/.ilk/current/skills`.
+`<skill-root>` is this clone's `skills/` directory — the one beside the
+`commands/` directory that holds this file's real path. It is never V1's
+`~/.ilk/current/skills`.
+
+Resolve that real path through whichever agent's link exists, first hit
+wins: `~/.claude/commands/ilk2-feedback.md`,
+`~/.codex/commands/ilk2-feedback.md`, `~/.cursor/commands/ilk2-feedback.md`,
+then this command's own skill folders
+`~/.codex/skills/ilk2-feedback/SKILL.md` and
+`~/.cursor/skills/ilk2-feedback/SKILL.md`. With none of them installed the
+block exits non-zero, naming the paths it tried.
 
 ```bash
-SKILL_ROOT="$(cd "$(dirname "$(realpath ~/.claude/commands/ilk2-feedback.md)")/../skills" && pwd)"
+SKILL_ROOT=""
+for _p in \
+  "$HOME/.claude/commands/ilk2-feedback.md" \
+  "$HOME/.codex/commands/ilk2-feedback.md" \
+  "$HOME/.cursor/commands/ilk2-feedback.md"
+do
+  [ -e "$_p" ] || continue
+  SKILL_ROOT="$(cd "$(dirname "$(realpath "$_p")")/../skills" && pwd)"
+  if [ -n "$SKILL_ROOT" ]; then break; fi
+done
+if [ -z "$SKILL_ROOT" ]; then
+  for _p in \
+    "$HOME/.codex/skills/ilk2-feedback/SKILL.md" \
+    "$HOME/.cursor/skills/ilk2-feedback/SKILL.md"
+  do
+    [ -e "$_p" ] || continue
+    SKILL_ROOT="$(cd "$(dirname "$(realpath "$_p")")/.." && pwd)"
+    if [ -n "$SKILL_ROOT" ]; then break; fi
+  done
+fi
+if [ -z "$SKILL_ROOT" ]; then
+  echo "error: cannot resolve SKILL_ROOT for ilk2-feedback; tried:" >&2
+  echo "  $HOME/.claude/commands/ilk2-feedback.md" >&2
+  echo "  $HOME/.codex/commands/ilk2-feedback.md" >&2
+  echo "  $HOME/.cursor/commands/ilk2-feedback.md" >&2
+  echo "  $HOME/.codex/skills/ilk2-feedback/SKILL.md" >&2
+  echo "  $HOME/.cursor/skills/ilk2-feedback/SKILL.md" >&2
+  exit 1
+fi
 ```
 
 ## 1. Resolve the batch
