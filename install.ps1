@@ -580,7 +580,7 @@ if ($OnlyAutoPlan) {
 
 # ---- build plan ------------------------------------------------------------
 
-$skillNames = (Get-ChildItem -Directory $SkillsSrc | Where-Object { $_.Name -like "ilk-*" } | Select-Object -ExpandProperty Name)
+$skillNames = (Get-ChildItem -Directory $SkillsSrc | Where-Object { $_.Name -like "ilk-*" -or $_.Name -like "ilk2-*" } | Select-Object -ExpandProperty Name)
 $commandFiles = (Get-ChildItem -File $CommandsSrc | Where-Object { $_.Name -like "ilk*" } | Select-Object -ExpandProperty Name)
 
 $rows = New-Object System.Collections.Generic.List[object]
@@ -617,7 +617,7 @@ $mode = if ($Apply) { "APPLY" } else { "DRY-RUN" }
 Write-Host "=== ilk-skills install ($mode) ==="
 Write-Host "repo:           $RepoRoot"
 if ($ClaudeHome) { Write-Host "claude home:    $ClaudeHome (custom)" }
-Write-Host "skills found:   $($skillNames.Count) (ilk-*)"
+Write-Host "skills found:   $($skillNames.Count) (ilk-*|ilk2-*)"
 Write-Host "commands found: $($commandFiles.Count) (ilk*)"
 Write-Host "targets:        $((@($Targets | ForEach-Object { $_.Name })) -join ', ')"
 Write-Host "actions:        $((@($counts.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })) -join ' ')"

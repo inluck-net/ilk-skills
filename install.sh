@@ -418,12 +418,16 @@ fi
 
 # macOS ships bash 3.2 (no `mapfile`), so build the arrays with a
 # portable while-read loop. The IFS reset + `-r` keeps names with
-# spaces / backslashes intact, though `ilk-*` directories don't have
-# either today.
+# spaces / backslashes intact, though `ilk-*` / `ilk2-*` directories don't
+# have either today.
+#
+# Both families: `ilk-*` does not match `ilk2-plan` (the third character is
+# `2`, not `-`), so the filter names each family. The parens are load-bearing
+# — without them `-o` drops `-type d` from the second branch.
 SKILL_NAMES=()
 while IFS= read -r line; do
   SKILL_NAMES+=("$line")
-done < <(find "$SKILLS_SRC" -maxdepth 1 -mindepth 1 -type d -name 'ilk-*' -exec basename {} \; | sort)
+done < <(find "$SKILLS_SRC" -maxdepth 1 -mindepth 1 -type d \( -name 'ilk-*' -o -name 'ilk2-*' \) -exec basename {} \; | sort)
 
 COMMAND_FILES=()
 while IFS= read -r line; do
@@ -1013,7 +1017,7 @@ mode="DRY-RUN"
 echo "=== ilk-skills install ($mode) ==="
 echo "repo:           $REPO_ROOT"
 [[ -n "$claude_home" ]] && echo "claude home:    $claude_home (custom)"
-echo "skills found:   ${#SKILL_NAMES[@]} (ilk-*)"
+echo "skills found:   ${#SKILL_NAMES[@]} (ilk-*|ilk2-*)"
 echo "commands found: ${#COMMAND_FILES[@]} (ilk*)"
 echo "hooks found:    ${#HOOK_FILES[@]} (*.sh/*.py)"
 printf 'targets:        '
