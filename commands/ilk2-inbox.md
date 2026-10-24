@@ -152,7 +152,9 @@ step-6 task description. `/ilk2-plan` will:
   front-matter listing the inbox entry slugs that landed in it;
 - run its step-5 grouping approval — **do not pass `--yes`**;
 - run its step-7 QC, then deliver with `ilk2 submit --check` and
-  `ilk2 submit --project <project> …`, which prints the batch id.
+  `ilk2 submit --project <project> …`, which prints the batch id. That
+  submit passes `--notify-to concord:<agent id>` under the same rule as
+  commands/ilk2-plan.md step 8b.
 
 Keep that batch id. After the batch is submitted, update the inbox entries
 that landed in it:

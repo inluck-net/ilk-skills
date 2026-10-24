@@ -1170,6 +1170,16 @@ Optional flags, when the batch needs them:
 - `--deny-path` — a path or glob no step may change, for this batch
   only (repeatable; adds to the project's `deny_paths`).
 - `--consumer-ref` — a label to find this batch by later.
+- `--notify-to` — where ilk2 should send batch events instead of leaving
+  this session to poll. When this session can be reached through Concord —
+  its `inspect_work` result shows its own agent id, e.g.
+  `claude-code:1a2b3c4d` or `codex:...` — pass
+  `--notify-to concord:<that agent id>`. ilk2 then messages this session
+  when the batch ships, is blocked or cancelled, or opens a needs_human
+  row, so the session waits for that message instead of polling
+  `ilk2 status`. The address is opaque to ilk2 (at most 256 characters,
+  one line). When the session is not reachable through Concord, leave the
+  flag out; nothing else changes.
 - `--json` — machine-readable output.
 
 The project must already be registered (step 2); submit never registers
@@ -1196,10 +1206,13 @@ End your turn with:
    ```
 
    so the user sees the batch and its plans' pending state.
-4. **Gate-status line.** If ANY sub-plan declares `local_checks`, report:
+4. **Callback address.** Whether `--notify-to` was passed at submit and
+   with which address — or that it was left out because the session is not
+   reachable through Concord.
+5. **Gate-status line.** If ANY sub-plan declares `local_checks`, report:
    *"Gates: N/N sub-plans declare `local_checks` — the driver runs them
    after every attempt."*
-5. **Verification note.** If ANY newly-written sub-plan carries runtime
+6. **Verification note.** If ANY newly-written sub-plan carries runtime
    `local_checks` (frontmatter or per-step), say so plainly: ilk2 runs
    each step's declared gates after every attempt — a declared gate has
    no skip path, and a step with red gates does not ship. When the batch
@@ -1208,7 +1221,7 @@ End your turn with:
    restate the MASTER's reason (no `verify_command`, or the project's
    instructions omit it). Sub-plans that need a human or a device pass
    are named in the tier mix below.
-6. **Tier-mix summary.** List the tier breakdown of the batch:
+7. **Tier-mix summary.** List the tier breakdown of the batch:
 
    ```
    Tier mix: N loop-verified, M compile-only, K device-manual
@@ -1219,7 +1232,7 @@ End your turn with:
    > **NEEDS HUMAN VERIFICATION**: compile-only and device-manual sub-plans
    > require a human + device pass after the loop marks them done.
 
-7. Tell the user: "Ready to execute. ilk2's supervisor picks the batch
+8. Tell the user: "Ready to execute. ilk2's supervisor picks the batch
    up — watch it with `ilk2 status --batch <id>`."
 
 ## Boundary rules

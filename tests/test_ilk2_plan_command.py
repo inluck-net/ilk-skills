@@ -293,6 +293,21 @@ def test_ilk2_plan_draft_mode_is_an_argument() -> None:
     )
 
 
+def test_submit_can_ask_for_a_concord_callback() -> None:
+    """`ilk2 submit --notify-to <address>` (ilk2 0.3.92) makes the health job
+    deliver batch events to the host's event command; a `concord:<agent-id>`
+    address turns one into a Concord message to this session, so the session
+    waits for that message instead of polling `ilk2 status` (docs/11
+    §11.4.2)."""
+    text = _text(ILK2_PLAN)
+    assert "--notify-to concord:" in text, (
+        "commands/ilk2-plan.md must show the concord:<agent id> address form"
+    )
+    assert "inspect_work" in text, (
+        "commands/ilk2-plan.md must say to read the agent id from inspect_work"
+    )
+
+
 def test_ilk2_plan_has_no_v1_paths_scripts_or_runner() -> None:
     text = _text(ILK2_PLAN)
     for needle in FORBIDDEN:

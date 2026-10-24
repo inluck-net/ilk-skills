@@ -155,7 +155,9 @@ Hand the step-5 task description to `/ilk2-plan`. It:
   drafts dir (read an existing file there first);
 - runs its step-5 grouping approval — **do not pass `--yes`**;
 - runs its step-7 QC, then delivers with `ilk2 submit --check` and
-  `ilk2 submit --project <project> …`, which prints the batch id.
+  `ilk2 submit --project <project> …`, which prints the batch id. That
+  submit passes `--notify-to concord:<agent id>` under the same rule as
+  commands/ilk2-plan.md step 8b.
 
 There is **no project-repo commit** — the drafts live outside the repo and
 `ilk2 submit` is the delivery. Do not skip user approval. Iterate on
