@@ -72,7 +72,7 @@ recorded in the [manual tracker](docs/implementation/loop-execution-improvement-
 >
 > | File | Effect |
 > |---|---|
-> | `~/.claude/CLAUDE.md` | Claude Code routes implementation work to `/ilk-plan` by default |
+> | `~/.claude/CLAUDE.md` | Claude Code routes implementation work to `/ilk2-plan` by default |
 > | `~/.codex/AGENTS.md` | same routing for Codex |
 > | `~/.cursor/rules/ilk-auto-plan.mdc` | same routing for Cursor |
 >
@@ -216,7 +216,7 @@ refuses unless you pass `--force`. Manual equivalent: `git pull --ff-only &&
 ## Auto-plan routing
 
 Installs a routing rule into each host's user-global instructions so new
-sessions default to routing implementation work through `/ilk-plan` instead of
+sessions default to routing implementation work through `/ilk2-plan` instead of
 implementing directly. It manages three user-global files:
 
 | Host | File | Type |
