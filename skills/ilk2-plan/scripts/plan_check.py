@@ -3418,7 +3418,7 @@ def lint_tier_forbids_its_evidence(text: str, slug: str) -> list[str]:
     which is evidence — not flagged.
 
     See decomposition-principles.md §12.
-    Measured: kira-cloudflare issue-5445-work, 2026-09-15.
+    Measured: a consumer repo's issue-5445-work, 2026-09-15.
     """
     # A batch-verification sub-plan is exempt, and this is correctness, not a
     # weakening. Its evidence is the SUITE it runs, declared in its step-0 gate

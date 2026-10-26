@@ -1013,7 +1013,7 @@ surface counts in the step-9 report):
   doc-consistency tests, or fold the docs into the code sub-plan they
   describe). `batch_verification: true` is exempt — its evidence is the
   suite its step runs, not a test it adds. Measured:
-  kira-cloudflare issue-5445-work, 2026-09-15. See
+  a consumer repo's issue-5445-work, 2026-09-15. See
   decomposition-principles.md §12.
 - **e2e/device-polling local_check lacks env_prereq** — a sub-plan declares an
   e2e, browser-automation, or service-poll `local_check` (e.g. `node e2e/*.mjs`,
