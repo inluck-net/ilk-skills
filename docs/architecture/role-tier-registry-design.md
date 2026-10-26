@@ -6,6 +6,13 @@
 > field (§3); see
 > [`provider-switching-and-quota-fallback.md`](provider-switching-and-quota-fallback.md)
 > for the switching design that motivated it.
+> **Correction 2026-10-26:** the §3 appendix's coder row is `mimo-v2.5-pro`
+> again. Its 2026-09-22 V2.6 row (commit 7c8e271c) was superseded the next
+> day by the switch-back documented in
+> [`retro-2026-09-23-scheduler-runs-crawl-on-mimo-v26.md`](../retros/retro-2026-09-23-scheduler-runs-crawl-on-mimo-v26.md),
+> which the registry recorded (commit 57b654be) but this appendix did not.
+> The manager row is the target state of the 2026-10-26 official-OAuth
+> rollout, installed together with each host's credential configuration.
 > **Driving request:** handoffs inbox entry `2026-09-18 —
 > manager-tier-role-registry-and-judgement-boundary`. Extends
 > [`model-worker-framework.md`](model-worker-framework.md) §2c (registry row)
@@ -70,7 +77,7 @@ manager`, because a floor is a *minimum rank*:
                  "auth": "official",
                  "path_command": "claude-manager"},
     "coder":   {"tier": "worker", "home": "~/.claude-worker",
-                 "provider": "Xiaomi MiMo V2.6 - Pro", "model": "mimo-v2.6-pro",
+                 "provider": "Xiaomi MiMo V2.5 - Pro", "model": "mimo-v2.5-pro",
                  "path_command": "claude-worker"},
     "art":     {"tier": "worker", "home": "~/.claude-worker-draw",
                  "provider": "MiniMax", "model": "MiniMax-M3"}

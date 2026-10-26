@@ -28,6 +28,12 @@ def test_registry_parses_with_manager_row():
     assert manager["home"] == "~/.claude-manager"
     assert manager["tier"] == "manager"
     assert manager.get("path_command") == "claude-manager"
+    # Official OAuth identity, pinned: a provider drift back to a token
+    # provider (the Zhipu GLM row 03906ef8 left here) goes red rather than
+    # silently routing the judgement tier to a third-party endpoint.
+    assert manager["provider"] == "Claude Official"
+    assert manager["model"] == "opus"
+    assert manager["auth"] == "official"
 
 
 def test_tiers_all_in_enum():
