@@ -114,12 +114,16 @@ def test_ticket_planners_name_the_ilk2_batch_id_on_status_updates() -> None:
         )
 
 
-def test_ticket_planners_pass_notify_to() -> None:
-    """Both ticket planners pass `--notify-to` at submit time under the same
-    rule as commands/ilk2-plan.md step 8b: `concord:<agent id>` when this
-    session is reachable through Concord."""
+def test_ticket_planners_do_not_pass_a_concord_callback() -> None:
+    """Both ticket planners follow commands/ilk2-plan.md step 8b, which no
+    longer passes `--notify-to` (the Concord callback is dropped, Nov 24, 2026)."""
     for path, text in _ticket_planners().items():
-        assert "--notify-to" in text, f"{path.name} does not contain '--notify-to'"
+        assert "--notify-to concord:" not in text, (
+            f"{path.name} still passes a concord: callback"
+        )
+        assert "does not pass `--notify-to`" in text, (
+            f"{path.name} does not say that submit leaves --notify-to out"
+        )
 
 
 def test_new_commands_have_no_v1_planning_or_delivery_paths() -> None:
