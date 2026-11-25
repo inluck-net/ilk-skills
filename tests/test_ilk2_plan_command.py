@@ -293,19 +293,20 @@ def test_ilk2_plan_draft_mode_is_an_argument() -> None:
     )
 
 
-def test_submit_can_ask_for_a_concord_callback() -> None:
-    """`ilk2 submit --notify-to <address>` (ilk2 0.3.92) makes the health job
-    deliver batch events to the host's event command; a `concord:<agent-id>`
-    address turns one into a Concord message to this session, so the session
-    waits for that message instead of polling `ilk2 status` (docs/11
-    §11.4.2)."""
+def test_submit_no_longer_asks_for_a_concord_callback() -> None:
+    """The `--notify-to concord:<agent id>` callback is dropped (Nov 24, 2026):
+    Concord is being retired, and no Orca replacement is configured for the
+    host event command: the tested send without a sender terminal was refused
+    (`no_active_sender_terminal`). The planner must not ask for it; the session
+    follows the batch with `ilk2 status --batch <id>`."""
     text = _text(ILK2_PLAN)
-    assert "--notify-to concord:" in text, (
-        "commands/ilk2-plan.md must show the concord:<agent id> address form"
+    assert "--notify-to concord:" not in text, (
+        "commands/ilk2-plan.md still tells the planner to pass a concord: callback"
     )
-    assert "inspect_work" in text, (
-        "commands/ilk2-plan.md must say to read the agent id from inspect_work"
+    assert "inspect_work" not in text, (
+        "commands/ilk2-plan.md still reads a Concord agent id from inspect_work"
     )
+    assert "Do **not** pass `--notify-to`" in text
 
 
 def test_ilk2_plan_has_no_v1_paths_scripts_or_runner() -> None:
