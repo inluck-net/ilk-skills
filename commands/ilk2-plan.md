@@ -1172,9 +1172,10 @@ Optional flags, when the batch needs them:
 - `--consumer-ref` — a label to find this batch by later.
 - Do **not** pass `--notify-to`. Its only consumer was a host event
   command that messaged this session over Concord, and Concord is being
-  retired (Nov 24, 2026). Orca mail cannot replace it: a host script with
-  no Orca terminal of its own is refused (`no_active_sender_terminal`).
-  Follow the batch with `ilk2 status --batch <id>` instead.
+  retired (Nov 24, 2026). No Orca replacement is configured for this
+  host event command: the tested send without a sender terminal was
+  refused (`no_active_sender_terminal`). Follow the batch with
+  `ilk2 status --batch <id>` instead.
 - `--json` — machine-readable output.
 
 The project must already be registered (step 2); submit never registers

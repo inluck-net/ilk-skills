@@ -295,9 +295,10 @@ def test_ilk2_plan_draft_mode_is_an_argument() -> None:
 
 def test_submit_no_longer_asks_for_a_concord_callback() -> None:
     """The `--notify-to concord:<agent id>` callback is dropped (Nov 24, 2026):
-    Concord is being retired, and Orca mail refuses a host script that has no
-    Orca terminal of its own (`no_active_sender_terminal`), so the event
-    command has nothing to send through. The planner must not ask for it."""
+    Concord is being retired, and no Orca replacement is configured for the
+    host event command: the tested send without a sender terminal was refused
+    (`no_active_sender_terminal`). The planner must not ask for it; the session
+    follows the batch with `ilk2 status --batch <id>`."""
     text = _text(ILK2_PLAN)
     assert "--notify-to concord:" not in text, (
         "commands/ilk2-plan.md still tells the planner to pass a concord: callback"
